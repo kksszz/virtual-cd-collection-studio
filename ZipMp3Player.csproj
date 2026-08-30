@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>zip.mp3 Player and Manager Plus</AssemblyName>
+    <RootNamespace>ZipMp3Player</RootNamespace>
+    <Title>zip.mp3 Player and Manager Plus</Title>
+    <Product>zip.mp3 Player and Manager Plus</Product>
+    <Description>Music player and library manager for ZIP.MP3 and standard audio files</Description>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+    <Version>0.45.0</Version>
+    <AssemblyVersion>0.45.0.0</AssemblyVersion>
+    <FileVersion>0.45.0.0</FileVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets\AppIcon.ico" />
+    <Resource Include="Assets\AppIcon.png" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="TagLibSharp" Version="2.3.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="AiDevHarness\**\*.cs" />
+    <Compile Remove="BackupDevHarness\**\*.cs" />
+    <Compile Remove="AudioDevHarness\**\*.cs" />
+    <Compile Remove="ThemeDevHarness\**\*.cs" />
+    <Compile Remove="OcrDevHarness\**\*.cs" />
+    <Compile Remove="LyricsDevHarness\**\*.cs" />
+    <Compile Remove="FormatDevHarness\**\*.cs" />
+    <Compile Remove="TagEditDevHarness\**\*.cs" />
+    <None Remove="AiDevHarness\**\*" />
+    <None Remove="BackupDevHarness\**\*" />
+    <None Remove="AudioDevHarness\**\*" />
+    <None Remove="ThemeDevHarness\**\*" />
+    <None Remove="OcrDevHarness\**\*" />
+    <None Remove="LyricsDevHarness\**\*" />
+    <None Remove="FormatDevHarness\**\*" />
+    <None Remove="TagEditDevHarness\**\*" />
+    <None Remove=".ai-dev\**\*" />
+    <None Remove="ai_guitar_preview.py" />
+    <EmbeddedResource Include="ai_guitar_preview.py" LogicalName="ZipMp3Player.ai_guitar_preview.py" />
+  </ItemGroup>
+</Project>

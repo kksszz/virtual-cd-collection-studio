@@ -1,0 +1,664 @@
+<Window x:Class="ZipMp3Player.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:ZipMp3Player"
+        Title="zip.mp3 Player and Manager Plus" Icon="Assets/AppIcon.ico" Width="1400" Height="760" MinWidth="1050" MinHeight="560"
+        Background="#15171B" Foreground="#F2F3F5" AllowDrop="True"
+        Drop="Window_Drop" DragOver="Window_DragOver" KeyDown="Window_KeyDown" Closing="Window_Closing">
+  <Window.Resources>
+    <Style TargetType="Button">
+      <Setter Property="Background" Value="#2C313A"/><Setter Property="Foreground" Value="White"/>
+      <Setter Property="BorderBrush" Value="#454C58"/><Setter Property="Padding" Value="14,7"/>
+      <Setter Property="Margin" Value="3"/><Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style TargetType="TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+    <Style TargetType="CheckBox"><Setter Property="Foreground" Value="#F2F3F5"/></Style>
+    <Style TargetType="RadioButton"><Setter Property="Foreground" Value="#F2F3F5"/></Style>
+    <Style TargetType="Expander"><Setter Property="Foreground" Value="#F2F3F5"/></Style>
+    <Style TargetType="ComboBox">
+      <!-- Windows の標準 ComboBox は閉じた状態の表示面が白くなるため、
+           選択文字を濃色にして常に十分なコントラストを確保する。 -->
+      <Setter Property="Background" Value="#F3F4F6"/><Setter Property="Foreground" Value="#18202A"/>
+      <Setter Property="BorderBrush" Value="#4A5260"/><Setter Property="Padding" Value="5,3"/>
+    </Style>
+    <Style TargetType="ComboBoxItem">
+      <Setter Property="Background" Value="#F3F4F6"/><Setter Property="Foreground" Value="#18202A"/>
+      <Setter Property="Padding" Value="7,4"/>
+      <Style.Triggers>
+        <Trigger Property="IsHighlighted" Value="True"><Setter Property="Background" Value="#D5E8F5"/></Trigger>
+        <Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="#B9D9EE"/></Trigger>
+      </Style.Triggers>
+    </Style>
+    <Style TargetType="DataGridColumnHeader">
+      <Setter Property="Background" Value="#2C313A"/><Setter Property="Foreground" Value="#F2F3F5"/>
+      <Setter Property="BorderBrush" Value="#454C58"/><Setter Property="BorderThickness" Value="0,0,1,1"/>
+      <Setter Property="Padding" Value="7,5"/><Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+    <Style TargetType="DataGridCell">
+      <Setter Property="Foreground" Value="#F2F3F5"/><Setter Property="BorderThickness" Value="0"/>
+      <Style.Triggers>
+        <Trigger Property="IsSelected" Value="True">
+          <Setter Property="Background" Value="#2879B8"/><Setter Property="Foreground" Value="White"/>
+        </Trigger>
+        <DataTrigger Binding="{Binding IsPlaying}" Value="True">
+          <Setter Property="Background" Value="#16513F"/><Setter Property="Foreground" Value="White"/>
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
+    <Style TargetType="ContextMenu"><Setter Property="Background" Value="#252A32"/><Setter Property="Foreground" Value="#F2F3F5"/></Style>
+    <Style TargetType="MenuItem"><Setter Property="Background" Value="#252A32"/><Setter Property="Foreground" Value="#F2F3F5"/></Style>
+  </Window.Resources>
+  <Grid Margin="16">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="*"/>
+      <ColumnDefinition x:Name="ExtensionSplitterColumn" Width="8"/>
+      <ColumnDefinition x:Name="ExtensionColumn" Width="300" MinWidth="240"/>
+    </Grid.ColumnDefinitions>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <Grid x:Name="CompactHeader" Grid.Row="0" Height="46" Margin="0,0,0,8">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <Button Content="ファイルを開く" Click="Open_Click" Padding="13,6"/>
+        <Button Content="履歴" Click="Usage_Click" Padding="13,6" ToolTip="再生履歴・Usageを表示"/>
+        <Button Content="⚙" Width="40" Padding="0,7" FontSize="16"
+                Click="Settings_Click" ToolTip="設定（フォルダ管理・バックアップ・移行）"/>
+      </StackPanel>
+      <Border x:Name="UnifiedInfoCard" Grid.Column="1" Padding="8,5" Background="#1E2730" Margin="9,0,8,0"
+              BorderBrush="#35516A" BorderThickness="1" CornerRadius="4" VerticalAlignment="Stretch">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/><ColumnDefinition Width="4*"/><ColumnDefinition Width="5*"/>
+          </Grid.ColumnDefinitions>
+          <StackPanel Visibility="Collapsed">
+            <TextBlock x:Name="AlbumTitleText" FontSize="15" FontWeight="SemiBold" Text="zip.mp3 Player and Manager Plus"
+                       MaxWidth="220" TextTrimming="CharacterEllipsis" ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
+            <TextBlock x:Name="AlbumInfoText" Foreground="#C0C9D4" FontSize="13"
+                       Text="固定ビットレートMP3を直接再生します"
+                       TextTrimming="CharacterEllipsis" ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
+          </StackPanel>
+          <Border Grid.Column="0" Background="#2879B8" CornerRadius="3" Padding="7,3" Margin="0,0,9,0" VerticalAlignment="Center">
+            <TextBlock x:Name="PlaybackBadgeText" Text="停止" Foreground="White" FontWeight="Bold"/>
+          </Border>
+          <TextBlock x:Name="NowPlayingTitleText" Grid.Column="1" Text="再生していません" FontWeight="SemiBold" FontSize="15"
+                     Margin="0,0,9,0" TextTrimming="CharacterEllipsis" ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
+          <TextBlock x:Name="NowPlayingTagText" Grid.Column="2" Text="曲を再生するとタグ情報を表示します" Foreground="#C8D2DD" FontSize="13"
+                     TextTrimming="CharacterEllipsis" ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <GridSplitter x:Name="ExtensionPanelSplitter" Grid.Column="1" Grid.RowSpan="7" Width="8"
+                  HorizontalAlignment="Stretch" Background="#15171B" ResizeDirection="Columns"/>
+    <Button x:Name="ExtensionPanelToggleButton" Grid.Column="1" Grid.Row="0" Grid.RowSpan="7"
+            Panel.ZIndex="10" Width="24" Height="46" Padding="0" Margin="0"
+            HorizontalAlignment="Center" VerticalAlignment="Center" Content="▶"
+            Click="ExtensionPanelToggle_Click" ToolTip="右側の拡張機能を折りたたむ"/>
+    <ScrollViewer x:Name="ExtensionPanel" Grid.Column="2" Grid.Row="0" Grid.RowSpan="7" Margin="8,0,0,0"
+                  VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Margin="4,0,4,8">
+        <Expander Header="音質向上（リアルタイム）" Foreground="White" IsExpanded="True" Margin="0,0,0,8">
+          <StackPanel Margin="8,7,4,4">
+            <Border Background="#1C3040" BorderBrush="#3E6A88" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,0,0,8">
+              <StackPanel>
+                <CheckBox x:Name="FaithfulModeCheck" Content="原音忠実モード" FontWeight="SemiBold"
+                          Checked="FaithfulMode_Changed" Unchecked="FaithfulMode_Changed"
+                          ToolTip="音質加工とソフト音量を迂回し、WASAPIで原音を直接再生します"/>
+                <TextBlock x:Name="FaithfulModeStatusText" Text="OFF：音質向上・EQ・音量調整を使用します"
+                           Foreground="#9FC7E1" FontSize="10" TextWrapping="Wrap" Margin="20,3,0,0"/>
+              </StackPanel>
+            </Border>
+            <StackPanel x:Name="AudioEnhancementControls">
+              <ComboBox x:Name="RemasterModeCombo" Width="150" HorizontalAlignment="Left" SelectedIndex="0"
+                        SelectionChanged="RemasterMode_Changed" ToolTip="元ファイルを変更せず、再生音だけを補正します">
+                <ComboBoxItem Content="OFF（原音）" Tag="Off"/><ComboBoxItem Content="軽め" Tag="Light"/>
+                <ComboBoxItem Content="標準" Tag="Standard"/><ComboBoxItem Content="強め" Tag="Strong"/>
+                <ComboBoxItem Content="劇的（強調）" Tag="Dramatic"/><ComboBoxItem Content="HDR風（実験）" Tag="AudioHdr"/>
+              </ComboBox>
+              <CheckBox x:Name="LowVolumeClarityCheck" Content="小音量クリア" Margin="1,8,0,0"
+                        Checked="LowVolumeClarity_Changed" Unchecked="LowVolumeClarity_Changed"
+                        ToolTip="音量を上げにくい環境向け。低音・声・アタックを聴き取りやすくし、急な大音量を抑えます"/>
+              <TextBlock Text="高域・輪郭・音量感を補正します。HDR風は細部・アタック・広がりも適応調整します。"
+                         Foreground="#9EA7B3" FontSize="11" TextWrapping="Wrap" Margin="0,5,0,0"/>
+            </StackPanel>
+          </StackPanel>
+        </Expander>
+
+        <Expander Header="AIギター・リメイク（実験）" Foreground="White" IsExpanded="False" Margin="0,0,0,8">
+          <StackPanel Margin="8,7,4,5">
+            <TextBlock Text="選択曲の再生位置から60秒をAIで楽器分離し、ギター・ドラム・ベースを現代的な音へ再構築します。音質向上とEQも試聴時に統合されます。"
+                       Foreground="#AEB7C3" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,7"/>
+            <DockPanel Margin="0,0,0,5">
+              <TextBlock Text="スタイル" Width="58"/>
+              <ComboBox x:Name="AiGuitarStyleCombo" SelectedIndex="0">
+                <ComboBoxItem Content="モダンメタル" Tag="modern_metal"/>
+                <ComboBoxItem Content="現代的ハードロック" Tag="hard_rock"/>
+                <ComboBoxItem Content="タイトなスラッシュ" Tag="tight_thrash"/>
+                <ComboBoxItem Content="劇的AIリメイク（最大）" Tag="dramatic_remake"/>
+              </ComboBox>
+            </DockPanel>
+            <DockPanel Margin="0,0,0,5">
+              <TextBlock x:Name="AiMixValueText" DockPanel.Dock="Right" Text="70%" Width="42" TextAlignment="Right"/>
+              <TextBlock DockPanel.Dock="Left" Text="変化量" Width="58"/>
+              <Slider x:Name="AiMixSlider" Minimum="0" Maximum="100" Value="70" SmallChange="5" LargeChange="10"
+                      ValueChanged="AiMixSlider_ValueChanged"/>
+            </DockPanel>
+            <WrapPanel>
+              <Button x:Name="AiPrepareButton" Content="AI機能を準備" Click="AiPrepare_Click" Padding="8,5"/>
+              <Button x:Name="AiCreatePreviewButton" Content="60秒を作成" Click="AiCreatePreview_Click" Padding="8,5"/>
+              <Button x:Name="AiPlayPreviewButton" Content="AI版を試聴" Click="AiPlayPreview_Click" Padding="8,5" IsEnabled="False"/>
+              <Button x:Name="AiDeleteDataButton" Content="AIデータ削除" Click="AiDeleteData_Click" Padding="8,5"/>
+            </WrapPanel>
+            <ProgressBar x:Name="AiProgressBar" Minimum="0" Maximum="100" Value="0" Height="8" Margin="3,7,3,3"/>
+            <TextBlock x:Name="AiStatusText" Text="未準備（初回のみ追加データを取得します）" Foreground="#9EA7B3"
+                       FontSize="11" TextWrapping="Wrap" Margin="3,2,3,0"/>
+          </StackPanel>
+        </Expander>
+
+        <Expander Header="AIカラオケ（ボーカルレス）" Foreground="White" IsExpanded="False" Margin="0,0,0,8">
+          <StackPanel Margin="8,7,4,5">
+            <TextBlock Text="AIでボーカルだけを分離して伴奏を再構成します。AI環境はリメイク機能と共通です。"
+                       Foreground="#AEB7C3" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,7"/>
+            <DockPanel Margin="0,0,0,5">
+              <TextBlock x:Name="KaraokeRemovalValueText" DockPanel.Dock="Right" Text="100%" Width="42" TextAlignment="Right"/>
+              <TextBlock DockPanel.Dock="Left" Text="除去率" Width="58"/>
+              <Slider x:Name="KaraokeRemovalSlider" Minimum="0" Maximum="100" Value="100" SmallChange="5" LargeChange="10"
+                      ValueChanged="KaraokeRemovalSlider_ValueChanged"/>
+            </DockPanel>
+            <WrapPanel>
+              <Button x:Name="KaraokePrepareButton" Content="AI機能を準備" Click="AiPrepare_Click" Padding="8,5"/>
+              <Button x:Name="KaraokeCreateButton" Content="60秒を作成" Click="KaraokeCreate_Click" Padding="8,5"/>
+              <Button x:Name="KaraokePlayButton" Content="カラオケ版を試聴" Click="KaraokePlay_Click" Padding="8,5" IsEnabled="False"/>
+            </WrapPanel>
+            <ProgressBar x:Name="KaraokeProgressBar" Minimum="0" Maximum="100" Value="0" Height="8" Margin="3,7,3,3"/>
+            <TextBlock x:Name="KaraokeStatusText" Text="未作成" Foreground="#9EA7B3"
+                       FontSize="11" TextWrapping="Wrap" Margin="3,2,3,0"/>
+          </StackPanel>
+        </Expander>
+
+        <Expander Header="ビジュアライザー" Foreground="White" IsExpanded="True" Margin="0,0,0,8">
+          <StackPanel Margin="8,7,4,4">
+            <DockPanel Margin="0,0,0,6">
+              <TextBlock Text="表示" Width="42" VerticalAlignment="Center"/>
+              <ComboBox x:Name="VisualizerModeCombo" SelectedIndex="1" SelectionChanged="VisualizerMode_Changed">
+                <ComboBoxItem Content="波形" Tag="Waveform"/>
+                <ComboBoxItem Content="スペクトラムバー" Tag="Spectrum"/>
+              </ComboBox>
+            </DockPanel>
+            <Border Height="210" BorderBrush="#3A414C" BorderThickness="1" CornerRadius="3">
+              <Grid ClipToBounds="True">
+                <local:WaveformView x:Name="WaveformDisplay" Visibility="Collapsed"/>
+                <local:SpectrumView x:Name="SpectrumDisplay"/>
+                <StackPanel x:Name="SpectrumTrackOverlay" VerticalAlignment="Center"
+                            HorizontalAlignment="Center" IsHitTestVisible="False" MaxWidth="280">
+                  <TextBlock x:Name="SpectrumTitleText" Text="" Foreground="#E9F2F6" FontSize="19" FontWeight="SemiBold"
+                             TextAlignment="Center" TextWrapping="Wrap"/>
+                  <TextBlock x:Name="SpectrumArtistText" Text="" Foreground="#FFB04A" FontSize="13"
+                             TextAlignment="Center" TextWrapping="Wrap" Margin="0,3,0,0"/>
+                </StackPanel>
+              </Grid>
+            </Border>
+          </StackPanel>
+        </Expander>
+
+        <Expander x:Name="EqualizerExpander" Header="10バンド イコライザー" Foreground="White"
+                  IsExpanded="True" Margin="0,0,0,8" ToolTipService.ShowOnDisabled="True">
+          <StackPanel x:Name="EqualizerControls" Margin="8,7,4,4">
+            <WrapPanel Margin="0,0,0,10">
+              <CheckBox x:Name="EqEnabledCheck" Content="EQ ON" IsChecked="True" Margin="0,0,10,0" VerticalAlignment="Center" Checked="EqEnabled_Changed" Unchecked="EqEnabled_Changed"/>
+              <ComboBox x:Name="EqPresetCombo" Width="150" SelectionChanged="EqPreset_Changed">
+                <ComboBoxItem Content="デフォルト" Tag="Flat"/><ComboBoxItem Content="カスタム" Tag="Custom"/>
+                <ComboBoxItem Content="Rock" Tag="Rock"/><ComboBoxItem Content="Pop" Tag="Pop"/>
+                <ComboBoxItem Content="ハードロック" Tag="HardRock"/><ComboBoxItem Content="ヘヴィメタル" Tag="HeavyMetal"/>
+                <ComboBoxItem Content="スラッシュメタル" Tag="ThrashMetal"/><ComboBoxItem Content="デスメタル" Tag="DeathMetal"/>
+                <ComboBoxItem Content="パワーメタル" Tag="PowerMetal"/>
+                <ComboBoxItem Content="Jazz" Tag="Jazz"/><ComboBoxItem Content="Classical" Tag="Classical"/>
+                <ComboBoxItem Content="Dance" Tag="Dance"/><ComboBoxItem Content="低音強調" Tag="Bass"/>
+                <ComboBoxItem Content="ボーカル" Tag="Vocal"/><ComboBoxItem Content="高音強調" Tag="Treble"/>
+              </ComboBox>
+              <Button Content="リセット" Click="EqReset_Click" Padding="8,4"/>
+            </WrapPanel>
+            <DockPanel Margin="0,0,0,9" ToolTip="29Hz未満の不要な振動を除去し、音楽成分がある時だけ低域を強調します">
+              <TextBlock x:Name="BassBoostValueText" DockPanel.Dock="Right" Text="60%" Width="42" TextAlignment="Right"/>
+              <CheckBox x:Name="BassBoostEnabledCheck" DockPanel.Dock="Left" Content="EXTRA BASS風" Width="112"
+                        Checked="BassBoostEnabled_Changed" Unchecked="BassBoostEnabled_Changed"/>
+              <Slider x:Name="BassBoostSlider" Minimum="0" Maximum="100" Value="60" SmallChange="5" LargeChange="10"
+                      ValueChanged="BassBoostSlider_ValueChanged"/>
+            </DockPanel>
+            <UniformGrid Columns="10">
+              <StackPanel><TextBlock Text="31" HorizontalAlignment="Center"/><Slider x:Name="Eq0" Tag="0" Orientation="Vertical" Height="72" Minimum="-12" Maximum="12" Value="0" ValueChanged="EqSlider_ValueChanged"/><TextBlock Text="0" HorizontalAlignment="Center"/></StackPanel>
+              <StackPanel><TextBlock Text="62" HorizontalAlignment="Center"/><Slider x:Name="Eq1" Tag="1" Orientation="Vertical" Height="72" Minimum="-12" Maximum="12" Value="0" ValueChanged="EqSlider_ValueChanged"/><TextBlock Text="0" HorizontalAlignment="Center"/></StackPanel>
+              <StackPanel><TextBlock Text="125" HorizontalAlignment="Center"/><Slider x:Name="Eq2" Tag="2" Orientation="Vertical" Height="72" Minimum="-12" Maximum="12" Value="0" ValueChanged="EqSlider_ValueChanged"/><TextBlock Text="0" HorizontalAlignment="Center"/></StackPanel>
+              <StackPanel><TextBlock Text="250" HorizontalAlignment="Center"/><Slider x:Name="Eq3" Tag="3" Orientation="Vertical" Height="72" Minimum="-12" Maximum="12" Value="0" ValueChanged="EqSlider_ValueChanged"/><TextBlock Text="0" HorizontalAlignment="Center"/></StackPanel>
+              <StackPanel><TextBlock Text="500" HorizontalAlignment="Center"/><Slider x:Name="Eq4" Tag="4" Orientation="Vertical" Height="72" Minimum="-12" Maximum="12" Value="0" ValueChanged="EqSlider_ValueChanged"/><TextBlock Text="0" HorizontalAlignment="Center"/></StackPanel>
+              <StackPanel><TextBlock Text="1k" HorizontalAlignment="Center"/><Slider x:Name="Eq5" Tag="5" Orientation="Vertical" Height="72" Minimum="-12" Maximum="12" Value="0" ValueChanged="EqSlider_ValueChanged"/><TextBlock Text="0" HorizontalAlignment="Center"/></StackPanel>
+              <StackPanel><TextBlock Text="2k" HorizontalAlignment="Center"/><Slider x:Name="Eq6" Tag="6" Orientation="Vertical" Height="72" Minimum="-12" Maximum="12" Value="0" ValueChanged="EqSlider_ValueChanged"/><TextBlock Text="0" HorizontalAlignment="Center"/></StackPanel>
+              <StackPanel><TextBlock Text="4k" HorizontalAlignment="Center"/><Slider x:Name="Eq7" Tag="7" Orientation="Vertical" Height="72" Minimum="-12" Maximum="12" Value="0" ValueChanged="EqSlider_ValueChanged"/><TextBlock Text="0" HorizontalAlignment="Center"/></StackPanel>
+              <StackPanel><TextBlock Text="8k" HorizontalAlignment="Center"/><Slider x:Name="Eq8" Tag="8" Orientation="Vertical" Height="72" Minimum="-12" Maximum="12" Value="0" ValueChanged="EqSlider_ValueChanged"/><TextBlock Text="0" HorizontalAlignment="Center"/></StackPanel>
+              <StackPanel><TextBlock Text="16k" HorizontalAlignment="Center"/><Slider x:Name="Eq9" Tag="9" Orientation="Vertical" Height="72" Minimum="-12" Maximum="12" Value="0" ValueChanged="EqSlider_ValueChanged"/><TextBlock Text="0" HorizontalAlignment="Center"/></StackPanel>
+            </UniformGrid>
+            <TextBlock Text="±12 dB" Foreground="#9EA7B3" HorizontalAlignment="Right" Margin="0,5,0,0"/>
+          </StackPanel>
+        </Expander>
+
+      </StackPanel>
+    </ScrollViewer>
+
+    <Grid Grid.Row="3">
+      <Grid.RowDefinitions>
+        <RowDefinition x:Name="TrackContentRow" Height="*"/>
+        <RowDefinition x:Name="ImageBottomSplitterRow" Height="0"/>
+        <RowDefinition x:Name="ImageBottomRow" Height="0"/>
+      </Grid.RowDefinitions>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="340" MinWidth="230"/><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/>
+        <ColumnDefinition x:Name="ImageRightSplitterColumn" Width="8"/>
+        <ColumnDefinition x:Name="ImageRightColumn" Width="230" MinWidth="180"/>
+      </Grid.ColumnDefinitions>
+      <Border Grid.Column="0" Grid.RowSpan="3" Background="#1E2127" BorderBrush="#353B45" BorderThickness="1">
+        <DockPanel>
+          <Grid x:Name="AlbumToolbar" DockPanel.Dock="Top" Margin="12,7">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="アルバム" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center"/>
+            <TextBox x:Name="AlbumFilterTextBox" Grid.Column="1" Height="27" MinWidth="48" Padding="7,3" Margin="9,0,0,0"
+                     Background="#F3F4F6" Foreground="#18202A" BorderBrush="#4A5260"
+                     TextChanged="AlbumFilter_TextChanged" ToolTip="アルバム名・アーティスト名・ファイル名・曲名で絞り込み"/>
+            <Button Grid.Column="2" Content="×" Width="26" Height="27" Padding="0" Margin="4,0,0,0"
+                    Click="ClearAlbumFilter_Click" ToolTip="検索をクリア"/>
+            <TextBlock x:Name="AlbumFilterResultText" Grid.Column="3" Text="0件" Foreground="#8F9AA7"
+                       FontSize="11" MinWidth="38" Margin="6,0,0,0" TextAlignment="Right" VerticalAlignment="Center"/>
+            <ComboBox x:Name="AlbumSortCombo" Grid.Column="4" Width="108" Margin="7,0,0,0"
+                      SelectedIndex="0" SelectionChanged="AlbumSort_Changed"
+                      Background="#F3F4F6" Foreground="#18202A" ToolTip="アルバム一覧の並び順">
+              <ComboBoxItem Content="アーティスト順" Tag="Artist"/>
+              <ComboBoxItem Content="アルバム名順" Tag="Album"/>
+              <ComboBoxItem Content="アーティストツリー" Tag="ArtistTree"/>
+            </ComboBox>
+          </Grid>
+          <ListBox x:Name="AlbumList" Background="Transparent" Foreground="White" BorderThickness="0"
+                   SelectionChanged="AlbumList_SelectionChanged" PreviewMouseRightButtonDown="AlbumList_RightButtonDown"
+                   MouseDoubleClick="AlbumList_MouseDoubleClick"
+                   ClipToBounds="True" HorizontalContentAlignment="Stretch"
+                   ScrollViewer.CanContentScroll="False"
+                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                   ScrollViewer.VerticalScrollBarVisibility="Visible">
+            <ListBox.ContextMenu>
+              <ContextMenu Opened="AlbumContextMenu_Opened">
+                <MenuItem Header="エクスプローラーで場所を開く" Click="OpenAlbumInExplorer_Click"/>
+                <MenuItem Header="インターネットからアルバム画像を取得" Click="DownloadAlbumArtwork_Click"/>
+                <Separator/>
+                <MenuItem x:Name="ConvertToStoredZipMenuItem" Header="無圧縮ZIP.MP3へ変換…" Click="ConvertToStoredZip_Click"
+                          ToolTip="音声を再エンコードせず、ZIP内の全収録物をStore方式へ変換"/>
+                <Separator/>
+                <MenuItem Header="リストから削除" Click="RemoveAlbumFromList_Click"/>
+              </ContextMenu>
+            </ListBox.ContextMenu>
+            <ListBox.ItemContainerStyle>
+              <Style TargetType="ListBoxItem">
+                <Setter Property="AutomationProperties.Name" Value="{Binding Title}"/>
+                <Setter Property="Foreground" Value="#F2F3F5"/>
+                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                <Setter Property="Height" Value="62"/>
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding IsPlaying}" Value="True">
+                    <Setter Property="Background" Value="#16513F"/>
+                    <Setter Property="Foreground" Value="White"/>
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </ListBox.ItemContainerStyle>
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Grid Margin="6,3" AutomationProperties.Name="{Binding Title}" ToolTip="{Binding SourceDescription}">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                  <Border Width="42" Height="42" CornerRadius="4" Margin="0,1,8,0" VerticalAlignment="Top"
+                          Background="#111419" BorderBrush="#48515E" BorderThickness="1" ClipToBounds="True"
+                          ToolTip="{Binding CoverDescription}">
+                    <Grid>
+                      <TextBlock Text="♪" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="22" Foreground="#75808D">
+                        <TextBlock.Style>
+                          <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="#75808D"/>
+                            <Setter Property="Visibility" Value="Visible"/>
+                            <Style.Triggers><DataTrigger Binding="{Binding HasCoverThumbnail}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+                          </Style>
+                        </TextBlock.Style>
+                      </TextBlock>
+                      <Image Source="{Binding CoverThumbnail}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
+                      <Border VerticalAlignment="Bottom" HorizontalAlignment="Stretch" Background="#D9237A45" Padding="2,2">
+                        <Border.Style>
+                          <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers><DataTrigger Binding="{Binding IsPlaying}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
+                          </Style>
+                        </Border.Style>
+                        <TextBlock Text="▶ 再生中" Foreground="White" FontSize="9" FontWeight="Bold" TextAlignment="Center"/>
+                      </Border>
+                    </Grid>
+                  </Border>
+                  <StackPanel Grid.Column="1">
+                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="NoWrap"
+                               TextTrimming="CharacterEllipsis" ToolTip="{Binding Title}"/>
+                    <TextBlock Text="{Binding Detail}" Foreground="#A6AFBB" FontSize="11" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
+                  </StackPanel>
+                  <StackPanel Grid.Column="2" Margin="6,0,0,0" VerticalAlignment="Top" HorizontalAlignment="Right">
+                    <Button Content="{Binding FavoriteGlyph}" Click="AlbumFavorite_Click" Width="25" Height="20"
+                            Padding="0" Margin="0,0,0,2" HorizontalAlignment="Right" FontSize="15"
+                            Foreground="#FFD45A" Background="Transparent" BorderThickness="0"
+                            ToolTip="アルバムのお気に入りを登録／解除"/>
+                    <Border Background="#6B4B8A" CornerRadius="3" Padding="5,1" HorizontalAlignment="Right">
+                      <Border.Style>
+                        <Style TargetType="Border">
+                          <Setter Property="Visibility" Value="Visible"/>
+                          <Style.Triggers><DataTrigger Binding="{Binding HasImages}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+                        </Style>
+                      </Border.Style>
+                      <TextBlock Text="{Binding ImageBadge}" Foreground="White" FontSize="9" FontWeight="SemiBold"/>
+                    </Border>
+                    <Border CornerRadius="3" Padding="4,1" Margin="0,2,0,0" HorizontalAlignment="Right">
+                      <Border.Style>
+                        <Style TargetType="Border">
+                          <Setter Property="Background" Value="#315F82"/>
+                          <Style.Triggers><DataTrigger Binding="{Binding IsArchive}" Value="False"><Setter Property="Background" Value="#3E7048"/></DataTrigger></Style.Triggers>
+                        </Style>
+                      </Border.Style>
+                      <TextBlock Text="{Binding SourceBadge}" Foreground="White" FontSize="9" FontWeight="Bold"/>
+                    </Border>
+                  </StackPanel>
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <TreeView x:Name="ArtistTree" Background="Transparent" Foreground="White" BorderThickness="0"
+                    Visibility="Collapsed" SelectedItemChanged="ArtistTree_SelectedItemChanged"
+                    PreviewMouseRightButtonDown="ArtistTree_RightButtonDown" MouseDoubleClick="ArtistTree_MouseDoubleClick"
+                    ClipToBounds="True" HorizontalContentAlignment="Stretch"
+                    ScrollViewer.CanContentScroll="False"
+                    ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                    ScrollViewer.VerticalScrollBarVisibility="Visible">
+            <TreeView.ContextMenu>
+              <ContextMenu>
+                <MenuItem Header="エクスプローラーで場所を開く" Click="OpenAlbumInExplorer_Click"/>
+                <MenuItem Header="インターネットからアルバム画像を取得" Click="DownloadAlbumArtwork_Click"/>
+                <Separator/>
+                <MenuItem Header="リストから削除" Click="RemoveAlbumFromList_Click"/>
+              </ContextMenu>
+            </TreeView.ContextMenu>
+            <TreeView.ItemContainerStyle>
+              <Style TargetType="TreeViewItem">
+                <Setter Property="IsExpanded" Value="False"/><Setter Property="Foreground" Value="White"/>
+                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding AlbumItem.IsPlaying}" Value="True">
+                    <Setter Property="Background" Value="#16513F"/>
+                    <Setter Property="Foreground" Value="White"/>
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </TreeView.ItemContainerStyle>
+            <TreeView.ItemTemplate>
+              <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                <StackPanel Orientation="Horizontal">
+                  <Button Content="{Binding AlbumItem.FavoriteGlyph}" Click="AlbumFavorite_Click" Width="25" Height="22"
+                          Padding="0" Margin="0,0,4,0" FontSize="15" Foreground="#FFD45A"
+                          Background="Transparent" BorderThickness="0" ToolTip="アルバムのお気に入りを登録／解除">
+                    <Button.Style>
+                      <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers><DataTrigger Binding="{Binding IsGroup}" Value="True"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+                      </Style>
+                    </Button.Style>
+                  </Button>
+                  <TextBlock Text="{Binding Display}" TextTrimming="CharacterEllipsis">
+                    <TextBlock.Style>
+                      <Style TargetType="TextBlock">
+                        <Setter Property="Foreground" Value="#F2F3F5"/>
+                        <Setter Property="FontWeight" Value="Normal"/>
+                        <Style.Triggers><DataTrigger Binding="{Binding IsGroup}" Value="True"><Setter Property="FontWeight" Value="SemiBold"/></DataTrigger></Style.Triggers>
+                      </Style>
+                    </TextBlock.Style>
+                  </TextBlock>
+                  <TextBlock Text="  ▶ 再生中" Foreground="#6FE394" FontSize="11" FontWeight="SemiBold">
+                    <TextBlock.Style>
+                      <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers><DataTrigger Binding="{Binding AlbumItem.IsPlaying}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
+                      </Style>
+                    </TextBlock.Style>
+                  </TextBlock>
+                </StackPanel>
+              </HierarchicalDataTemplate>
+            </TreeView.ItemTemplate>
+          </TreeView>
+        </DockPanel>
+      </Border>
+      <GridSplitter Grid.Column="1" Grid.RowSpan="3" Width="8" HorizontalAlignment="Stretch" Background="#15171B"/>
+      <DataGrid x:Name="TrackGrid" Grid.Column="2" AutoGenerateColumns="False" IsReadOnly="True"
+              SelectionMode="Single" SelectionUnit="FullRow" MouseDoubleClick="TrackGrid_MouseDoubleClick"
+              SelectionChanged="TrackGrid_SelectionChanged" PreviewMouseRightButtonDown="TrackGrid_PreviewMouseRightButtonDown"
+              Background="#1E2127" Foreground="#F2F3F5" BorderBrush="#353B45"
+              RowBackground="#1E2127" AlternatingRowBackground="#23272E"
+              GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#303640"
+              HeadersVisibility="Column" CanUserAddRows="False">
+      <DataGrid.ContextMenu>
+        <ContextMenu>
+          <MenuItem Header="アルバムのタグを編集…" Click="EditTrackTags_Click" InputGestureText="Ctrl+E"/>
+        </ContextMenu>
+      </DataGrid.ContextMenu>
+      <DataGrid.Columns>
+        <DataGridTemplateColumn Header="★" Width="42">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <Button Content="{Binding FavoriteGlyph}" Click="TrackFavorite_Click" Width="27" Height="22"
+                      Padding="0" Margin="0" FontSize="16" Foreground="#FFD45A"
+                      Background="Transparent" BorderThickness="0" ToolTip="曲のお気に入りを登録／解除"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+        <DataGridTemplateColumn Header="歌詞" Width="54" CanUserSort="False">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <Border x:Name="LyricsBadge" Background="#70499B" CornerRadius="3" Padding="5,1"
+                      HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"
+                      ToolTip="この曲には登録済みの歌詞があります">
+                <TextBlock Text="歌詞" Foreground="White" FontSize="10" FontWeight="SemiBold"/>
+              </Border>
+              <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding HasLyrics}" Value="True">
+                  <Setter TargetName="LyricsBadge" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+              </DataTemplate.Triggers>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+        <DataGridTextColumn Header="#" Binding="{Binding TrackNumber}" Width="45"/>
+        <DataGridTextColumn Header="タイトル" Binding="{Binding Title}" Width="3*" MinWidth="160"/>
+        <DataGridTextColumn Header="アーティスト" Binding="{Binding Artist}" Width="2*" MinWidth="120"/>
+        <DataGridTextColumn Header="年" Binding="{Binding YearText}" Width="68"/>
+        <DataGridTextColumn Header="ジャンル" Binding="{Binding GenreText}" Width="125"/>
+        <DataGridTextColumn Header="Disc" Binding="{Binding DiscText}" Width="58"/>
+        <DataGridTextColumn Header="時間" Binding="{Binding DurationText}" Width="75"/>
+        <DataGridTemplateColumn Header="音質" Width="210">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate>
+              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="{Binding AudioText}" VerticalAlignment="Center"/>
+                <Border x:Name="UnsupportedBadge" Margin="7,0,0,0" Padding="4,1"
+                        Background="#7A3C24" CornerRadius="3" Visibility="Collapsed"
+                        ToolTip="{Binding SupportText}">
+                  <TextBlock Text="⚠" Foreground="#FFD08A" FontWeight="Bold"/>
+                </Border>
+              </StackPanel>
+              <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsSupported}" Value="False">
+                  <Setter TargetName="UnsupportedBadge" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+              </DataTemplate.Triggers>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+      </DataGrid.Columns>
+      </DataGrid>
+      <GridSplitter x:Name="ImagePanelSplitter" Grid.Column="3" Grid.RowSpan="3" Width="8" HorizontalAlignment="Stretch"
+                    Background="#15171B" DragCompleted="ImagePanelSplitter_DragCompleted"/>
+      <Border x:Name="AlbumImagePanel" Grid.Column="4" Grid.RowSpan="3" Background="#1E2127" BorderBrush="#353B45" BorderThickness="1" Padding="10">
+        <Grid Grid.IsSharedSizeScope="True">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="ArtworkColumn" Width="6*" MinWidth="180"/>
+            <ColumnDefinition Width="8"/>
+            <ColumnDefinition x:Name="LyricsColumn" Width="4*" MinWidth="180"/>
+          </Grid.ColumnDefinitions>
+          <Grid Grid.Column="0">
+            <Grid.RowDefinitions><RowDefinition x:Name="ArtworkToolbarRow" Height="Auto" SharedSizeGroup="ImageLyricsToolbar"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <WrapPanel Margin="2,0,0,8" VerticalAlignment="Center">
+              <TextBlock Text="アルバム画像" FontWeight="SemiBold" FontSize="15" Margin="0,0,8,0"/>
+              <Button Content="Google画像" Margin="1" Padding="9,4"
+                      Click="GoogleImageSearch_Click" ToolTip="選択アルバムをGoogle画像検索で開く"/>
+              <Button Content="画像を追加" Margin="1" Padding="9,4"
+                      Click="ImportAlbumArtwork_Click" ToolTip="保存したJPGまたはPNG画像をこのアルバムへ追加"/>
+              <Button x:Name="ArtworkSearchButton" Content="画像を検索" Margin="1" Padding="10,4"
+                      Click="DownloadAlbumArtwork_Click" ToolTip="MusicBrainzからアルバム画像を検索"/>
+            </WrapPanel>
+            <Border x:Name="AlbumImageViewport" Grid.Row="1" Background="#15171B" BorderBrush="#414957"
+                    BorderThickness="1" CornerRadius="3" SizeChanged="AlbumImageViewport_SizeChanged">
+              <Grid>
+                <UniformGrid x:Name="AlbumImageGallery" Rows="1" Columns="1"/>
+                <TextBlock x:Name="AlbumImageEmptyText" Text="画像はありません" Foreground="#7F8996"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Grid>
+            </Border>
+            <StackPanel x:Name="ImageNavigationPanel" Grid.Row="2" Margin="0,8,0,3" Orientation="Horizontal" HorizontalAlignment="Center">
+              <Button x:Name="PreviousImageButton" Content="◀" Padding="10,4" Click="PreviousImage_Click" IsEnabled="False"/>
+              <TextBlock x:Name="AlbumImageCountText" Text="0 / 0" Width="62" HorizontalAlignment="Center" TextAlignment="Center"/>
+              <Button x:Name="NextImageButton" Content="▶" Padding="10,4" Click="NextImage_Click" IsEnabled="False"/>
+              <Button x:Name="DeleteAlbumImageButton" Content="画像を削除" Padding="9,4" Margin="10,3,3,3"
+                      Click="DeleteAlbumImage_Click" IsEnabled="False"
+                      ToolTip="選択した貼り付け・追加・取得画像を削除"/>
+            </StackPanel>
+            <TextBlock x:Name="AlbumImageNameText" Grid.Row="3" Foreground="#A6AFBB" FontSize="11"
+                       TextAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
+          </Grid>
+          <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Stretch" Background="#252A31"
+                        ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" ShowsPreview="True"
+                        DragCompleted="ImageLyricsSplitter_DragCompleted"
+                        ToolTip="ドラッグしてアルバム画像と歌詞の幅を変更"/>
+          <Grid x:Name="LyricsContent" Grid.Column="2" Margin="4,0,0,0">
+            <Grid.RowDefinitions><RowDefinition x:Name="LyricsToolbarRow" Height="Auto" SharedSizeGroup="ImageLyricsToolbar"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <DockPanel Margin="2,0,0,8">
+              <TextBlock DockPanel.Dock="Left" Text="歌詞" FontWeight="SemiBold" FontSize="15" Margin="0,0,8,0"/>
+              <CheckBox x:Name="LyricsAutoScrollCheck" DockPanel.Dock="Right" Content="自動スクロール" IsChecked="True"
+                        Margin="8,0,0,0" VerticalAlignment="Center"
+                        Checked="LyricsAutoScroll_Changed" Unchecked="LyricsAutoScroll_Changed"
+                        ToolTip="LRCは時刻同期、通常歌詞は再生位置から推定して追従"/>
+              <WrapPanel HorizontalAlignment="Right">
+                <Button x:Name="LyricsOcrButton" Content="画像からOCR ▼" Padding="9,4" Click="LyricsOcrMenu_Click"
+                        ToolTip="表示画像・Snipping Tool・画像ファイルから日本語歌詞を認識">
+                  <Button.ContextMenu>
+                    <ContextMenu>
+                      <MenuItem Header="表示中のアルバム画像をOCR" Click="OcrCurrentAlbumImage_Click"/>
+                      <MenuItem Header="クリップボード画像をOCR" Click="OcrClipboardImage_Click"/>
+                      <MenuItem Header="画像ファイルをOCR" Click="OcrImageFile_Click"/>
+                    </ContextMenu>
+                  </Button.ContextMenu>
+                </Button>
+                <Button Content="Google歌詞" Padding="9,4" Click="GoogleLyricsSearch_Click"
+                        ToolTip="アーティスト名・曲名・アルバム名を使ってGoogleで歌詞検索"/>
+                <Button Content="再読込" Padding="9,4" Click="ReloadLyrics_Click"/>
+                <Button Content="歌詞を保存" Padding="9,4" Click="SaveLyrics_Click" Background="#276E9F"/>
+              </WrapPanel>
+            </DockPanel>
+            <Grid Grid.Row="1">
+              <TextBox x:Name="LyricsTextBox" AcceptsReturn="True" AcceptsTab="True" TextWrapping="Wrap"
+                       VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                       Background="#15171B" Foreground="#F1F3F5" BorderBrush="#414957" BorderThickness="1"
+                       Padding="12" FontSize="14" TextChanged="LyricsTextBox_TextChanged"
+                       ScrollViewer.ScrollChanged="LyricsTextBox_ScrollChanged"/>
+              <TextBlock x:Name="LyricsEmptyText" Text="同名の .txt / .lrc 歌詞はありません。&#x0a;ここへ歌詞を貼り付けて保存できます。"
+                         Foreground="#7F8996" TextAlignment="Center" TextWrapping="Wrap"
+                         HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" Margin="8"/>
+              <Canvas x:Name="LyricsHighlightCanvas" IsHitTestVisible="False" ClipToBounds="True">
+                <Border x:Name="LyricsCurrentLineUnderline" Height="3" Background="#45B9F0"
+                        CornerRadius="2" Visibility="Collapsed"/>
+              </Canvas>
+            </Grid>
+            <TextBlock x:Name="LyricsStatusText" Grid.Row="2" Text="歌詞は未読込です" Foreground="#A6AFBB" FontSize="11"
+                       TextTrimming="CharacterEllipsis" Margin="2,6,2,1" ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
+          </Grid>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <Grid Grid.Row="5" Margin="0,6,0,5">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <TextBlock x:Name="ElapsedText" Text="0:00" Width="48"/>
+      <Slider x:Name="PositionSlider" Grid.Column="1" Minimum="0" Maximum="1" Margin="8,0"
+              PreviewMouseLeftButtonDown="PositionSlider_DragStarted"
+              PreviewMouseLeftButtonUp="PositionSlider_DragCompleted"/>
+      <TextBlock x:Name="TotalText" Grid.Column="2" Text="0:00" Width="48" TextAlignment="Right"/>
+    </Grid>
+
+    <Grid Grid.Row="6">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <StackPanel VerticalAlignment="Center">
+        <DockPanel>
+          <TextBlock Text="システム" Foreground="#72B7E8" FontWeight="SemiBold" Width="58"/>
+          <TextBlock x:Name="StatusText" Foreground="#AEB6C2" Text="準備完了" TextTrimming="CharacterEllipsis"/>
+        </DockPanel>
+        <DockPanel Margin="0,3,0,0">
+          <TextBlock Text="再生" Foreground="#7BD88F" FontWeight="SemiBold" Width="58"/>
+          <TextBlock x:Name="PlaybackStatusText" Foreground="#C4D1C7" Text="停止" TextTrimming="CharacterEllipsis"/>
+        </DockPanel>
+      </StackPanel>
+      <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button x:Name="SelectNowPlayingButton" Content="↪ 再生中へ" Click="SelectNowPlaying_Click"
+                Width="126" IsEnabled="False" ToolTip="再生中のアルバムと曲を一覧で選択して表示"/>
+        <Button x:Name="ShuffleButton" Content="⤨ OFF" Click="Shuffle_Click" Width="76" ToolTip="シャッフル再生を切り替え"/>
+        <Button x:Name="RepeatButton" Content="↻ OFF" Click="Repeat_Click" Width="76" ToolTip="リピート範囲を切り替え"/>
+        <Border Width="1" Height="27" Background="#46505C" Margin="7,0"/>
+        <Button x:Name="PreviousButton" Content="◀ 前へ" Click="Previous_Click" Width="80"/>
+        <Button x:Name="PlayButton" Content="▶ 再生" Click="PlayPause_Click" Width="90"/>
+        <Button x:Name="StopButton" Content="■ 停止" Click="Stop_Click" Width="70"/>
+        <Button x:Name="NextButton" Content="次へ ▶" Click="Next_Click" Width="72"/>
+        <Border Width="1" Height="27" Background="#46505C" Margin="10,0"/>
+        <Button x:Name="PlaybackRateButton" Content="再生速度  1.0×  │  音程 ✓" Width="184"
+                Padding="10,6" Margin="3,3,8,3" Background="#243746" BorderBrush="#3E6A88"
+                Foreground="#D7EEFF" Click="PlaybackRateMenu_Click"
+                ToolTip="再生速度と音程維持を変更">
+          <Button.ContextMenu>
+            <ContextMenu x:Name="PlaybackRateMenu">
+              <MenuItem Header="再生速度" IsEnabled="False" FontWeight="SemiBold"/>
+              <Separator/>
+              <MenuItem Header="0.5×" Tag="0.5" IsCheckable="True" Click="PlaybackSpeedMenu_Click"/>
+              <MenuItem Header="0.75×" Tag="0.75" IsCheckable="True" Click="PlaybackSpeedMenu_Click"/>
+              <MenuItem Header="1.0×（標準）" Tag="1" IsCheckable="True" IsChecked="True" Click="PlaybackSpeedMenu_Click"/>
+              <MenuItem Header="1.25×" Tag="1.25" IsCheckable="True" Click="PlaybackSpeedMenu_Click"/>
+              <MenuItem Header="1.5×" Tag="1.5" IsCheckable="True" Click="PlaybackSpeedMenu_Click"/>
+              <MenuItem Header="2.0×" Tag="2" IsCheckable="True" Click="PlaybackSpeedMenu_Click"/>
+              <Separator/>
+              <MenuItem x:Name="PreservePitchMenuItem" Header="音程を維持" IsCheckable="True" IsChecked="True"
+                        Click="PreservePitchMenu_Click" ToolTip="速度を変えても声や楽器の音程を保ちます"/>
+            </ContextMenu>
+          </Button.ContextMenu>
+        </Button>
+        <Border Width="1" Height="27" Background="#46505C" Margin="0,0,10,0"/>
+        <StackPanel x:Name="VolumeControls" Orientation="Horizontal" ToolTipService.ShowOnDisabled="True">
+          <TextBlock Text="音量" Margin="0,0,6,0" VerticalAlignment="Center" FontWeight="SemiBold"/>
+          <Slider x:Name="VolumeSlider" Width="190" Minimum="0" Maximum="2" Value="0.8"
+                  SmallChange="0.01" LargeChange="0.1" IsSnapToTickEnabled="False" ValueChanged="VolumeSlider_ValueChanged"/>
+          <TextBlock x:Name="VolumeValueText" Text="80%" Width="45" Margin="8,0,0,0"
+                     TextAlignment="Right" VerticalAlignment="Center" FontWeight="SemiBold"/>
+        </StackPanel>
+      </StackPanel>
+    </Grid>
+  </Grid>
+</Window>

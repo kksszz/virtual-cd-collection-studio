@@ -1,0 +1,78 @@
+<Window x:Class="ZipMp3Player.TagEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="アルバムのタグを編集" Width="1220" Height="660" MinWidth="900" MinHeight="520"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip"
+        Background="#15171B" Foreground="#F2F3F5">
+  <Window.Resources>
+    <Style TargetType="TextBlock"><Setter Property="Foreground" Value="#F2F3F5"/></Style>
+    <Style TargetType="Button"><Setter Property="Foreground" Value="#F2F3F5"/><Setter Property="Background" Value="#2C313A"/><Setter Property="BorderBrush" Value="#4A5260"/></Style>
+    <Style TargetType="TextBox"><Setter Property="Foreground" Value="#18202A"/><Setter Property="Background" Value="#F3F4F6"/><Setter Property="CaretBrush" Value="#18202A"/></Style>
+  </Window.Resources>
+  <Grid Margin="18">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <DockPanel>
+      <TextBlock Text="アルバムのタグを一括編集" FontSize="21" FontWeight="SemiBold"/>
+      <TextBlock x:Name="TrackCountText" DockPanel.Dock="Right" Foreground="#AEB8C4" VerticalAlignment="Center"/>
+    </DockPanel>
+    <Border Grid.Row="1" Margin="0,12,0,12" Padding="10" Background="#1D2B36" BorderBrush="#36536A" BorderThickness="1" CornerRadius="4">
+      <StackPanel>
+        <TextBlock x:Name="SourceTypeText" FontWeight="SemiBold" Foreground="#8FD2FF"/>
+        <TextBlock x:Name="SourcePathText" Margin="0,3,0,0" Foreground="#BBC4CF" TextTrimming="CharacterEllipsis"/>
+        <TextBlock Text="音声は再エンコードしません。タグ編集バックアップの有無と保存先は設定画面で変更できます。"
+                   Margin="0,5,0,0" Foreground="#A9D8B5"/>
+      </StackPanel>
+    </Border>
+    <DockPanel Grid.Row="2" Margin="0,0,0,8">
+      <Button Content="選択セルの値を全曲へ適用" Padding="11,5" Click="ApplySelectedCellToAll_Click"
+              ToolTip="アーティストやアルバムなど、現在のセルと同じ列へ一括適用"/>
+      <TextBlock x:Name="BatchStatusText" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#8FD2FF"/>
+      <TextBlock DockPanel.Dock="Right" Text="複数セルのコピー・貼り付け: Ctrl+C / Ctrl+V" VerticalAlignment="Center" Foreground="#AEB8C4"/>
+    </DockPanel>
+    <DataGrid x:Name="TagsGrid" Grid.Row="3" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
+              SelectionMode="Extended" SelectionUnit="CellOrRowHeader" ClipboardCopyMode="ExcludeHeader"
+              PreviewKeyDown="TagsGrid_PreviewKeyDown" Background="#1E2127" Foreground="#F2F3F5"
+              RowBackground="#1E2127" AlternatingRowBackground="#23272E" BorderBrush="#414957"
+              GridLinesVisibility="All" HorizontalGridLinesBrush="#353B45" VerticalGridLinesBrush="#353B45">
+      <DataGrid.ColumnHeaderStyle>
+        <Style TargetType="DataGridColumnHeader">
+          <Setter Property="Background" Value="#2B313A"/><Setter Property="Foreground" Value="#F2F3F5"/>
+          <Setter Property="BorderBrush" Value="#4A5260"/><Setter Property="BorderThickness" Value="0,0,1,1"/>
+          <Setter Property="Padding" Value="7,5"/><Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+      </DataGrid.ColumnHeaderStyle>
+      <DataGrid.RowHeaderStyle>
+        <Style TargetType="DataGridRowHeader">
+          <Setter Property="Background" Value="#2B313A"/><Setter Property="Foreground" Value="#F2F3F5"/>
+          <Setter Property="BorderBrush" Value="#4A5260"/>
+        </Style>
+      </DataGrid.RowHeaderStyle>
+      <DataGrid.CellStyle>
+        <Style TargetType="DataGridCell">
+          <Setter Property="Foreground" Value="#F2F3F5"/><Setter Property="BorderBrush" Value="#353B45"/>
+          <Style.Triggers>
+            <Trigger Property="IsSelected" Value="True">
+              <Setter Property="Background" Value="#236FA1"/><Setter Property="Foreground" Value="White"/>
+            </Trigger>
+          </Style.Triggers>
+        </Style>
+      </DataGrid.CellStyle>
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="ファイル" Binding="{Binding DisplayFileName}" IsReadOnly="True" Width="170"/>
+        <DataGridTextColumn Header="#" Binding="{Binding TrackNumber, UpdateSourceTrigger=PropertyChanged}" Width="48"/>
+        <DataGridTextColumn Header="タイトル" Binding="{Binding Title, UpdateSourceTrigger=PropertyChanged}" Width="2*" MinWidth="150"/>
+        <DataGridTextColumn Header="アーティスト" Binding="{Binding Artist, UpdateSourceTrigger=PropertyChanged}" Width="1.5*" MinWidth="130"/>
+        <DataGridTextColumn Header="アルバム" Binding="{Binding Album, UpdateSourceTrigger=PropertyChanged}" Width="1.5*" MinWidth="130"/>
+        <DataGridTextColumn Header="年" Binding="{Binding Year, UpdateSourceTrigger=PropertyChanged}" Width="65"/>
+        <DataGridTextColumn Header="ジャンル" Binding="{Binding Genre, UpdateSourceTrigger=PropertyChanged}" Width="110"/>
+        <DataGridTextColumn Header="Disc" Binding="{Binding DiscNumber, UpdateSourceTrigger=PropertyChanged}" Width="55"/>
+        <DataGridTextColumn Header="Disc総数" Binding="{Binding DiscCount, UpdateSourceTrigger=PropertyChanged}" Width="72"/>
+      </DataGrid.Columns>
+    </DataGrid>
+    <DockPanel Grid.Row="4" Margin="0,14,0,0" LastChildFill="False">
+      <TextBlock x:Name="ValidationText" DockPanel.Dock="Left" Foreground="#FFB46B" VerticalAlignment="Center" TextWrapping="Wrap" Width="700"/>
+      <Button Content="キャンセル" DockPanel.Dock="Right" Width="98" Padding="9,7" Margin="8,0,0,0" IsCancel="True"/>
+      <Button Content="まとめて保存" DockPanel.Dock="Right" Width="126" Padding="9,7" Click="Save_Click" IsDefault="True"/>
+    </DockPanel>
+  </Grid>
+</Window>
