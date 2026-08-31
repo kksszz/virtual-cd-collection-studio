@@ -2,12 +2,15 @@ using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 using System.IO.Compression;
 using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using ZipMp3Player;
 
 var temporaryFolder = Path.Combine(Path.GetTempPath(), "ZipMp3Player-FormatTest-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(temporaryFolder);
 try
 {
+    VerifyIncompleteMp3Frames(temporaryFolder);
     var wavPath = Path.Combine(temporaryFolder, "01 WAV動作確認.wav");
     var signal = new SignalGenerator(44100, 2) { Frequency = 440, Gain = 0.15, Type = SignalGeneratorType.Sin };
     WaveFileWriter.CreateWaveFile16(wavPath, signal.Take(TimeSpan.FromSeconds(1)));
@@ -51,6 +54,7 @@ try
     Require(deflatedTrack.SampleRate == 44100 && deflatedTrack.Duration.TotalSeconds > 0.9,
         "Deflate ZIP scanned properties");
     DecodeSamples(deflatedTrack, "Deflate ZIP playback decode");
+    VerifyCachedCbr(deflatedTrack);
     Require(ExistingTemporaryEntries(extractionFolder).SetEquals(temporaryEntriesBefore),
         "Deflate ZIP temporary extraction cleanup");
 
@@ -83,11 +87,34 @@ try
     if (args.Length > 0 && File.Exists(args[0]))
     {
         var suppliedAlbum = ZipAlbumReader.Open(args[0]);
+        var cachePath = Environment.GetEnvironmentVariable("ZIPMP3PLAYER_TEST_CACHE");
+        if (!string.IsNullOrEmpty(cachePath))
+        {
+            // Read the user's existing cache without changing or re-scanning it.
+            var cachedAlbums = JsonNode.Parse(File.ReadAllText(cachePath))!["Albums"]!.Deserialize<List<ZipAlbum>>()!;
+            var cachedAlbum = cachedAlbums.First(album => string.Equals(album.Path, args[0], StringComparison.OrdinalIgnoreCase));
+            var cachedCbrTracks = cachedAlbum.Tracks.Where(track => track.IsCbr).ToList();
+            Require(cachedCbrTracks.Count > 0, "Saved library CBR fixture");
+            foreach (var cachedTrack in cachedCbrTracks)
+            {
+                Require(cachedTrack.IsSupported, "Saved library CBR support: " + cachedTrack.Title);
+                DecodeSamples(cachedTrack, "Saved library CBR decode: " + cachedTrack.Title);
+                VerifySeek(cachedTrack, "Saved library CBR seek: " + cachedTrack.Title, [0.5]);
+            }
+            Console.WriteLine($"Existing cache: {cachedCbrTracks.Count} CBR tracks restored, decoded and sought without re-scan.");
+        }
         Require(suppliedAlbum.Tracks.Count > 0, "Supplied ZIP track scan");
         Require(suppliedAlbum.Tracks.All(track => track.IsSupported), "Supplied ZIP support states");
         Require(suppliedAlbum.Tracks.All(track => track.Duration > TimeSpan.Zero && track.BitrateKbps > 0),
             "Supplied ZIP scanned properties");
+        if (args.Skip(1).Any(argument => argument.Equals("--expect-vbr", StringComparison.OrdinalIgnoreCase)))
+            Require(suppliedAlbum.Tracks.Any(track => !track.IsCbr), "Supplied ZIP VBR detection");
         DecodeSamples(suppliedAlbum.Tracks[0], "Supplied ZIP playback decode");
+        VerifySeek(suppliedAlbum.Tracks[0], "Supplied ZIP seek track 1", [0.1, 0.5, 0.9]);
+        foreach (var track in suppliedAlbum.Tracks.Skip(1))
+            VerifySeek(track, $"Supplied ZIP seek track {track.TrackNumber}", [0.5]);
+        Console.WriteLine(string.Join(Environment.NewLine, suppliedAlbum.Tracks.Select(track =>
+            $"  {track.TrackNumber:00}: {(track.IsCbr ? "CBR" : "VBR")} {track.BitrateKbps} kbps, {track.Duration.TotalSeconds:0.000} sec")));
         Console.WriteLine($"Supplied ZIP test passed: {suppliedAlbum.Tracks.Count} tracks.");
     }
 
@@ -109,12 +136,88 @@ static void DecodeSamples(ZipTrack track, string name)
     Require(read > 0 && buffer.Take(read).All(float.IsFinite), name);
 }
 
+static void VerifyCachedCbr(ZipTrack track)
+{
+    Require(track.IsCbr, "CBR cache fixture");
+    var json = JsonSerializer.SerializeToNode(track, new JsonSerializerOptions { IgnoreReadOnlyProperties = true })!.AsObject();
+    foreach (var hasFalseFlag in new[] { false, true })
+    {
+        // Pre-0.46 caches omit the flag; 0.46 can re-save those tracks with false.
+        json.Remove("IsMp3Valid");
+        if (hasFalseFlag) json["IsMp3Valid"] = false;
+        var restored = json.Deserialize<ZipTrack>()!;
+        Require(restored.IsSupported, $"Legacy CBR cache support (false flag: {hasFalseFlag})");
+        Require(restored.SupportText == track.SupportText, "Legacy CBR status consistency");
+        DecodeSamples(restored, "Legacy CBR cache decode");
+        VerifySeek(restored, "Legacy CBR cache seek", [0.5]);
+        Require(JsonSerializer.Deserialize<ZipTrack>(JsonSerializer.Serialize(restored))!.IsSupported,
+            "Legacy CBR re-save/reload support");
+    }
+    foreach (var (field, value) in new (string, JsonNode?)[]
+    {
+        ("IsEncrypted", JsonValue.Create(true)), ("ReadError", JsonValue.Create("Invalid ZIP")),
+        ("CompressionMethod", JsonValue.Create(99)), ("IsCbr", JsonValue.Create(false)),
+        ("BitrateKbps", JsonValue.Create(0)), ("SampleRate", JsonValue.Create(0)),
+        ("Duration", JsonValue.Create("00:00:00"))
+    })
+    {
+        var invalid = json.DeepClone().AsObject();
+        invalid[field] = value;
+        Require(!invalid.Deserialize<ZipTrack>()!.IsSupported, $"Invalid legacy track still blocked: {field}");
+    }
+    Console.WriteLine("Legacy CBR cache compatibility, decode, seek and invalid-track checks passed.");
+}
+
+static void VerifyIncompleteMp3Frames(string parent)
+{
+    var folder = Path.Combine(parent, "FrameValidation");
+    Directory.CreateDirectory(folder);
+    // MPEG-1 Layer III, 128 kbps, 44.1 kHz: 417 bytes per unpadded frame.
+    foreach (var (name, length) in new[]
+    {
+        ("one.mp3", 417), ("two.mp3", 834),
+        ("truncated-third.mp3", 838), ("three.mp3", 1251)
+    })
+    {
+        var bytes = new byte[length];
+        for (var offset = 0; offset + 4 <= length; offset += 417)
+            new byte[] { 0xff, 0xfb, 0x90, 0x00 }.CopyTo(bytes, offset);
+        File.WriteAllBytes(Path.Combine(folder, name), bytes);
+    }
+    var tracks = ZipAlbumReader.OpenFolder(folder).Tracks;
+    foreach (var track in tracks)
+    {
+        var expected = track.FileName == "three.mp3";
+        Require(track.IsSupported == expected && track.IsMp3Valid == expected && track.IsCbr == expected,
+            $"Complete-frame validation: {track.FileName}");
+    }
+}
+
 static void PrintReaderFormat(ZipTrack track, string name)
 {
     var readerType = typeof(ZipAlbumReader).Assembly.GetType("ZipMp3Player.TrackAudioReader")!;
     using var owner = (IDisposable)readerType.GetMethod("Open", BindingFlags.Static | BindingFlags.Public)!.Invoke(null, [track])!;
     var reader = (WaveStream)readerType.GetProperty("Reader")!.GetValue(owner)!;
     Console.WriteLine($"{name}: {reader.WaveFormat}; encoding={reader.WaveFormat.Encoding}; bits={reader.WaveFormat.BitsPerSample}; block={reader.WaveFormat.BlockAlign}");
+}
+
+static void VerifySeek(ZipTrack track, string name, IReadOnlyList<double> ratios)
+{
+    var readerType = typeof(ZipAlbumReader).Assembly.GetType("ZipMp3Player.TrackAudioReader")!;
+    using var owner = (IDisposable)readerType.GetMethod("Open", BindingFlags.Static | BindingFlags.Public)!.Invoke(null, [track])!;
+    var reader = (WaveStream)readerType.GetProperty("Reader")!.GetValue(owner)!;
+    var samples = reader.ToSampleProvider();
+    var buffer = new float[4096];
+    foreach (var ratio in ratios)
+    {
+        var requested = TimeSpan.FromTicks((long)(reader.TotalTime.Ticks * ratio));
+        reader.CurrentTime = requested;
+        Require(Math.Abs((reader.CurrentTime - requested).TotalMilliseconds) <= 100, $"{name} {ratio:P0} position");
+        var beforeRead = reader.CurrentTime;
+        var read = samples.Read(buffer, 0, buffer.Length);
+        Require(read > 0 && buffer.Take(read).All(float.IsFinite), $"{name} {ratio:P0} decode");
+        Require(reader.CurrentTime > beforeRead, $"{name} {ratio:P0} advances");
+    }
 }
 
 static void VerifyFaithfulProvider(ZipTrack track, string name)

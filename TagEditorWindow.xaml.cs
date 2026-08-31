@@ -20,9 +20,12 @@ public partial class TagEditorWindow : Window
         TrackCountText.Text = LocalizationService.Select($"{_rows.Count}曲", $"{_rows.Count} tracks");
         var isArchive = album.Tracks.FirstOrDefault()?.IsArchiveEntry == true;
         SourceTypeText.Text = isArchive
-            ? "ZIP.MP3：全曲の変更をまとめて1回だけ再構築"
-            : "通常フォルダ：変更した各音楽ファイルへ実タグを書き込み";
+            ? LocalizationService.Select("ZIP.MP3：全曲の変更をまとめて1回だけ再構築", "ZIP.MP3: rebuild once for all edited tracks")
+            : LocalizationService.Select("通常フォルダ：変更した各音楽ファイルへ実タグを書き込み", "Folder: write real tags to each edited audio file");
         SourcePathText.Text = album.Path;
+        TagEditNoticeText.Text = LocalizationService.Select(
+            "音声は再エンコードしません。タグ編集バックアップの有無と保存先は設定画面で変更できます。",
+            "Audio is not re-encoded. Tag-edit backups and their destination can be changed in Settings.");
         LocalizationService.Apply(this);
         Loaded += (_, _) =>
         {
@@ -180,6 +183,10 @@ public partial class TagEditorWindow : Window
         public string TrackNumber { get; set; }
         public string DiscNumber { get; set; }
         public string DiscCount { get; set; }
+        public long YearSort => ParseSortNumber(Year);
+        public long TrackNumberSort => ParseSortNumber(TrackNumber);
+        public long DiscNumberSort => ParseSortNumber(DiscNumber);
+        public long DiscCountSort => ParseSortNumber(DiscCount);
 
         public TagEditRow(ZipTrack track)
         {
@@ -195,5 +202,6 @@ public partial class TagEditorWindow : Window
 
         public bool IsChanged(TrackTagValues values) => values != _original;
         private static uint Parse(string value) => uint.TryParse(value, out var parsed) ? parsed : 0;
+        private static long ParseSortNumber(string value) => uint.TryParse(value, out var parsed) ? parsed : long.MaxValue;
     }
 }

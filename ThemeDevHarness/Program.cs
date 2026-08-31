@@ -2,6 +2,8 @@ using System.IO;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ZipMp3Player;
@@ -18,9 +20,23 @@ internal static class Program
         var sample = Environment.GetEnvironmentVariable("ZIPMP3PLAYER_TEST_ARCHIVE") ?? string.Empty;
         var pixels = new byte[] { 10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255 };
         var testImage = BitmapSource.Create(2, 2, 96, 96, PixelFormats.Bgra32, null, pixels, 8);
+        VerifyBlankCaseArtwork(testImage);
+        VerifyArtworkRoleSelection(data, testImage);
+        VerifyCoverFlowPan(testImage);
 
         var entryType = typeof(MainWindow).Assembly.GetType("ZipMp3Player.PlaybackUsageEntry")!;
         var entryList = Activator.CreateInstance(typeof(List<>).MakeGenericType(entryType))!;
+        for (var index = 0; index < 5; index++)
+        {
+            var entry = Activator.CreateInstance(entryType)!;
+            entryType.GetProperty("Title")!.SetValue(entry, $"テスト曲 {index + 1}");
+            entryType.GetProperty("Artist")!.SetValue(entry, $"アーティスト {index + 1}");
+            entryType.GetProperty("Album")!.SetValue(entry, $"アルバム {index + 1}");
+            entryType.GetProperty("TotalPlayedSeconds")!.SetValue(entry, 3600.0 - index * 400);
+            entryType.GetProperty("PlayCount")!.SetValue(entry, 20 - index);
+            entryType.GetProperty("LastPlayedLocal")!.SetValue(entry, DateTimeOffset.Now.AddMinutes(-index));
+            ((System.Collections.IList)entryList).Add(entry);
+        }
         var usageWindow = (Window)Activator.CreateInstance(typeof(UsageWindow), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
             binder: null, args: [entryList], culture: null)!;
         (Window Window, bool Show)[] windows =
@@ -34,7 +50,8 @@ internal static class Program
                 Tracks =
                 [
                     new ZipTrack { FileName = "01.mp3", SourcePath = @"C:\Music\Batch.zip.mp3", IsArchiveEntry = true, Title = "One", Artist = "Old A", Album = "Old Album", TrackNumber = 1 },
-                    new ZipTrack { FileName = "02.mp3", SourcePath = @"C:\Music\Batch.zip.mp3", IsArchiveEntry = true, Title = "Two", Artist = "Old B", Album = "Old Album", TrackNumber = 2 }
+                    new ZipTrack { FileName = "10.mp3", SourcePath = @"C:\Music\Batch.zip.mp3", IsArchiveEntry = true, Title = "Ten", Artist = "Old B", Album = "Old Album", TrackNumber = 10 },
+                    new ZipTrack { FileName = "02.mp3", SourcePath = @"C:\Music\Batch.zip.mp3", IsArchiveEntry = true, Title = "Two", Artist = "Old C", Album = "Old Album", TrackNumber = 2 }
                 ]
             }) { ShowInTaskbar = false }, true),
             (new ArtworkLookupWindow("", "") { ShowInTaskbar = false }, false)
@@ -333,7 +350,8 @@ internal static class Program
                     var albumList = (ListBox)mainWindow.FindName("AlbumList");
                     var albumSort = (ComboBox)mainWindow.FindName("AlbumSortCombo");
                     var artistTree = (TreeView)mainWindow.FindName("ArtistTree");
-                    albumFilter.Text = "TOKYO WARHEART";
+                    albumFilter.Text = string.Join(' ', Path.GetFileName(sample)
+                        .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Take(2));
                     if (albumList.Items.Count == 0) throw new InvalidOperationException("Album multi-word filter match test failed.");
                     albumSort.SelectedIndex = 2;
                     albumFilter.Text = "__NO_SUCH_ALBUM__";
@@ -410,6 +428,23 @@ internal static class Program
             if (window is TagEditorWindow tagEditor)
             {
                 var grid = (DataGrid)tagEditor.FindName("TagsGrid");
+                var sourceType = (TextBox)tagEditor.FindName("SourceTypeText");
+                var sourcePath = (TextBox)tagEditor.FindName("SourcePathText");
+                var tagEditNotice = (TextBox)tagEditor.FindName("TagEditNoticeText");
+                sourcePath.SelectAll();
+                if (!sourceType.IsReadOnly || !sourcePath.IsReadOnly || !tagEditNotice.IsReadOnly
+                    || sourcePath.SelectedText != sourcePath.Text)
+                    throw new InvalidOperationException("Tag editor selectable source information test failed.");
+                var trackNumberColumn = grid.Columns[1];
+                var sortedView = CollectionViewSource.GetDefaultView(grid.ItemsSource);
+                sortedView.SortDescriptions.Clear();
+                sortedView.SortDescriptions.Add(new System.ComponentModel.SortDescription(
+                    trackNumberColumn.SortMemberPath, System.ComponentModel.ListSortDirection.Ascending));
+                var sortedTrackNumbers = sortedView.Cast<object>()
+                    .Select(row => (string)row.GetType().GetProperty("TrackNumber")!.GetValue(row)!).ToArray();
+                if (trackNumberColumn.SortMemberPath != "TrackNumberSort"
+                    || !sortedTrackNumbers.SequenceEqual(["1", "2", "10"]))
+                    throw new InvalidOperationException("Tag editor numeric track sorting test failed.");
                 var rows = grid.Items.Cast<object>().ToList();
                 var artist = rows[0].GetType().GetProperty("Artist")!;
                 artist.SetValue(rows[0], "Batch Artist");
@@ -438,6 +473,38 @@ internal static class Program
                     || !Equals(((Button)window.FindName("ExitApplicationButton")).Content, "アプリを終了"))
                     throw new InvalidOperationException($"Music-folder checkbox settings test failed. items={folderItems.Count}, enabled={folderItems.Count(folder => folder.IsEnabled)}, count='{countText.Text}', minimize={minimizeCheck.IsChecked}, language={((ComboBox)window.FindName("LanguageCombo")).SelectedIndex}");
             }
+            if (window is UsageWindow)
+            {
+                var tabs = VisualDescendants(window).OfType<TabControl>().Single();
+                foreach (var index in new[] { 0, 1, 0 })
+                {
+                    tabs.SelectedIndex = index;
+                    window.UpdateLayout();
+                    if (index == 0)
+                    {
+                        foreach (var name in new[] { "TopArtistList", "TopAlbumList", "TopTrackList", "RecentTrackList" })
+                        {
+                            var list = (ItemsControl)window.FindName(name);
+                            var boundNames = VisualDescendants(list).OfType<TextBlock>()
+                                .Where(text => BindingOperations.GetBinding(text, TextBlock.TextProperty)?.Path.Path == "Name").ToList();
+                            if (boundNames.Count != 5 || boundNames.Any(text => string.IsNullOrEmpty(text.Text) || IsDark(text.Foreground)))
+                                failures.Add("UsageWindow/" + name + ": unreadable bound names");
+                        }
+                    }
+                    Inspect(window, "UsageWindow/tab" + index, failures);
+                }
+                var preview = Environment.GetEnvironmentVariable("ZIPMP3PLAYER_TEST_USAGE_PREVIEW");
+                if (!string.IsNullOrEmpty(preview))
+                {
+                    var bitmap = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+                    bitmap.Render(window);
+                    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(preview))!);
+                    using var imageFile = File.Create(preview);
+                    var encoder = new PngBitmapEncoder();
+                    encoder.Frames.Add(BitmapFrame.Create(bitmap));
+                    encoder.Save(imageFile);
+                }
+            }
             Inspect(window, window.GetType().Name, failures);
             window.Close();
         }
@@ -447,6 +514,41 @@ internal static class Program
             restored.Show();
             typeof(MainWindow).GetMethod("OpenAlbum", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(restored, [sample]);
             restored.UpdateLayout();
+            var restoredAlbumList = (ListBox)restored.FindName("AlbumList");
+            var restoredAlbumItem = restoredAlbumList.Items.Cast<object>().First();
+            var restoredAlbumType = restoredAlbumItem.GetType();
+            var artworkRoleCombo = (ComboBox)restored.FindName("ArtworkRoleCombo");
+            artworkRoleCombo.SelectedItem = artworkRoleCombo.Items.OfType<ComboBoxItem>()
+                .First(item => Equals(item.Tag, "Front"));
+            restored.UpdateLayout();
+            if (!Directory.EnumerateFiles(data, "artwork-roles.json", SearchOption.AllDirectories)
+                .Any(path => File.ReadAllText(path).Contains("\"Front\"", StringComparison.Ordinal)))
+                throw new InvalidOperationException("Artwork role persistence test failed.");
+            restoredAlbumType.GetMethod("EnsureCaseArtworkLoaded")!.Invoke(restoredAlbumItem, null);
+            if (restoredAlbumType.GetProperty("CoverThumbnail")!.GetValue(restoredAlbumItem) is null
+                || restoredAlbumType.GetProperty("CaseFrontThumbnail")!.GetValue(restoredAlbumItem) is null
+                || restoredAlbumType.GetProperty("BackCoverThumbnail")!.GetValue(restoredAlbumItem) is null
+                || restoredAlbumType.GetProperty("SpineThumbnail")!.GetValue(restoredAlbumItem) is null
+                || restoredAlbumType.GetProperty("DiscThumbnail")!.GetValue(restoredAlbumItem) is null)
+                throw new InvalidOperationException("Composite CD artwork role inference test failed.");
+            ((ComboBox)restored.FindName("AlbumSortCombo")).SelectedIndex = 3;
+            restored.UpdateLayout();
+            var coverFlow = (JewelCaseCoverFlow)restored.FindName("AlbumCoverFlow");
+            if (coverFlow.Visibility != Visibility.Visible || coverFlow.ItemCount != 1
+                || coverFlow.SelectedFrontCover is null
+                || !string.Equals(coverFlow.SelectedKey, sample, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Jewel-case cover-flow mode test failed.");
+            var snapshotPath = Environment.GetEnvironmentVariable("ZIPMP3PLAYER_COVERFLOW_SNAPSHOT");
+            if (!string.IsNullOrWhiteSpace(snapshotPath) && coverFlow.ActualWidth > 0 && coverFlow.ActualHeight > 0)
+            {
+                var bitmap = new RenderTargetBitmap((int)Math.Ceiling(coverFlow.ActualWidth),
+                    (int)Math.Ceiling(coverFlow.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+                bitmap.Render(coverFlow);
+                var encoder = new PngBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(bitmap));
+                using var output = File.Create(snapshotPath);
+                encoder.Save(output);
+            }
             if (((ScrollViewer)restored.FindName("ExtensionPanel")).Visibility != Visibility.Collapsed)
                 throw new InvalidOperationException("Extension panel state persistence test failed.");
             if (VisualDescendants(restored).OfType<Button>().Count(button =>
@@ -466,6 +568,11 @@ internal static class Program
         var partialLibraryPath = Path.Combine(data, "library.partial.json");
         File.WriteAllText(libraryPath, "{\"Version\":13,\"IsComplete\":true,\"Albums\":[]}");
         var cacheWindow = new MainWindow { ShowInTaskbar = false };
+        var loadCache = typeof(MainWindow).GetMethod("LoadLibraryCache", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var needsRefresh = typeof(MainWindow).GetField("_cacheNeedsRefresh", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        loadCache.Invoke(cacheWindow, null);
+        if (!(bool)needsRefresh.GetValue(cacheWindow)!)
+            throw new InvalidOperationException("Pre-VBR cache must request a metadata refresh.");
         typeof(MainWindow).GetField("_hasCompleteLibraryCache", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(cacheWindow, true);
         typeof(MainWindow).GetField("_libraryCacheComplete", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(cacheWindow, false);
         typeof(MainWindow).GetField("_scanGeneration", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(cacheWindow, 1);
@@ -474,6 +581,14 @@ internal static class Program
         if (!File.ReadAllText(libraryPath).Contains("\"IsComplete\":true")
             || !File.Exists(partialLibraryPath) || !File.ReadAllText(partialLibraryPath).Contains("\"IsComplete\":false"))
             throw new InvalidOperationException("Incomplete scan must not replace complete library cache.");
+        if (!File.ReadAllText(partialLibraryPath).Contains("\"Version\":14"))
+            throw new InvalidOperationException("Updated cache must persist the VBR schema version.");
+        typeof(MainWindow).GetField("_libraryCacheComplete", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(cacheWindow, true);
+        typeof(MainWindow).GetField("_completedScanGeneration", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(cacheWindow, 1);
+        typeof(MainWindow).GetMethod("SaveLibraryCache", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(cacheWindow, null);
+        loadCache.Invoke(cacheWindow, null);
+        if ((bool)needsRefresh.GetValue(cacheWindow)!)
+            throw new InvalidOperationException("A complete updated cache must not trigger another migration scan.");
         cacheWindow.Close();
         var englishSettings = new SettingsWindow([@"C:\Music"], [], false, data, "en") { ShowInTaskbar = false };
         englishSettings.Show();
@@ -506,6 +621,163 @@ internal static class Program
         if (Directory.Exists(data)) Directory.Delete(data, recursive: true);
         if (failures.Count > 0) throw new InvalidOperationException("Dark text detected: " + string.Join(", ", failures));
         Console.WriteLine("Theme and clipboard-to-album tests passed.");
+    }
+
+    private static void VerifyCoverFlowPan(BitmapSource image)
+    {
+        var item = new JewelCaseCoverFlowItem("one", "Pan test", "Artist", "ZIP", "White",
+            image, null, null, null, null, null, null, false);
+        foreach (var fullScreen in new[] { false, true })
+        {
+            var flow = (JewelCaseCoverFlow)Activator.CreateInstance(typeof(JewelCaseCoverFlow),
+                BindingFlags.Instance | BindingFlags.NonPublic, null, [fullScreen], null)!;
+            var window = new Window { Content = flow, Width = 800, Height = 600, ShowInTaskbar = false };
+            object? Field(string name) => typeof(JewelCaseCoverFlow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(flow);
+            void Call(string name, params object[] args) => typeof(JewelCaseCoverFlow).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(flow, args);
+            MouseButtonEventArgs ButtonEvent(RoutedEvent route, MouseButton button)
+            {
+                var e = new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, button) { RoutedEvent = route };
+                flow.RaiseEvent(e);
+                return e;
+            }
+            try
+            {
+                flow.SetItems([item, item with { Key = "two" }]);
+                window.Show();
+                window.UpdateLayout();
+                var yaw = (double)Field("_caseYaw")!;
+                var down = ButtonEvent(UIElement.PreviewMouseDownEvent, MouseButton.Middle);
+                if (!down.Handled || !(bool)Field("_isPanning")! || !flow.IsMouseCaptured)
+                    throw new InvalidOperationException("Middle button must capture and begin a pan.");
+                Call("PanBy", new Vector(80, -40));
+                var pan = (Vector)Field("_casePan")!;
+                if (pan.X <= 0 || pan.Y <= 0 || yaw != (double)Field("_caseYaw")! || flow.SelectedKey != "one")
+                    throw new InvalidOperationException("Pan must move right/up without rotating or changing albums.");
+                ButtonEvent(UIElement.PreviewMouseUpEvent, MouseButton.Left);
+                if (!(bool)Field("_isPanning")!) throw new InvalidOperationException("Left release must not end a middle drag.");
+                var up = ButtonEvent(UIElement.PreviewMouseUpEvent, MouseButton.Middle);
+                if (!up.Handled || (bool)Field("_isPanning")! || flow.IsMouseCaptured)
+                    throw new InvalidOperationException("Middle release must end pan and release capture.");
+                var wpfPan = (System.Windows.Media.Media3D.TranslateTransform3D)Field("_wpfPan")!;
+                if (wpfPan.OffsetX != pan.X || wpfPan.OffsetY != pan.Y)
+                    throw new InvalidOperationException("WPF pan transform not synchronized.");
+                if (Field("_dxScene") is object scene)
+                {
+                    var dxPan = (System.Windows.Media.Media3D.TranslateTransform3D)scene.GetType()
+                        .GetField("_viewPan", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
+                    if (dxPan.OffsetX != pan.X || dxPan.OffsetY != pan.Y)
+                        throw new InvalidOperationException("DirectX pan transform not synchronized.");
+                }
+                Call("AdjustZoom", 120);
+                Call("SetCaseOpen", true, false);
+                Call("SetDiscRemoved", true, false);
+                flow.SetItems([item, item with { Key = "two" }], "one");
+                if ((Vector)Field("_casePan")! != pan) throw new InvalidOperationException("Refresh/open/zoom must preserve pan.");
+                flow.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(flow)!, Environment.TickCount, Key.R)
+                    { RoutedEvent = UIElement.PreviewKeyDownEvent });
+                if ((Vector)Field("_casePan")! != new Vector()) throw new InvalidOperationException("R must reset position.");
+                Call("PanBy", new Vector(50, 30));
+                flow.SelectByKey("two");
+                if ((Vector)Field("_casePan")! != new Vector()) throw new InvalidOperationException("Album selection must reset position.");
+                ButtonEvent(UIElement.PreviewMouseDownEvent, MouseButton.Middle);
+                flow.ReleaseMouseCapture();
+                if ((bool)Field("_isPanning")!) throw new InvalidOperationException("Capture loss must cancel pan.");
+                flow.SetItems([]);
+                if (ButtonEvent(UIElement.PreviewMouseDownEvent, MouseButton.Middle).Handled || flow.IsMouseCaptured)
+                    throw new InvalidOperationException("Empty cover flow must not start a pan.");
+            }
+            finally
+            {
+                window.Close();
+                (Field("_dxScene") as IDisposable)?.Dispose();
+            }
+        }
+        Console.WriteLine("Middle-button pan, release, reset, capture-loss and fullscreen tests passed.");
+    }
+
+    private static void VerifyArtworkRoleSelection(string data, BitmapSource front)
+    {
+        var folder = Path.Combine(data, "ArtworkRoleTest");
+        Directory.CreateDirectory(folder);
+        void SaveImage(string name, BitmapSource image)
+        {
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(image));
+            using var file = File.Create(Path.Combine(folder, name));
+            encoder.Save(file);
+        }
+        SaveImage("Front.png", front);
+        var album = new ZipAlbum { Path = folder, Tracks = [new ZipTrack { Title = "Artwork test" }] };
+        var itemType = typeof(MainWindow).GetNestedType("AlbumListItem", BindingFlags.NonPublic)!;
+        var item = Activator.CreateInstance(itemType, [album])!;
+        var load = itemType.GetMethod("LoadCaseArtwork", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        void Check(bool hasBack, bool hasSpines)
+        {
+            var result = load.Invoke(item, ["", 300])!;
+            var tuple = (System.Runtime.CompilerServices.ITuple)result;
+            if (tuple[0] is null || (tuple[2] is not null) != hasBack
+                || (tuple[3] is not null) != hasSpines || (tuple[4] is not null) != hasSpines)
+                throw new InvalidOperationException("Artwork roles must keep missing panels blank and preserve explicit spine crops.");
+        }
+        Check(false, false);
+        var wide = BitmapSource.Create(300, 236, 96, 96, PixelFormats.Bgr32, null, new byte[300 * 236 * 4], 300 * 4);
+        SaveImage("Inlay.png", wide);
+        Check(false, false);
+        var roles = new Dictionary<string, string> { ["file:" + Path.GetFullPath(Path.Combine(folder, "Inlay.png"))] = "Back" };
+        var saveRoles = typeof(MainWindow).GetMethod("SaveArtworkRoles", BindingFlags.Static | BindingFlags.NonPublic)!;
+        saveRoles.Invoke(null, [folder, roles]);
+        Check(true, false);
+        roles[roles.Keys.Single()] = "BackWithSpines";
+        saveRoles.Invoke(null, [folder, roles]);
+        Check(true, true);
+        Console.WriteLine("Front-only, Inlay-only, manual Back and BackWithSpines role tests passed.");
+    }
+
+    private static void VerifyBlankCaseArtwork(BitmapSource image)
+    {
+        var blank = new JewelCaseCoverFlowItem("test", "Artwork test", "Artist", "ZIP", "White",
+            image, null, null, null, null, image, image, false);
+        var cases = new[]
+        {
+            (Item: blank, Back: false, Left: false, Right: false),
+            (Item: blank with { BackCover = image }, Back: true, Left: false, Right: false),
+            (Item: blank with { SpineCover = image }, Back: false, Left: true, Right: false),
+            (Item: blank with { RightSpineCover = image }, Back: false, Left: false, Right: true),
+            (Item: blank with { BackCover = image, SpineCover = image, RightSpineCover = image }, Back: true, Left: true, Right: true),
+            (Item: blank, Back: false, Left: false, Right: false)
+        };
+        var sceneType = typeof(MainWindow).Assembly.GetType("ZipMp3Player.DxJewelCaseScene")!;
+        using var scene = (IDisposable)Activator.CreateInstance(sceneType)!;
+        foreach (var test in cases)
+        {
+            sceneType.GetMethod("SetItem")!.Invoke(scene, [test.Item, -30.0, 0.0]);
+            var root = (HelixToolkit.Wpf.SharpDX.GroupModel3D)sceneType.GetField("_baseRoot", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
+            var materials = root.Children.OfType<HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D>()
+                .Select(mesh => mesh.Material).OfType<HelixToolkit.Wpf.SharpDX.PhongMaterial>().ToList();
+            var rear = materials.Single(material => material.Name == "Artwork");
+            var spines = materials.Where(material => material.Name == "Spine artwork").ToList();
+            if (spines.Count != 2 || rear.RenderDiffuseMap != test.Back
+                || spines[0].RenderDiffuseMap != test.Left || spines[1].RenderDiffuseMap != test.Right
+                || (rear.DiffuseMap is not null) != test.Back
+                || (spines[0].DiffuseMap is not null) != test.Left || (spines[1].DiffuseMap is not null) != test.Right)
+                throw new InvalidOperationException("DirectX must only map artwork assigned to each panel.");
+
+            var model = (System.Windows.Media.Media3D.ContainerUIElement3D)typeof(JewelCaseCoverFlow)
+                .GetMethod("CreateCaseModel", BindingFlags.Static | BindingFlags.NonPublic)!
+                .Invoke(null, [test.Item, 1, -30.0, 0.0, 1.0])!;
+            var body = (System.Windows.Media.Media3D.Model3DGroup)((System.Windows.Media.Media3D.ModelUIElement3D)model.Children[0]).Model;
+            // The first seven meshes form the shell; the next three are rear/left/right inserts.
+            var flags = new[] { test.Back, test.Left, test.Right };
+            for (var index = 0; index < flags.Length; index++)
+            {
+                var mesh = (System.Windows.Media.Media3D.GeometryModel3D)body.Children[7 + index];
+                var material = (System.Windows.Media.Media3D.MaterialGroup)mesh.Material;
+                var brush = material.Children.OfType<System.Windows.Media.Media3D.DiffuseMaterial>().Single().Brush;
+                if (flags[index] ? brush is not ImageBrush : brush is not SolidColorBrush)
+                    throw new InvalidOperationException("WPF missing inserts must be solid blank, never replacement artwork or gradients.");
+            }
+        }
+        Console.WriteLine("Blank Back/Spine and explicit per-side artwork tests passed in both renderers.");
     }
 
     private static void Inspect(DependencyObject parent, string path, List<string> failures)

@@ -131,58 +131,6 @@
           </StackPanel>
         </Expander>
 
-        <Expander Header="AIギター・リメイク（実験）" Foreground="White" IsExpanded="False" Margin="0,0,0,8">
-          <StackPanel Margin="8,7,4,5">
-            <TextBlock Text="選択曲の再生位置から60秒をAIで楽器分離し、ギター・ドラム・ベースを現代的な音へ再構築します。音質向上とEQも試聴時に統合されます。"
-                       Foreground="#AEB7C3" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,7"/>
-            <DockPanel Margin="0,0,0,5">
-              <TextBlock Text="スタイル" Width="58"/>
-              <ComboBox x:Name="AiGuitarStyleCombo" SelectedIndex="0">
-                <ComboBoxItem Content="モダンメタル" Tag="modern_metal"/>
-                <ComboBoxItem Content="現代的ハードロック" Tag="hard_rock"/>
-                <ComboBoxItem Content="タイトなスラッシュ" Tag="tight_thrash"/>
-                <ComboBoxItem Content="劇的AIリメイク（最大）" Tag="dramatic_remake"/>
-              </ComboBox>
-            </DockPanel>
-            <DockPanel Margin="0,0,0,5">
-              <TextBlock x:Name="AiMixValueText" DockPanel.Dock="Right" Text="70%" Width="42" TextAlignment="Right"/>
-              <TextBlock DockPanel.Dock="Left" Text="変化量" Width="58"/>
-              <Slider x:Name="AiMixSlider" Minimum="0" Maximum="100" Value="70" SmallChange="5" LargeChange="10"
-                      ValueChanged="AiMixSlider_ValueChanged"/>
-            </DockPanel>
-            <WrapPanel>
-              <Button x:Name="AiPrepareButton" Content="AI機能を準備" Click="AiPrepare_Click" Padding="8,5"/>
-              <Button x:Name="AiCreatePreviewButton" Content="60秒を作成" Click="AiCreatePreview_Click" Padding="8,5"/>
-              <Button x:Name="AiPlayPreviewButton" Content="AI版を試聴" Click="AiPlayPreview_Click" Padding="8,5" IsEnabled="False"/>
-              <Button x:Name="AiDeleteDataButton" Content="AIデータ削除" Click="AiDeleteData_Click" Padding="8,5"/>
-            </WrapPanel>
-            <ProgressBar x:Name="AiProgressBar" Minimum="0" Maximum="100" Value="0" Height="8" Margin="3,7,3,3"/>
-            <TextBlock x:Name="AiStatusText" Text="未準備（初回のみ追加データを取得します）" Foreground="#9EA7B3"
-                       FontSize="11" TextWrapping="Wrap" Margin="3,2,3,0"/>
-          </StackPanel>
-        </Expander>
-
-        <Expander Header="AIカラオケ（ボーカルレス）" Foreground="White" IsExpanded="False" Margin="0,0,0,8">
-          <StackPanel Margin="8,7,4,5">
-            <TextBlock Text="AIでボーカルだけを分離して伴奏を再構成します。AI環境はリメイク機能と共通です。"
-                       Foreground="#AEB7C3" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,7"/>
-            <DockPanel Margin="0,0,0,5">
-              <TextBlock x:Name="KaraokeRemovalValueText" DockPanel.Dock="Right" Text="100%" Width="42" TextAlignment="Right"/>
-              <TextBlock DockPanel.Dock="Left" Text="除去率" Width="58"/>
-              <Slider x:Name="KaraokeRemovalSlider" Minimum="0" Maximum="100" Value="100" SmallChange="5" LargeChange="10"
-                      ValueChanged="KaraokeRemovalSlider_ValueChanged"/>
-            </DockPanel>
-            <WrapPanel>
-              <Button x:Name="KaraokePrepareButton" Content="AI機能を準備" Click="AiPrepare_Click" Padding="8,5"/>
-              <Button x:Name="KaraokeCreateButton" Content="60秒を作成" Click="KaraokeCreate_Click" Padding="8,5"/>
-              <Button x:Name="KaraokePlayButton" Content="カラオケ版を試聴" Click="KaraokePlay_Click" Padding="8,5" IsEnabled="False"/>
-            </WrapPanel>
-            <ProgressBar x:Name="KaraokeProgressBar" Minimum="0" Maximum="100" Value="0" Height="8" Margin="3,7,3,3"/>
-            <TextBlock x:Name="KaraokeStatusText" Text="未作成" Foreground="#9EA7B3"
-                       FontSize="11" TextWrapping="Wrap" Margin="3,2,3,0"/>
-          </StackPanel>
-        </Expander>
-
         <Expander Header="ビジュアライザー" Foreground="White" IsExpanded="True" Margin="0,0,0,8">
           <StackPanel Margin="8,7,4,4">
             <DockPanel Margin="0,0,0,6">
@@ -283,8 +231,10 @@
               <ComboBoxItem Content="アーティスト順" Tag="Artist"/>
               <ComboBoxItem Content="アルバム名順" Tag="Album"/>
               <ComboBoxItem Content="アーティストツリー" Tag="ArtistTree"/>
+              <ComboBoxItem Content="カバーフロー" Tag="CoverFlow"/>
             </ComboBox>
           </Grid>
+          <Grid>
           <ListBox x:Name="AlbumList" Background="Transparent" Foreground="White" BorderThickness="0"
                    SelectionChanged="AlbumList_SelectionChanged" PreviewMouseRightButtonDown="AlbumList_RightButtonDown"
                    MouseDoubleClick="AlbumList_MouseDoubleClick"
@@ -294,6 +244,8 @@
                    ScrollViewer.VerticalScrollBarVisibility="Visible">
             <ListBox.ContextMenu>
               <ContextMenu Opened="AlbumContextMenu_Opened">
+                <MenuItem Header="3Dケースをフルスクリーン表示" Click="ShowAlbum3DFullScreen_Click"/>
+                <Separator/>
                 <MenuItem Header="エクスプローラーで場所を開く" Click="OpenAlbumInExplorer_Click"/>
                 <MenuItem Header="インターネットからアルバム画像を取得" Click="DownloadAlbumArtwork_Click"/>
                 <Separator/>
@@ -388,6 +340,8 @@
                     ScrollViewer.VerticalScrollBarVisibility="Visible">
             <TreeView.ContextMenu>
               <ContextMenu>
+                <MenuItem Header="3Dケースをフルスクリーン表示" Click="ShowAlbum3DFullScreen_Click"/>
+                <Separator/>
                 <MenuItem Header="エクスプローラーで場所を開く" Click="OpenAlbumInExplorer_Click"/>
                 <MenuItem Header="インターネットからアルバム画像を取得" Click="DownloadAlbumArtwork_Click"/>
                 <Separator/>
@@ -440,6 +394,11 @@
               </HierarchicalDataTemplate>
             </TreeView.ItemTemplate>
           </TreeView>
+            <local:JewelCaseCoverFlow x:Name="AlbumCoverFlow" Visibility="Collapsed"
+                                      SelectionChanged="AlbumCoverFlow_SelectionChanged"
+                                      ItemActivated="AlbumCoverFlow_ItemActivated"
+                                      ToolTip="マウスホイールまたは左右キーで選択、ダブルクリックまたはEnterで再生"/>
+          </Grid>
         </DockPanel>
       </Border>
       <GridSplitter Grid.Column="1" Grid.RowSpan="3" Width="8" HorizontalAlignment="Stretch" Background="#15171B"/>
@@ -528,6 +487,9 @@
                       Click="ImportAlbumArtwork_Click" ToolTip="保存したJPGまたはPNG画像をこのアルバムへ追加"/>
               <Button x:Name="ArtworkSearchButton" Content="画像を検索" Margin="1" Padding="10,4"
                       Click="DownloadAlbumArtwork_Click" ToolTip="MusicBrainzからアルバム画像を検索"/>
+              <Button x:Name="Album3DViewButton" Content="3Dビュー" Margin="1" Padding="10,4"
+                      Click="ShowAlbum3DFullScreen_Click"
+                      ToolTip="選択アルバムの3D CDケースをフルスクリーンで表示"/>
             </WrapPanel>
             <Border x:Name="AlbumImageViewport" Grid.Row="1" Background="#15171B" BorderBrush="#414957"
                     BorderThickness="1" CornerRadius="3" SizeChanged="AlbumImageViewport_SizeChanged">
@@ -541,6 +503,31 @@
               <Button x:Name="PreviousImageButton" Content="◀" Padding="10,4" Click="PreviousImage_Click" IsEnabled="False"/>
               <TextBlock x:Name="AlbumImageCountText" Text="0 / 0" Width="62" HorizontalAlignment="Center" TextAlignment="Center"/>
               <Button x:Name="NextImageButton" Content="▶" Padding="10,4" Click="NextImage_Click" IsEnabled="False"/>
+              <TextBlock Text="用途" Margin="9,0,3,0" VerticalAlignment="Center" Foreground="#A6AFBB"/>
+              <ComboBox x:Name="ArtworkRoleCombo" Width="196" Height="27" SelectedIndex="0"
+                        SelectionChanged="ArtworkRole_Changed" ToolTip="3D CDケースでの画像の割り当て">
+                <ComboBoxItem Content="自動" Tag="Auto"/>
+                <ComboBoxItem Content="Front" Tag="Front"/>
+                <ComboBoxItem Content="Front見開き（左＝裏／右＝表）" Tag="FrontSpread"/>
+                <ComboBoxItem Content="Front裏面" Tag="FrontInside"/>
+                <ComboBoxItem Content="Spine付きBack" Tag="BackWithSpines"/>
+                <ComboBoxItem Content="Back" Tag="Back"/>
+                <ComboBoxItem Content="Spine" Tag="Spine"/>
+                <ComboBoxItem Content="左Spine" Tag="LeftSpine"/>
+                <ComboBoxItem Content="右Spine" Tag="RightSpine"/>
+                <ComboBoxItem Content="Inlay" Tag="Inlay"/>
+                <ComboBoxItem Content="Disc" Tag="Disc"/>
+                <ComboBoxItem Content="Other" Tag="Other"/>
+              </ComboBox>
+              <TextBlock Text="トレイ" Margin="9,0,3,0" VerticalAlignment="Center" Foreground="#A6AFBB"/>
+              <ComboBox x:Name="TrayColorCombo" Width="78" Height="27" SelectedIndex="0"
+                        SelectionChanged="TrayColor_Changed" ToolTip="3D CDケースのインナートレイ色">
+                <ComboBoxItem Content="自動" Tag="Auto"/>
+                <ComboBoxItem Content="白" Tag="White"/>
+                <ComboBoxItem Content="黒" Tag="Black"/>
+                <ComboBoxItem Content="グレー" Tag="Gray"/>
+                <ComboBoxItem Content="透明" Tag="Clear"/>
+              </ComboBox>
               <Button x:Name="DeleteAlbumImageButton" Content="画像を削除" Padding="9,4" Margin="10,3,3,3"
                       Click="DeleteAlbumImage_Click" IsEnabled="False"
                       ToolTip="選択した貼り付け・追加・取得画像を削除"/>
@@ -573,7 +560,6 @@
                 </Button>
                 <Button Content="Google歌詞" Padding="9,4" Click="GoogleLyricsSearch_Click"
                         ToolTip="アーティスト名・曲名・アルバム名を使ってGoogleで歌詞検索"/>
-                <Button Content="再読込" Padding="9,4" Click="ReloadLyrics_Click"/>
                 <Button Content="歌詞を保存" Padding="9,4" Click="SaveLyrics_Click" Background="#276E9F"/>
               </WrapPanel>
             </DockPanel>

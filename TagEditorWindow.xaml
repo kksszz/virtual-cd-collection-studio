@@ -8,6 +8,17 @@
     <Style TargetType="TextBlock"><Setter Property="Foreground" Value="#F2F3F5"/></Style>
     <Style TargetType="Button"><Setter Property="Foreground" Value="#F2F3F5"/><Setter Property="Background" Value="#2C313A"/><Setter Property="BorderBrush" Value="#4A5260"/></Style>
     <Style TargetType="TextBox"><Setter Property="Foreground" Value="#18202A"/><Setter Property="Background" Value="#F3F4F6"/><Setter Property="CaretBrush" Value="#18202A"/></Style>
+    <Style x:Key="SelectableInfoText" TargetType="TextBox">
+      <Setter Property="IsReadOnly" Value="True"/>
+      <Setter Property="IsReadOnlyCaretVisible" Value="True"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+      <Setter Property="HorizontalScrollBarVisibility" Value="Disabled"/>
+      <Setter Property="VerticalScrollBarVisibility" Value="Disabled"/>
+      <Setter Property="Cursor" Value="IBeam"/>
+    </Style>
   </Window.Resources>
   <Grid Margin="18">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
@@ -17,10 +28,12 @@
     </DockPanel>
     <Border Grid.Row="1" Margin="0,12,0,12" Padding="10" Background="#1D2B36" BorderBrush="#36536A" BorderThickness="1" CornerRadius="4">
       <StackPanel>
-        <TextBlock x:Name="SourceTypeText" FontWeight="SemiBold" Foreground="#8FD2FF"/>
-        <TextBlock x:Name="SourcePathText" Margin="0,3,0,0" Foreground="#BBC4CF" TextTrimming="CharacterEllipsis"/>
-        <TextBlock Text="音声は再エンコードしません。タグ編集バックアップの有無と保存先は設定画面で変更できます。"
-                   Margin="0,5,0,0" Foreground="#A9D8B5"/>
+        <TextBox x:Name="SourceTypeText" Style="{StaticResource SelectableInfoText}"
+                 FontWeight="SemiBold" Foreground="#8FD2FF"/>
+        <TextBox x:Name="SourcePathText" Style="{StaticResource SelectableInfoText}"
+                 Margin="0,3,0,0" Foreground="#BBC4CF"/>
+        <TextBox x:Name="TagEditNoticeText" Style="{StaticResource SelectableInfoText}"
+                 Margin="0,5,0,0" Foreground="#A9D8B5"/>
       </StackPanel>
     </Border>
     <DockPanel Grid.Row="2" Margin="0,0,0,8">
@@ -59,14 +72,18 @@
       </DataGrid.CellStyle>
       <DataGrid.Columns>
         <DataGridTextColumn Header="ファイル" Binding="{Binding DisplayFileName}" IsReadOnly="True" Width="170"/>
-        <DataGridTextColumn Header="#" Binding="{Binding TrackNumber, UpdateSourceTrigger=PropertyChanged}" Width="48"/>
+        <DataGridTextColumn Header="#" Binding="{Binding TrackNumber, UpdateSourceTrigger=PropertyChanged}"
+                            SortMemberPath="TrackNumberSort" Width="48"/>
         <DataGridTextColumn Header="タイトル" Binding="{Binding Title, UpdateSourceTrigger=PropertyChanged}" Width="2*" MinWidth="150"/>
         <DataGridTextColumn Header="アーティスト" Binding="{Binding Artist, UpdateSourceTrigger=PropertyChanged}" Width="1.5*" MinWidth="130"/>
         <DataGridTextColumn Header="アルバム" Binding="{Binding Album, UpdateSourceTrigger=PropertyChanged}" Width="1.5*" MinWidth="130"/>
-        <DataGridTextColumn Header="年" Binding="{Binding Year, UpdateSourceTrigger=PropertyChanged}" Width="65"/>
+        <DataGridTextColumn Header="年" Binding="{Binding Year, UpdateSourceTrigger=PropertyChanged}"
+                            SortMemberPath="YearSort" Width="65"/>
         <DataGridTextColumn Header="ジャンル" Binding="{Binding Genre, UpdateSourceTrigger=PropertyChanged}" Width="110"/>
-        <DataGridTextColumn Header="Disc" Binding="{Binding DiscNumber, UpdateSourceTrigger=PropertyChanged}" Width="55"/>
-        <DataGridTextColumn Header="Disc総数" Binding="{Binding DiscCount, UpdateSourceTrigger=PropertyChanged}" Width="72"/>
+        <DataGridTextColumn Header="Disc" Binding="{Binding DiscNumber, UpdateSourceTrigger=PropertyChanged}"
+                            SortMemberPath="DiscNumberSort" Width="55"/>
+        <DataGridTextColumn Header="Disc総数" Binding="{Binding DiscCount, UpdateSourceTrigger=PropertyChanged}"
+                            SortMemberPath="DiscCountSort" Width="72"/>
       </DataGrid.Columns>
     </DataGrid>
     <DockPanel Grid.Row="4" Margin="0,14,0,0" LastChildFill="False">

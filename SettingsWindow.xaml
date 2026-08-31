@@ -42,7 +42,7 @@
         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
         <StackPanel>
           <TextBlock Text="データのバックアップと移行" FontWeight="SemiBold" FontSize="15"/>
-          <TextBlock Text="設定・ライブラリ情報・お気に入り・再生履歴・取得画像・保存歌詞を対象にします。音楽ファイルとAIモデルは含みません。"
+          <TextBlock Text="設定・ライブラリ情報・お気に入り・再生履歴・取得画像・保存歌詞を対象にします。音楽ファイルは含みません。"
                      Foreground="#A9B3C0" FontSize="11" TextWrapping="Wrap" Margin="0,4,12,0"/>
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">

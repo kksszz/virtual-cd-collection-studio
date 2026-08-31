@@ -34,6 +34,7 @@ public sealed class ZipTrack
     public int CompressionMethod { get; init; }
     public bool IsEncrypted { get; init; }
     public string ReadError { get; init; } = "";
+    public bool IsMp3Valid { get; init; }
     public bool IsCbr { get; init; }
     public int BitrateKbps { get; init; }
     public int SampleRate { get; init; }
@@ -51,18 +52,27 @@ public sealed class ZipTrack
             ? BitrateKbps > 0
                 ? $"M4A / {BitrateKbps} kbps / {SampleRate / 1000.0:0.0} kHz"
                 : $"M4A / {SampleRate / 1000.0:0.0} kHz"
-        : BitrateKbps > 0 ? $"{AudioFormat} / {BitrateKbps} kbps / {SampleRate / 1000.0:0.0} kHz" : AudioFormat;
+        : BitrateKbps > 0
+            ? $"{AudioFormat} / {(IsCbr ? "CBR" : "VBR")} {BitrateKbps} kbps / {SampleRate / 1000.0:0.0} kHz"
+            : AudioFormat;
+    // Older caches contain validated IsCbr metadata but no IsMp3Valid field.
+    // Version 0.46 may also have re-saved those caches with IsMp3Valid=false.
+    private bool HasValidMp3Audio => (IsMp3Valid || IsCbr)
+        && BitrateKbps > 0 && SampleRate > 0 && Duration > TimeSpan.Zero;
+
     public bool IsSupported => AudioFormat is "WAV" or "FLAC" or "M4A"
         ? !IsArchiveEntry && SampleRate > 0 && Duration > TimeSpan.Zero
         : CompressionMethod is 0 or 8 && !IsEncrypted && string.IsNullOrWhiteSpace(ReadError)
-            && IsCbr && BitrateKbps > 0;
+            && HasValidMp3Audio;
     public string SupportText => IsEncrypted ? LocalizationService.Select("暗号化", "Encrypted")
         : AudioFormat is "WAV" or "FLAC" or "M4A" ? IsSupported
             ? LocalizationService.Select("再生可能", "Playable") : LocalizationService.Select("形式未判定", "Unknown format")
         : !string.IsNullOrWhiteSpace(ReadError) ? LocalizationService.Select("ZIP読込エラー", "ZIP read error")
         : CompressionMethod is not (0 or 8) ? LocalizationService.Select(
             $"ZIP圧縮方式 {CompressionMethod} は未対応", $"ZIP compression method {CompressionMethod} is unsupported")
-        : !IsCbr ? LocalizationService.Select("VBR/未判定", "VBR/Unknown") : LocalizationService.Select("再生可能", "Playable");
+        : !HasValidMp3Audio ? LocalizationService.Select("MP3解析エラー", "MP3 analysis error")
+        : !IsCbr ? LocalizationService.Select("VBR・再生可能", "VBR / Playable")
+        : LocalizationService.Select("CBR・再生可能", "CBR / Playable");
     public string UnsupportedMessage
     {
         get
@@ -83,10 +93,10 @@ public sealed class ZipTrack
                 return LocalizationService.Select(
                     $"理由: ZIP内の{AudioFormat}再生には対応していません。\n\n対処: {AudioFormat}ファイルを通常のフォルダへ展開して登録してください。",
                     $"Reason: {AudioFormat} playback from inside a ZIP is unsupported.\n\nSolution: Extract the {AudioFormat} files to a normal folder and register it.");
-            if (!IsCbr || BitrateKbps <= 0)
+            if (!HasValidMp3Audio)
                 return LocalizationService.Select(
-                    "理由: MP3を固定ビットレート（CBR）として解析できませんでした。VBR形式または破損ファイルの可能性があります。\n\n対処: 元のMP3を確認してください。",
-                    "Reason: The MP3 could not be analyzed as constant bitrate (CBR). It may be VBR or damaged.\n\nSolution: Check the original MP3.");
+                    "理由: 有効なMP3音声フレームを解析できませんでした。\n\n対処: 元のMP3が破損していないか確認してください。",
+                    "Reason: Valid MP3 audio frames could not be analyzed.\n\nSolution: Check whether the source MP3 is damaged.");
             return LocalizationService.Select("理由: この音声形式を解析できませんでした。", "Reason: This audio format could not be analyzed.");
         }
     }
@@ -195,7 +205,7 @@ public static class ZipAlbumReader
             }
 
             var tags = new TagInfo("", "", "", "", "", 0, 0, 0, 0);
-            var audio = new AudioInfo(false, 0, 0, TimeSpan.Zero);
+            var audio = new AudioInfo(false, false, 0, 0, TimeSpan.Zero);
             var readError = "";
             if ((flags & 1) == 0 && method is 0 or 8)
             {
@@ -204,7 +214,7 @@ public static class ZipAlbumReader
                     using var trackStream = ArchiveEntryExtractor.OpenSeekable(path, dataOffset,
                         compressedSize, uncompressedSize, method);
                     tags = ReadTags(trackStream);
-                    audio = AnalyzeCbr(trackStream, tags.AudioStart);
+                    audio = AnalyzeMp3(trackStream, tags.AudioStart);
                 }
                 catch (Exception exception) when (exception is InvalidDataException or IOException)
                 {
@@ -233,6 +243,7 @@ public static class ZipAlbumReader
                 CompressionMethod = method,
                 IsEncrypted = (flags & 1) != 0,
                 ReadError = readError,
+                IsMp3Valid = audio.IsValid,
                 IsCbr = audio.IsCbr,
                 BitrateKbps = audio.Bitrate,
                 SampleRate = audio.SampleRate,
@@ -270,7 +281,7 @@ public static class ZipAlbumReader
             }
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
             var tags = ReadTags(stream);
-            var audio = AnalyzeCbr(stream, tags.AudioStart);
+            var audio = AnalyzeMp3(stream, tags.AudioStart);
             tracks.Add(new ZipTrack
             {
                 TrackNumber = tags.Track > 0 ? tags.Track : tracks.Count + 1,
@@ -290,6 +301,7 @@ public static class ZipAlbumReader
                 CompressedSize = stream.Length,
                 CompressionMethod = 0,
                 IsEncrypted = false,
+                IsMp3Valid = audio.IsValid,
                 IsCbr = audio.IsCbr,
                 BitrateKbps = audio.Bitrate,
                 SampleRate = audio.SampleRate,
@@ -509,16 +521,18 @@ public static class ZipAlbumReader
         return new TagInfo(title, artist, album, year, genre, track, disc, discCount, audioStart);
     }
 
-    private sealed record AudioInfo(bool IsCbr, int Bitrate, int SampleRate, TimeSpan Duration);
+    private sealed record AudioInfo(bool IsValid, bool IsCbr, int Bitrate, int SampleRate, TimeSpan Duration);
 
-    private static AudioInfo AnalyzeCbr(Stream stream, long audioStart)
+    private static AudioInfo AnalyzeMp3(Stream stream, long audioStart)
     {
         stream.Position = Math.Min(audioStart, stream.Length);
         var first = FindFirstFrame(stream);
-        if (first is null) return new(false, 0, 0, TimeSpan.Zero);
+        if (first is null) return new(false, false, 0, 0, TimeSpan.Zero);
         var initialBitrate = first.Value.Bitrate;
         var sampleRate = first.Value.SampleRate;
         var frameCount = 0L;
+        var sampleCount = 0L;
+        var audioBytes = 0L;
         var isCbr = true;
         stream.Position = first.Value.Offset;
         Span<byte> four = stackalloc byte[4];
@@ -528,17 +542,24 @@ public static class ZipAlbumReader
             if (stream.Read(four) != 4) break;
             var parsed = ParseMpegHeader(four);
             if (parsed is null) break;
-            if (parsed.Value.Bitrate != initialBitrate || parsed.Value.SampleRate != sampleRate) isCbr = false;
-            frameCount++;
+            if (parsed.Value.SampleRate != sampleRate) break;
             var next = frameStart + parsed.Value.FrameLength;
             if (next <= frameStart || next > stream.Length) break;
+            if (parsed.Value.Bitrate != initialBitrate) isCbr = false;
+            frameCount++;
+            sampleCount += parsed.Value.SamplesPerFrame;
+            audioBytes += parsed.Value.FrameLength;
             stream.Position = next;
         }
-        var duration = sampleRate > 0 ? TimeSpan.FromSeconds(frameCount * 1152.0 / sampleRate) : TimeSpan.Zero;
-        return new(frameCount >= 3 && isCbr, initialBitrate, sampleRate, duration);
+        var duration = sampleRate > 0 ? TimeSpan.FromSeconds(sampleCount / (double)sampleRate) : TimeSpan.Zero;
+        var averageBitrate = duration.TotalSeconds > 0
+            ? (int)Math.Round(audioBytes * 8.0 / duration.TotalSeconds / 1000.0)
+            : 0;
+        var isValid = frameCount >= 3;
+        return new(isValid, isValid && isCbr, averageBitrate, sampleRate, duration);
     }
 
-    private static (long Offset, int Bitrate, int SampleRate, int FrameLength)? FindFirstFrame(Stream stream)
+    private static (long Offset, int Bitrate, int SampleRate, int FrameLength, int SamplesPerFrame)? FindFirstFrame(Stream stream)
     {
         var start = stream.Position;
         Span<byte> header = stackalloc byte[4];
@@ -554,7 +575,8 @@ public static class ZipAlbumReader
                 {
                     stream.Position = next;
                     if (stream.Read(header) == 4 && ParseMpegHeader(header) is not null)
-                        return (pos, parsed.Value.Bitrate, parsed.Value.SampleRate, parsed.Value.FrameLength);
+                        return (pos, parsed.Value.Bitrate, parsed.Value.SampleRate, parsed.Value.FrameLength,
+                            parsed.Value.SamplesPerFrame);
                 }
             }
             stream.Position = pos + 1;
@@ -563,18 +585,24 @@ public static class ZipAlbumReader
         return null;
     }
 
-    private static (int Bitrate, int SampleRate, int FrameLength)? ParseMpegHeader(ReadOnlySpan<byte> b)
+    private static (int Bitrate, int SampleRate, int FrameLength, int SamplesPerFrame)? ParseMpegHeader(ReadOnlySpan<byte> b)
     {
         if (b.Length < 4) return null;
         var h = BinaryPrimitives.ReadUInt32BigEndian(b);
         if ((h & 0xFFE00000) != 0xFFE00000) return null;
         var version = (h >> 19) & 3; var layer = (h >> 17) & 3;
         var bitrateIndex = (int)((h >> 12) & 15); var sampleIndex = (int)((h >> 10) & 3);
-        if (version != 3 || layer != 1 || bitrateIndex is 0 or 15 || sampleIndex == 3) return null;
-        int[] rates = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
-        int[] samples = [44100, 48000, 32000];
-        var bitrate = rates[bitrateIndex]; var sampleRate = samples[sampleIndex]; var padding = (int)((h >> 9) & 1);
-        return (bitrate, sampleRate, 144 * bitrate * 1000 / sampleRate + padding);
+        if (version == 1 || layer != 1 || bitrateIndex is 0 or 15 || sampleIndex == 3) return null;
+        int[] mpeg1Rates = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+        int[] mpeg2Rates = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
+        int[] mpeg1Samples = [44100, 48000, 32000];
+        var divisor = version == 3 ? 1 : version == 2 ? 2 : 4;
+        var bitrate = (version == 3 ? mpeg1Rates : mpeg2Rates)[bitrateIndex];
+        var sampleRate = mpeg1Samples[sampleIndex] / divisor;
+        var padding = (int)((h >> 9) & 1);
+        var samplesPerFrame = version == 3 ? 1152 : 576;
+        var frameLength = (version == 3 ? 144 : 72) * bitrate * 1000 / sampleRate + padding;
+        return (bitrate, sampleRate, frameLength, samplesPerFrame);
     }
 
     private static string DecodeId3Text(ReadOnlySpan<byte> data)
