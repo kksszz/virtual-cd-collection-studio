@@ -32,6 +32,20 @@ internal sealed class DxJewelCaseScene : IDisposable
     private readonly GroupModel3D _caseRoot = new();
     private readonly GroupModel3D _baseRoot = new();
     private readonly GroupModel3D _lidRoot = new();
+    private readonly GroupModel3D _spineCardRoot = new();
+    private readonly TranslateTransform3D _spineCardTranslation = new();
+    private readonly TranslateTransform3D _spineCardOpenTranslation = new();
+    private readonly TranslateTransform3D _spineCardDragTranslation = new();
+    private readonly DispatcherTimer _spineCardMotionTimer = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
+    private TaskCompletionSource<bool>? _spineCardMotionCompletion;
+    private EventHandler? _spineCardMotionTick;
+    private double _spineCardProgress;
+    private double _spineCardRemovedOffsetX = -1;
+    private const double SpineCardRemovedOffsetY = -0.08;
+    private const double SpineCardRemovedOffsetZ = -0.16;
+    private const double SpineCardOpenClearanceX = -2.35;
+    private Point3D? _spineCardDragPoint;
+    private Vector3D _spineCardDragNormal;
     private readonly GroupModel3D _bookletRoot = new();
     private readonly TranslateTransform3D _bookletTranslation = new();
     private readonly AxisAngleRotation3D _bookletTilt = new(new Vector3D(0, 1, 0), 0);
@@ -91,8 +105,14 @@ internal sealed class DxJewelCaseScene : IDisposable
         discTransform.Children.Add(new RotateTransform3D(_discTiltRotation));
         discTransform.Children.Add(_discTranslation);
         _discRoot.Transform = discTransform;
+        var spineCardTransform = new Transform3DGroup();
+        spineCardTransform.Children.Add(_spineCardTranslation);
+        spineCardTransform.Children.Add(_spineCardOpenTranslation);
+        spineCardTransform.Children.Add(_spineCardDragTranslation);
+        _spineCardRoot.Transform = spineCardTransform;
         _caseRoot.Children.Add(_baseRoot);
         _caseRoot.Children.Add(_lidRoot);
+        _caseRoot.Children.Add(_spineCardRoot);
 
         Viewport = new Viewport3DX
         {
@@ -178,8 +198,11 @@ internal sealed class DxJewelCaseScene : IDisposable
     public void SetItem(JewelCaseCoverFlowItem item, double yaw, double pitch)
     {
         EndDiscDrag();
+        EndSpineCardDrag();
+        ResetSpineCardDragOffset();
         _baseRoot.Children.Clear();
         _lidRoot.Children.Clear();
+        _spineCardRoot.Children.Clear();
         _bookletRoot.Children.Clear();
         _lidRoot.Children.Add(_bookletRoot);
         _discRoot.Children.Clear();
@@ -401,6 +424,7 @@ internal sealed class DxJewelCaseScene : IDisposable
             -width / 2 - 0.001f, backArtworkHeight, depth, true, _baseRoot, inlay.Left);
         AddSpine(item.SpineCover,
             width / 2 + 0.001f, backArtworkHeight, depth, false, _baseRoot, inlay.Right);
+        AddSpineCard(item.SpineCard, width, height, depth);
         // 120 mm disc in a roughly 125 mm-high jewel case.
         AddDisc(item.DiscImage, new Vector3(discCenterX, 0.004f, -0.017f),
             discOuterRadius, 0.128f, 0.020f, _discRoot);
@@ -439,6 +463,7 @@ internal sealed class DxJewelCaseScene : IDisposable
         // Centre the two-piece open assembly in the viewport. The translation
         // follows the actual hinge rather than the case's outer bounding edge.
         var targetOffsetX = open ? -AssembledHingeX : 0d;
+        var targetSpineCardOffsetX = open ? SpineCardOpenClearanceX : 0d;
         if (!animate)
         {
             _animationRenderTimer.Stop();
@@ -447,9 +472,11 @@ internal sealed class DxJewelCaseScene : IDisposable
             _openScale.BeginAnimation(ScaleTransform3D.ScaleYProperty, null);
             _openScale.BeginAnimation(ScaleTransform3D.ScaleZProperty, null);
             _openCenterTranslation.BeginAnimation(TranslateTransform3D.OffsetXProperty, null);
+            _spineCardOpenTranslation.BeginAnimation(TranslateTransform3D.OffsetXProperty, null);
             _lidHingeRotation.Angle = targetAngle;
             _openScale.ScaleX = _openScale.ScaleY = _openScale.ScaleZ = targetScale;
             _openCenterTranslation.OffsetX = targetOffsetX;
+            _spineCardOpenTranslation.OffsetX = targetSpineCardOffsetX;
             Viewport.InvalidateRender();
             return;
         }
@@ -459,14 +486,17 @@ internal sealed class DxJewelCaseScene : IDisposable
         var currentScaleY = _openScale.ScaleY;
         var currentScaleZ = _openScale.ScaleZ;
         var currentOffsetX = _openCenterTranslation.OffsetX;
+        var currentSpineCardOffsetX = _spineCardOpenTranslation.OffsetX;
         _lidHingeRotation.BeginAnimation(AxisAngleRotation3D.AngleProperty, null);
         _openScale.BeginAnimation(ScaleTransform3D.ScaleXProperty, null);
         _openScale.BeginAnimation(ScaleTransform3D.ScaleYProperty, null);
         _openScale.BeginAnimation(ScaleTransform3D.ScaleZProperty, null);
         _openCenterTranslation.BeginAnimation(TranslateTransform3D.OffsetXProperty, null);
+        _spineCardOpenTranslation.BeginAnimation(TranslateTransform3D.OffsetXProperty, null);
         _lidHingeRotation.Angle = targetAngle;
         _openScale.ScaleX = _openScale.ScaleY = _openScale.ScaleZ = targetScale;
         _openCenterTranslation.OffsetX = targetOffsetX;
+        _spineCardOpenTranslation.OffsetX = targetSpineCardOffsetX;
         // Helix renders on demand. WPF transform animations alone do not
         // continuously invalidate its DirectX surface, so drive redraws only
         // for the duration of the lid animation.
@@ -496,9 +526,11 @@ internal sealed class DxJewelCaseScene : IDisposable
             _openScale.BeginAnimation(ScaleTransform3D.ScaleYProperty, null);
             _openScale.BeginAnimation(ScaleTransform3D.ScaleZProperty, null);
             _openCenterTranslation.BeginAnimation(TranslateTransform3D.OffsetXProperty, null);
+            _spineCardOpenTranslation.BeginAnimation(TranslateTransform3D.OffsetXProperty, null);
             _lidHingeRotation.Angle = targetAngle;
             _openScale.ScaleX = _openScale.ScaleY = _openScale.ScaleZ = targetScale;
             _openCenterTranslation.OffsetX = targetOffsetX;
+            _spineCardOpenTranslation.OffsetX = targetSpineCardOffsetX;
             Viewport.InvalidateRender();
         };
         _lidHingeRotation.BeginAnimation(AxisAngleRotation3D.AngleProperty,
@@ -512,6 +544,8 @@ internal sealed class DxJewelCaseScene : IDisposable
             Animation(currentScaleZ, targetScale));
         _openCenterTranslation.BeginAnimation(TranslateTransform3D.OffsetXProperty,
             Animation(currentOffsetX, targetOffsetX));
+        _spineCardOpenTranslation.BeginAnimation(TranslateTransform3D.OffsetXProperty,
+            Animation(currentSpineCardOffsetX, targetSpineCardOffsetX));
     }
 
     public void SetDiscRemoved(bool removed, bool animate = true)
@@ -576,6 +610,71 @@ internal sealed class DxJewelCaseScene : IDisposable
         _discTranslation.BeginAnimation(TranslateTransform3D.OffsetZProperty, lift);
         _discTiltRotation.BeginAnimation(AxisAngleRotation3D.AngleProperty,
             Animation(fromAngle, targetAngle));
+    }
+
+    public void SetSpineCardRemoved(bool removed, bool animate = true)
+    {
+        EndSpineCardDrag();
+        // A manually placed obi always returns along its normal extraction
+        // path, rather than flying into the case from an arbitrary drag point.
+        if (!removed) ResetSpineCardDragOffset();
+        if (animate) { _ = AnimateSpineCardAsync(removed); return; }
+        CancelSpineCardMotion();
+        SetSpineCardProgress(removed ? 1 : 0);
+    }
+
+    private void SetSpineCardProgress(double progress)
+    {
+        _spineCardProgress = Math.Clamp(progress, 0, 1);
+        // Pull the still-folded obi sideways off the left-hand case spine.
+        // A small ease at either end keeps the paper motion visually physical.
+        var eased = _spineCardProgress * _spineCardProgress * (3 - 2 * _spineCardProgress);
+        _spineCardTranslation.OffsetX = _spineCardRemovedOffsetX * eased;
+        _spineCardTranslation.OffsetY = SpineCardRemovedOffsetY * eased;
+        _spineCardTranslation.OffsetZ = SpineCardRemovedOffsetZ * eased;
+        Viewport.InvalidateRender();
+    }
+
+    private void CancelSpineCardMotion()
+    {
+        _spineCardMotionTimer.Stop();
+        if (_spineCardMotionTick is not null) _spineCardMotionTimer.Tick -= _spineCardMotionTick;
+        _spineCardMotionTick = null;
+        _spineCardMotionCompletion?.TrySetResult(false);
+        _spineCardMotionCompletion = null;
+    }
+
+    public Task<bool> AnimateSpineCardAsync(bool removed)
+    {
+        CancelSpineCardMotion();
+        var from = _spineCardProgress;
+        var target = removed ? 1d : 0d;
+        if (Math.Abs(from - target) < .00001)
+        {
+            SetSpineCardProgress(target);
+            return Task.FromResult(true);
+        }
+
+        // Completion is raised by the DispatcherTimer on the UI thread so the
+        // caller can immediately continue with the case hinge animation.
+        var completion = new TaskCompletionSource<bool>();
+        _spineCardMotionCompletion = completion;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var duration = .9 * Math.Abs(target - from);
+        _spineCardMotionTick = (_, _) =>
+        {
+            var t = Math.Min(1, clock.Elapsed.TotalSeconds / duration);
+            SetSpineCardProgress(from + (target - from) * t);
+            if (t < 1) return;
+            _spineCardMotionTimer.Stop();
+            _spineCardMotionTimer.Tick -= _spineCardMotionTick;
+            _spineCardMotionTick = null;
+            _spineCardMotionCompletion = null;
+            completion.TrySetResult(true);
+        };
+        _spineCardMotionTimer.Tick += _spineCardMotionTick;
+        _spineCardMotionTimer.Start();
+        return completion.Task;
     }
 
     public void SetBookletRemoved(bool removed, bool animate)
@@ -708,6 +807,43 @@ internal sealed class DxJewelCaseScene : IDisposable
         new(proposed.X, proposed.Y, Math.Max(RemovedDiscMinimumZ, proposed.Z));
 
     public void EndDiscDrag() => _discDragPoint = null;
+
+    public bool BeginSpineCardDrag(System.Windows.Point position)
+    {
+        if (_spineCardProgress < .999 || Viewport.Camera is not DxPerspectiveCamera camera) return false;
+        var hit = Viewport.FindHits(position)?.OrderBy(result => result.Distance).FirstOrDefault();
+        if (hit is null || !_spineCardRoot.Children.OfType<MeshGeometryModel3D>().Any(mesh =>
+            ReferenceEquals(hit.ModelHit, mesh) || ReferenceEquals(hit.ModelHit, mesh.SceneNode))) return false;
+        CancelSpineCardMotion();
+        _spineCardDragPoint = new Point3D(hit.PointHit.X, hit.PointHit.Y, hit.PointHit.Z);
+        _spineCardDragNormal = camera.LookDirection;
+        return true;
+    }
+
+    public void DragSpineCardTo(System.Windows.Point position)
+    {
+        if (_spineCardProgress < .999 || _spineCardDragPoint is not { } previous) return;
+        var point = Viewport.UnProjectOnPlane(position, previous, _spineCardDragNormal);
+        if (point is not { } current) return;
+        var inverse = _caseTransform.Value;
+        if (!inverse.HasInverse) return;
+        inverse.Invert();
+        var delta = inverse.Transform(current - previous);
+        _spineCardDragTranslation.OffsetX += delta.X;
+        _spineCardDragTranslation.OffsetY += delta.Y;
+        _spineCardDragTranslation.OffsetZ += delta.Z;
+        _spineCardDragPoint = current;
+        Viewport.InvalidateRender();
+    }
+
+    public void EndSpineCardDrag() => _spineCardDragPoint = null;
+
+    private void ResetSpineCardDragOffset()
+    {
+        _spineCardDragTranslation.OffsetX = 0;
+        _spineCardDragTranslation.OffsetY = 0;
+        _spineCardDragTranslation.OffsetZ = 0;
+    }
 
     private void ApplyRotation(double yaw, double pitch)
     {
@@ -1253,6 +1389,58 @@ internal sealed class DxJewelCaseScene : IDisposable
         }, false, false, target);
     }
 
+    private void AddSpineCard(BitmapSource? bitmap, float caseWidth, float caseHeight, float caseDepth)
+    {
+        if (bitmap is null) return;
+        var (back, spine, front) = SpineCardArtwork.Split(bitmap);
+        // Fit the detected centre panel to the complete outside width of the
+        // physical spine, and use that horizontal scale for both flaps. Height
+        // is independent: scanner proportions and fold detection must not make
+        // a tall obi extend behind the case frame and lose its top/bottom edge.
+        var wrappedSpineWidth = caseDepth + 0.030f;
+        var horizontalScale = wrappedSpineWidth / Math.Max(1, spine.PixelWidth);
+        var backWidth = horizontalScale * back.PixelWidth;
+        var frontWidth = horizontalScale * front.PixelWidth;
+        // Leave a visible gap beside the closed case. A small forward depth
+        // separation prevents the folded paper from disappearing beneath the
+        // opaque lid after it opens to the left.
+        _spineCardRemovedOffsetX = -(Math.Max(backWidth, frontWidth) + 0.34f);
+        const float obiHeightMm = 120f;
+        const float caseHeightMm = 125f;
+        var cardHeight = caseHeight * obiHeightMm / caseHeightMm;
+        var outsideX = -caseWidth / 2 - 0.014f;
+        // All three paper faces share the same physical fold line. Separating
+        // the flap origin from the side plane leaves a visible crack at steep
+        // viewing angles.
+        var foldX = outsideX;
+        var frontZ = caseDepth / 2 + 0.015f;
+        var backZ = -caseDepth / 2 - 0.015f;
+
+        // The source is laid flat as Back flap | Spine | Front flap. Each flap
+        // stays with the physical case face it covers when the lid is opened.
+        AddArtwork(back, foldX, foldX + backWidth, -cardHeight / 2, cardHeight / 2,
+            backZ, true, _spineCardRoot, "Spine Card back flap");
+        AddArtwork(front, foldX, foldX + frontWidth, -cardHeight / 2, cardHeight / 2,
+            frontZ, false, _spineCardRoot, "Spine Card front flap");
+
+        var side = new MeshBuilder(true, true, true);
+        side.AddQuad(new Vector3(outsideX, cardHeight / 2, frontZ),
+            new Vector3(outsideX, cardHeight / 2, backZ),
+            new Vector3(outsideX, -cardHeight / 2, backZ),
+            new Vector3(outsideX, -cardHeight / 2, frontZ),
+            new Vector2(1, 0), new Vector2(0, 0), new Vector2(0, 1), new Vector2(1, 1));
+        AddMesh(side.ToMeshGeometry3D(), new PhongMaterial
+        {
+            Name = "Spine Card spine",
+            DiffuseColor = new Color4(1, 1, 1, 1),
+            DiffuseMap = CreateTexture(spine),
+            RenderDiffuseMap = true,
+            SpecularColor = new Color4(0.02f, 0.02f, 0.02f, 1),
+            SpecularShininess = 6,
+            EnableAutoTangent = true
+        }, false, false, _spineCardRoot);
+    }
+
     private void AddDisc(BitmapSource? bitmap, Vector3 center, float outerRadius, float innerRadius,
         float thickness, GroupModel3D target)
     {
@@ -1454,6 +1642,7 @@ internal sealed class DxJewelCaseScene : IDisposable
 
     public void Dispose()
     {
+        CancelSpineCardMotion();
         CancelBookletMotion();
         _animationRenderTimer.Stop();
         Viewport.Items.Clear();

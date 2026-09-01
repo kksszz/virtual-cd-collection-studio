@@ -632,7 +632,7 @@ public partial class MainWindow : Window
                 album.SourceBadge, album.TrayColorMode, album.CaseFrontThumbnail, album.InsideFrontThumbnail,
                 album.BackCoverThumbnail, album.SpineThumbnail,
                 album.RightSpineThumbnail, album.InlayThumbnail, album.DiscThumbnail, album.IsPlaying)
-                { LoadBooklet = album.HasFrontSpread ? album.LoadBooklet : null })
+                { LoadBooklet = album.HasFrontSpread ? album.LoadBooklet : null, SpineCard = album.SpineCardThumbnail })
             .ToList();
         AlbumCoverFlow.SetItems(items, selectedPath);
     }
@@ -1015,7 +1015,7 @@ public partial class MainWindow : Window
                 item.RightSpineThumbnail,
                 item.InlayThumbnail,
                 item.DiscThumbnail,
-                item.IsPlaying) { LoadBooklet = item.HasFrontSpread ? item.LoadBooklet : null };
+                item.IsPlaying) { LoadBooklet = item.HasFrontSpread ? item.LoadBooklet : null, SpineCard = item.SpineCardThumbnail };
 
             StatusText.Text = LocalizationService.Select(
                 $"3Dケースを表示しています: {item.Title}",
@@ -4272,6 +4272,7 @@ public partial class MainWindow : Window
         private BitmapSource? _rightSpineThumbnail;
         private BitmapSource? _inlayThumbnail;
         private BitmapSource? _discThumbnail;
+        private BitmapSource? _spineCardThumbnail;
         private BitmapSource? _mediumCaseFrontThumbnail;
         private BitmapSource? _mediumInsideFrontThumbnail;
         private BitmapSource? _mediumBackCoverThumbnail;
@@ -4279,6 +4280,7 @@ public partial class MainWindow : Window
         private BitmapSource? _mediumRightSpineThumbnail;
         private BitmapSource? _mediumInlayThumbnail;
         private BitmapSource? _mediumDiscThumbnail;
+        private BitmapSource? _mediumSpineCardThumbnail;
         private bool _caseArtworkLoaded;
         private int _caseArtworkDecodeWidth;
         private string _coverDescription = "画像はありません";
@@ -4298,6 +4300,7 @@ public partial class MainWindow : Window
         public BitmapSource? RightSpineThumbnail => _rightSpineThumbnail;
         public BitmapSource? InlayThumbnail => _inlayThumbnail;
         public BitmapSource? DiscThumbnail => _discThumbnail;
+        public BitmapSource? SpineCardThumbnail => _spineCardThumbnail;
         public int CaseArtworkDecodeWidth => _caseArtworkDecodeWidth;
         public bool HasCoverThumbnail => _coverThumbnail is not null;
         public string CoverDescription => _coverDescription;
@@ -4389,9 +4392,9 @@ public partial class MainWindow : Window
             _downloadedImageCount = Directory.Exists(directory)
                 ? Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly).Count(IsAlbumImage) : 0;
             (_coverThumbnail, _coverDescription) = LoadCoverThumbnail(directory);
-            _caseFrontThumbnail = _insideFrontThumbnail = _backCoverThumbnail = _spineThumbnail = _rightSpineThumbnail = _inlayThumbnail = _discThumbnail = null;
+            _caseFrontThumbnail = _insideFrontThumbnail = _backCoverThumbnail = _spineThumbnail = _rightSpineThumbnail = _inlayThumbnail = _discThumbnail = _spineCardThumbnail = null;
             _mediumCaseFrontThumbnail = _mediumInsideFrontThumbnail = _mediumBackCoverThumbnail = _mediumSpineThumbnail = _mediumRightSpineThumbnail = null;
-            _mediumInlayThumbnail = _mediumDiscThumbnail = null;
+            _mediumInlayThumbnail = _mediumDiscThumbnail = _mediumSpineCardThumbnail = null;
             _caseArtworkLoaded = false;
             _caseArtworkDecodeWidth = 0;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ImageCount)));
@@ -4416,7 +4419,7 @@ public partial class MainWindow : Window
             _caseArtworkDecodeWidth = decodePixelWidth;
             var directory = GetDownloadedArtworkDirectory(Album.Path);
             (_caseFrontThumbnail, _insideFrontThumbnail, _backCoverThumbnail, _spineThumbnail,
-                _rightSpineThumbnail, _inlayThumbnail, _discThumbnail, _)
+                _rightSpineThumbnail, _inlayThumbnail, _discThumbnail, _spineCardThumbnail, _)
                 = LoadCaseArtwork(directory, decodePixelWidth);
             if (decodePixelWidth <= 640)
             {
@@ -4427,6 +4430,7 @@ public partial class MainWindow : Window
                 _mediumRightSpineThumbnail = _rightSpineThumbnail;
                 _mediumInlayThumbnail = _inlayThumbnail;
                 _mediumDiscThumbnail = _discThumbnail;
+                _mediumSpineCardThumbnail = _spineCardThumbnail;
             }
         }
 
@@ -4445,6 +4449,7 @@ public partial class MainWindow : Window
             _rightSpineThumbnail = artwork.RightSpine;
             _inlayThumbnail = artwork.Inlay;
             _discThumbnail = artwork.Disc;
+            _spineCardThumbnail = artwork.SpineCard;
             _caseArtworkLoaded = true;
             _caseArtworkDecodeWidth = decodePixelWidth;
         }
@@ -4452,7 +4457,7 @@ public partial class MainWindow : Window
         public void ReleaseHighResolutionCaseArtwork(int decodePixelWidth = 640)
         {
             if (_caseArtworkDecodeWidth <= decodePixelWidth) return;
-            if (_mediumCaseFrontThumbnail is not null)
+            if (_mediumCaseFrontThumbnail is not null || _mediumSpineCardThumbnail is not null)
             {
                 _caseFrontThumbnail = _mediumCaseFrontThumbnail;
                 _insideFrontThumbnail = _mediumInsideFrontThumbnail;
@@ -4461,12 +4466,13 @@ public partial class MainWindow : Window
                 _rightSpineThumbnail = _mediumRightSpineThumbnail;
                 _inlayThumbnail = _mediumInlayThumbnail;
                 _discThumbnail = _mediumDiscThumbnail;
+                _spineCardThumbnail = _mediumSpineCardThumbnail;
                 _caseArtworkLoaded = true;
                 _caseArtworkDecodeWidth = decodePixelWidth;
             }
             else
             {
-                _caseFrontThumbnail = _insideFrontThumbnail = _backCoverThumbnail = _spineThumbnail = _rightSpineThumbnail = _inlayThumbnail = _discThumbnail = null;
+                _caseFrontThumbnail = _insideFrontThumbnail = _backCoverThumbnail = _spineThumbnail = _rightSpineThumbnail = _inlayThumbnail = _discThumbnail = _spineCardThumbnail = null;
                 _caseArtworkLoaded = false;
                 _caseArtworkDecodeWidth = 0;
             }
@@ -4475,51 +4481,77 @@ public partial class MainWindow : Window
         private (BitmapSource? Image, string Description) LoadCoverThumbnail(string downloadedDirectory)
         {
             var rotations = LoadArtworkRotations(Album.Path);
-            if (Directory.Exists(downloadedDirectory))
-            {
-                foreach (var path in Directory.EnumerateFiles(downloadedDirectory, "*", SearchOption.TopDirectoryOnly)
-                    .Where(IsAlbumImage).OrderBy(GetAlbumImagePriority).ThenBy(GetAlbumImageSequence)
-                    .ThenBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase))
-                {
-                    try
-                    {
-                        var source = WithArtworkRotation(new AlbumImageSource(GetManagedArtworkDisplayName(path), path, null), rotations);
-                        return (LoadBitmap(source, 120), $"{GetManagedArtworkDisplayName(path)}\n{path}");
-                    }
-                    catch { }
-                }
-            }
-            foreach (var image in Album.Images.OrderBy(image => GetAlbumImagePriority(image.FileName))
-                .ThenBy(image => GetAlbumImageSequence(image.FileName))
-                .ThenBy(image => image.FileName, StringComparer.CurrentCultureIgnoreCase))
+            var sources = GetCaseArtworkSources(Album, downloadedDirectory);
+            var roles = LoadArtworkRoles(Album.Path);
+            var frontSpread = sources.FirstOrDefault(source =>
+                string.Equals(GetEffectiveArtworkRole(source, roles), "FrontSpread", StringComparison.OrdinalIgnoreCase));
+            if (frontSpread is not null)
             {
                 try
                 {
-                    var source = WithArtworkRotation(new AlbumImageSource(image.FileName, null, image), rotations);
-                    return (LoadBitmap(source, 120),
-                        $"ZIP内画像\n{image.FileName}");
+                    return (LoadFrontSpreadThumbnail(Album.Path, frontSpread),
+                        $"{frontSpread.DisplayName}\n{frontSpread.Description}");
                 }
                 catch { }
             }
-            foreach (var path in EnumerateExternalAlbumImagePaths(Album))
+            foreach (var source in sources)
             {
                 try
                 {
-                    var source = WithArtworkRotation(new AlbumImageSource(Path.GetFileName(path), path, null), rotations);
-                    return (LoadBitmap(source, 120), $"アルバムフォルダ画像\n{path}");
+                    if (source.ZipEntry is not null)
+                        return (LoadBitmap(source, 120), $"ZIP内画像\n{source.ZipEntry.FileName}");
+                    var path = source.FilePath!;
+                    var managed = string.Equals(Path.GetDirectoryName(Path.GetFullPath(path)),
+                        Path.GetFullPath(downloadedDirectory), StringComparison.OrdinalIgnoreCase);
+                    return (LoadBitmap(source, 120), managed
+                        ? $"{GetManagedArtworkDisplayName(path)}\n{path}"
+                        : $"アルバムフォルダ画像\n{path}");
                 }
                 catch { }
             }
             return (null, "画像はありません");
         }
 
+        private static BitmapSource LoadFrontSpreadThumbnail(string albumPath, AlbumImageSource source)
+        {
+            var sourcePath = source.FilePath ?? source.ZipEntry?.SourcePath;
+            var file = !string.IsNullOrWhiteSpace(sourcePath) && File.Exists(sourcePath) ? new FileInfo(sourcePath) : null;
+            var identity = string.Join('|', source.RoleKey, source.RotationDegrees,
+                file?.Length ?? 0, file?.LastWriteTimeUtc.Ticks ?? 0,
+                source.ZipEntry?.DataOffset ?? 0, source.ZipEntry?.CompressedSize ?? 0);
+            static string Key(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..20];
+            var albumKey = Key(Path.GetFullPath(albumPath).ToUpperInvariant());
+            var cacheDirectory = Path.Combine(DataDirectory, "thumbnail-cache");
+            var cachePath = Path.Combine(cacheDirectory, $"{albumKey}-{Key(identity)}.png");
+            if (File.Exists(cachePath))
+            {
+                try { return LoadBitmap(cachePath, 120); }
+                catch { }
+            }
+
+            var front = CropArtwork(LoadBitmap(source, 240), "RightHalf");
+            try
+            {
+                Directory.CreateDirectory(cacheDirectory);
+                foreach (var stale in Directory.EnumerateFiles(cacheDirectory, $"{albumKey}-*.png", SearchOption.TopDirectoryOnly)
+                    .Where(path => !string.Equals(path, cachePath, StringComparison.OrdinalIgnoreCase)))
+                    File.Delete(stale);
+                var encoder = new PngBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(front));
+                using var output = new FileStream(cachePath, FileMode.Create, FileAccess.Write, FileShare.Read);
+                encoder.Save(output);
+            }
+            catch { }
+            return front;
+        }
+
         private (BitmapSource? Front, BitmapSource? InsideFront, BitmapSource? Back,
             BitmapSource? Spine, BitmapSource? RightSpine, BitmapSource? Inlay,
-            BitmapSource? Disc, string Description) LoadCaseArtwork(
+            BitmapSource? Disc, BitmapSource? SpineCard, string Description) LoadCaseArtwork(
                 string downloadedDirectory, int targetWidth)
         {
             var sources = GetCaseArtworkSources(Album, downloadedDirectory);
-            if (sources.Count == 0) return (null, null, null, null, null, null, null, "画像はありません");
+            if (sources.Count == 0) return (null, null, null, null, null, null, null, null, "画像はありません");
 
             var roles = LoadArtworkRoles(Album.Path);
             var candidates = new List<(AlbumImageSource Source, string Role, double Aspect, bool IsManual)>();
@@ -4535,24 +4567,34 @@ public partial class MainWindow : Window
                 }
                 catch { }
             }
-            if (candidates.Count == 0) return (null, null, null, null, null, null, null, "画像を開けません");
+            if (candidates.Count == 0) return (null, null, null, null, null, null, null, null, "画像を開けません");
+            var spineCardCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "SpineCard");
             // Supplementary scans remain in the gallery, but must not become
             // case textures through Front/Back/Disc aspect-ratio fallbacks.
             candidates.RemoveAll(candidate => candidate.Role is "LinerNotes" or "SpineCard" or "Page");
-            if (candidates.Count == 0) return (null, null, null, null, null, null, null, "3Dケース用の画像はありません");
+            if (candidates.Count == 0)
+            {
+                if (spineCardCandidate.Source is null)
+                    return (null, null, null, null, null, null, null, null, "3Dケース用の画像はありません");
+                try
+                {
+                    return (null, null, null, null, null, null, null,
+                        LoadBitmap(spineCardCandidate.Source, targetWidth), spineCardCandidate.Source.Description);
+                }
+                catch { return (null, null, null, null, null, null, null, null, "画像を開けません"); }
+            }
 
-            var frontSpreadCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "FrontSpread");
-            var frontCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "Front");
-            if (frontCandidate.Source is null) frontCandidate = frontSpreadCandidate;
-            if (frontCandidate.Source is null)
-                frontCandidate = candidates.FirstOrDefault(candidate => candidate.Aspect >= 1.62);
-            if (frontCandidate.Source is null) frontCandidate = candidates[0];
             var insideFrontCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "FrontInside");
+            var frontSpreadCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "FrontSpread");
+            if (frontSpreadCandidate.Source is null)
+                frontSpreadCandidate = candidates.FirstOrDefault(candidate => !candidate.IsManual && candidate.Aspect >= 1.62);
+            var standaloneFrontCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "Front");
             var backWithSpinesCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "BackWithSpines");
             var backCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "Back");
             if (backCandidate.Source is null) backCandidate = backWithSpinesCandidate;
             if (backCandidate.Source is null)
-                backCandidate = candidates.LastOrDefault(candidate => !Equals(candidate.Source, frontCandidate.Source)
+                backCandidate = candidates.LastOrDefault(candidate => !Equals(candidate.Source, standaloneFrontCandidate.Source)
+                    && !Equals(candidate.Source, frontSpreadCandidate.Source)
                     && !candidate.IsManual && candidate.Role == "Other"
                     && candidate.Aspect is >= 1.12 and <= 1.58);
             var spineCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "Spine");
@@ -4562,7 +4604,8 @@ public partial class MainWindow : Window
             var inlayCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "Inlay");
             var discCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "Disc");
             if (discCandidate.Source is null)
-                discCandidate = candidates.LastOrDefault(candidate => !Equals(candidate.Source, frontCandidate.Source)
+                discCandidate = candidates.LastOrDefault(candidate => !Equals(candidate.Source, standaloneFrontCandidate.Source)
+                    && !Equals(candidate.Source, frontSpreadCandidate.Source)
                     && candidate.Aspect is >= 0.86 and <= 1.14);
 
             BitmapSource? LoadRole(
@@ -4591,17 +4634,29 @@ public partial class MainWindow : Window
                     if (role == "RightSpine") return CropArtwork(bitmap, "RightSpine");
                     if (role == "Spine" && candidate.Aspect > 0.35)
                         return CropArtwork(bitmap, "LeftSpine");
+                    if (role == "Disc") return DiscArtwork.CropScannerMargin(bitmap);
                     return bitmap;
                 }
                 catch { return null; }
             }
 
-            var front = LoadRole(frontCandidate, "Front");
-            var frontIsSpread = frontCandidate.Role == "FrontSpread"
-                || (!frontCandidate.IsManual && frontCandidate.Aspect >= 1.62);
+            var standaloneFront = LoadRole(standaloneFrontCandidate, "Front");
+            var spreadFront = LoadRole(frontSpreadCandidate, "Front");
+            var useStandaloneFront = standaloneFront is not null && (spreadFront is null
+                || standaloneFrontCandidate.IsManual || insideFrontCandidate.Source is not null
+                || (long)standaloneFront.PixelWidth * standaloneFront.PixelHeight
+                    > (long)spreadFront.PixelWidth * spreadFront.PixelHeight);
+            var front = useStandaloneFront ? standaloneFront : spreadFront;
+            var selectedFrontCandidate = useStandaloneFront ? standaloneFrontCandidate : frontSpreadCandidate;
+            if (front is null)
+            {
+                selectedFrontCandidate = candidates[0];
+                front = LoadRole(selectedFrontCandidate, "Front");
+            }
             var insideFront = insideFrontCandidate.Source is not null
                 ? LoadRole(insideFrontCandidate, "")
-                : frontIsSpread ? LoadRole(frontCandidate, "InsideFrontFromSpread") : null;
+                : frontSpreadCandidate.Source is not null
+                    ? LoadRole(frontSpreadCandidate, "InsideFrontFromSpread") : null;
             var back = LoadRole(backCandidate, "Back");
             var splitSpineCandidate = backWithSpinesCandidate.Source is not null
                 ? backWithSpinesCandidate : backCandidate;
@@ -4618,7 +4673,8 @@ public partial class MainWindow : Window
                     : backContainsSpines ? LoadRole(splitSpineCandidate, "RightSpine") : null;
             return (front, insideFront, back, leftSpine, rightSpine,
                 LoadRole(inlayCandidate, "Inlay"), LoadRole(discCandidate, "Disc"),
-                frontCandidate.Source.Description);
+                LoadRole(spineCardCandidate, "SpineCard"),
+                selectedFrontCandidate.Source?.Description ?? "画像はありません");
         }
 
         private static BitmapSource CropArtwork(BitmapSource source, string mode)

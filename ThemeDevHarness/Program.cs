@@ -53,6 +53,11 @@ internal static class Program
             VerifyRearInsertCrops();
             return;
         }
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_DISC_CROP_ONLY") == "1")
+        {
+            VerifyDiscArtworkCrop();
+            return;
+        }
         if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_PROPERTIES_ONLY") == "1")
         {
             var propertyData = Path.Combine(Path.GetTempPath(), "ZipMp3Player-PropertiesTest-" + Guid.NewGuid().ToString("N"));
@@ -87,6 +92,7 @@ internal static class Program
         var pixels = new byte[] { 10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255 };
         var testImage = BitmapSource.Create(2, 2, 96, 96, PixelFormats.Bgra32, null, pixels, 8);
         VerifyBlankCaseArtwork(testImage);
+        VerifyDiscArtworkCrop();
         VerifyRearInsertCrops();
         VerifyInlayArtwork();
         VerifyArtworkRoleSelection(data, testImage);
@@ -1029,8 +1035,18 @@ internal static class Program
 
     private static void VerifyCoverFlowPan(BitmapSource image)
     {
+        void Pump(int milliseconds)
+        {
+            var frame = new System.Windows.Threading.DispatcherFrame();
+            var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(milliseconds) };
+            timer.Tick += (_, _) => { timer.Stop(); frame.Continue = false; };
+            timer.Start();
+            System.Windows.Threading.Dispatcher.PushFrame(frame);
+        }
+        var spineCard = new TransformedBitmap(image, new ScaleTransform(30, 60));
+        spineCard.Freeze();
         var item = new JewelCaseCoverFlowItem("one", "Pan test", "Artist", "ZIP", "White",
-            image, null, null, null, null, null, null, false);
+            image, null, null, null, null, null, null, false) { SpineCard = spineCard };
         foreach (var fullScreen in new[] { false, true })
         {
             var flow = (JewelCaseCoverFlow)Activator.CreateInstance(typeof(JewelCaseCoverFlow),
@@ -1049,6 +1065,10 @@ internal static class Program
                 flow.SetItems([item, item with { Key = "two" }]);
                 window.Show();
                 window.UpdateLayout();
+                var spineCardButton = (Button)Field("_spineCardButton")!;
+                if (spineCardButton.Visibility != Visibility.Visible
+                    || !spineCardButton.Content.ToString()!.Contains("Spine", StringComparison.Ordinal))
+                    throw new InvalidOperationException("The selected Spine Card must expose its remove/insert button.");
                 var yaw = (double)Field("_caseYaw")!;
                 var down = ButtonEvent(UIElement.PreviewMouseDownEvent, MouseButton.Middle);
                 if (!down.Handled || !(bool)Field("_isPanning")! || !flow.IsMouseCaptured)
@@ -1071,6 +1091,40 @@ internal static class Program
                         .GetField("_viewPan", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
                     if (dxPan.OffsetX != pan.X || dxPan.OffsetY != pan.Y)
                         throw new InvalidOperationException("DirectX pan transform not synchronized.");
+                    if (!fullScreen)
+                    {
+                        Task<bool>? opening = null;
+                        flow.Dispatcher.BeginInvoke(() => opening = (Task<bool>)typeof(JewelCaseCoverFlow)
+                            .GetMethod("SetCaseOpenAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                            .Invoke(flow, [true, true])!);
+                        Pump(50);
+                        if (opening is null) throw new InvalidOperationException("The case-open sequence did not start on the UI thread.");
+                        var obiOffset = (System.Windows.Media.Media3D.TranslateTransform3D)scene.GetType()
+                            .GetField("_spineCardTranslation", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
+                        var lidAngle = (System.Windows.Media.Media3D.AxisAngleRotation3D)scene.GetType()
+                            .GetField("_lidHingeRotation", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
+                        var obiProgressField = scene.GetType().GetField("_spineCardProgress",
+                            BindingFlags.Instance | BindingFlags.NonPublic)!;
+                        var sequenceClock = System.Diagnostics.Stopwatch.StartNew();
+                        while ((double)obiProgressField.GetValue(scene)! <= 0
+                            && sequenceClock.ElapsedMilliseconds < 3000) Pump(20);
+                        var movingProgress = (double)obiProgressField.GetValue(scene)!;
+                        if (movingProgress is > 0 and < 1 && Math.Abs(lidAngle.Angle) > .01)
+                            throw new InvalidOperationException("The obi must slide first while the case lid stays closed.");
+                        var removedOffset = (double)scene.GetType().GetField("_spineCardRemovedOffsetX",
+                            BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
+                        while (lidAngle.Angle >= -1 && sequenceClock.ElapsedMilliseconds < 4500) Pump(30);
+                        if (Math.Abs(obiOffset.OffsetX - removedOffset) > .01
+                            || Math.Abs(obiOffset.OffsetY - -.08) > .01
+                            || Math.Abs(obiOffset.OffsetZ - -.16) > .01 || lidAngle.Angle >= -1
+                            || (double)obiProgressField.GetValue(scene)! != 1)
+                            throw new InvalidOperationException("The case may open only after the obi is fully separated.");
+                        Pump(1250);
+                        if (!opening.IsCompletedSuccessfully || !opening.Result || !(bool)Field("_isSpineCardRemoved")!)
+                            throw new InvalidOperationException("Automatic obi removal and case-open sequence did not complete.");
+                        Call("SetCaseOpen", false, false);
+                        Call("ApplySpineCardRemoved", false, false);
+                    }
                 }
                 Call("AdjustZoom", 120);
                 Call("SetCaseOpen", true, false);
@@ -1115,11 +1169,13 @@ internal static class Program
         var itemType = typeof(MainWindow).GetNestedType("AlbumListItem", BindingFlags.NonPublic)!;
         var item = Activator.CreateInstance(itemType, [album])!;
         var loadCase = itemType.GetMethod("LoadCaseArtwork", BindingFlags.Instance | BindingFlags.NonPublic)!;
-        void AssertNoCaseTextures()
+        void AssertSupplementalCaseTextures(bool expectSpineCard)
         {
             var parts = (System.Runtime.CompilerServices.ITuple)loadCase.Invoke(item, ["", 300])!;
             for (var index = 0; index < 7; index++)
                 if (parts[index] is not null) throw new InvalidOperationException("Supplemental artwork must not be assigned to a 3D case panel.");
+            if ((parts[7] is not null) != expectSpineCard)
+                throw new InvalidOperationException("Only Spine Card supplementary artwork may wrap around the 3D case.");
             itemType.GetMethod("RefreshImageCount")!.Invoke(item, null);
             foreach (var width in new[] { 640, 1200 })
             {
@@ -1141,7 +1197,7 @@ internal static class Program
                 setAlbum.Invoke(window, [album]);
                 if (!Equals(((ComboBoxItem)combo.SelectedItem).Tag, role))
                     throw new InvalidOperationException("New artwork category was not restored in the dropdown.");
-                AssertNoCaseTextures();
+                AssertSupplementalCaseTextures(role == "SpineCard");
             }
             combo.SelectedIndex = 0;
             if (((Dictionary<string, string>)loadRoles.Invoke(null, [folder])!).Count != 0)
@@ -1150,12 +1206,13 @@ internal static class Program
             {
                 var renamed = Path.Combine(folder, name);
                 File.Move(path, renamed);
-                try { AssertNoCaseTextures(); }
+                try { AssertSupplementalCaseTextures(name.Contains("Spine", StringComparison.OrdinalIgnoreCase)
+                    || name.Contains("obi", StringComparison.OrdinalIgnoreCase) || name.Contains("帯", StringComparison.Ordinal)); }
                 finally { File.Move(renamed, path); }
             }
         }
         finally { window.Close(); }
-        Console.WriteLine("Liner Notes/Spine Card category selection, persistence, reload, filename inference and case exclusion tests passed.");
+        Console.WriteLine("Liner Notes/Page exclusion and Spine Card 3D assignment, persistence, reload and filename inference tests passed.");
     }
 
     private static void VerifyArtworkRoleSelection(string data, BitmapSource front)
@@ -1348,6 +1405,27 @@ internal static class Program
         var derivedFront = content.Pages[0].LoadImage(); var derivedInside = content.Pages[^1].LoadImage();
         if (derivedFront.PixelWidth != derivedInside.PixelWidth || derivedFront.PixelHeight != derivedInside.PixelHeight)
             throw new InvalidOperationException("Front spread halves must produce matching cover pages.");
+        var getArtworkDirectory = typeof(MainWindow).GetMethod("GetDownloadedArtworkDirectory", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var artworkDirectory = (string)getArtworkDirectory.Invoke(null, [folder])!;
+        Directory.CreateDirectory(artworkDirectory);
+        var lowResolutionFront = BitmapSource.Create(120, 120, 96, 96, PixelFormats.Bgra32, null,
+            Enumerable.Repeat(new byte[] { 20, 40, 180, 255 }, 120 * 120).SelectMany(pixel => pixel).ToArray(), 120 * 4);
+        var onlineFrontPath = Path.Combine(artworkDirectory, "online-cover.png");
+        var onlineFrontEncoder = new PngBitmapEncoder(); onlineFrontEncoder.Frames.Add(BitmapFrame.Create(lowResolutionFront));
+        using (var onlineFrontFile = File.Create(onlineFrontPath)) onlineFrontEncoder.Save(onlineFrontFile);
+        itemType.GetMethod("RefreshImageCount")!.Invoke(item, null);
+        var albumIcon = (BitmapSource)itemType.GetProperty("CoverThumbnail")!.GetValue(item)!;
+        var iconPixel = new byte[4]; albumIcon.CopyPixels(new Int32Rect(8, 8, 1, 1), iconPixel, 4, 0);
+        if (iconPixel[0] <= iconPixel[2]
+            || !Directory.EnumerateFiles(Path.Combine(data, "thumbnail-cache"), "*.png").Any())
+            throw new InvalidOperationException("Album icons must prefer and cache the Front side of a Front Spread over online Front artwork.");
+        var caseArtwork = (System.Runtime.CompilerServices.ITuple)itemType.GetMethod("LoadCaseArtwork", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(item, [artworkDirectory, 600])!;
+        if (caseArtwork[0] is not BitmapSource caseFront || caseFront.PixelWidth <= lowResolutionFront.PixelWidth
+            || caseArtwork[1] is not BitmapSource caseInside || caseInside.PixelWidth != caseFront.PixelWidth)
+            throw new InvalidOperationException("A low-resolution downloaded Front must not replace a better Front Spread or remove its inside cover in 3D.");
+        File.Delete(onlineFrontPath);
+        itemType.GetMethod("RefreshImageCount")!.Invoke(item, null);
         roles["file:" + Path.Combine(folder, "PAGE_2.png")] = "Other";
         roles["file:" + Path.Combine(folder, "other.png")] = "Page";
         saveRoles.Invoke(null, [folder, roles]);
@@ -1658,6 +1736,40 @@ internal static class Program
         Console.WriteLine("Inlay auto-clear: all saved colors, role change, reload, high-resolution, inferred/managed artwork and removal passed.");
     }
 
+    private static void VerifyDiscArtworkCrop()
+    {
+        var crop = typeof(MainWindow).Assembly.GetType("ZipMp3Player.DiscArtwork")!
+            .GetMethod("CropScannerMargin", BindingFlags.Static | BindingFlags.Public)!;
+        var visual = new DrawingVisual();
+        using (var drawing = visual.RenderOpen())
+        {
+            drawing.DrawRectangle(Brushes.White, null, new Rect(0, 0, 320, 320));
+            drawing.DrawEllipse(new SolidColorBrush(Color.FromRgb(18, 62, 29)), null,
+                new Point(160, 160), 124, 124);
+        }
+        var scan = new RenderTargetBitmap(320, 320, 96, 96, PixelFormats.Pbgra32);
+        scan.Render(visual);
+        var cropped = (BitmapSource)crop.Invoke(null, [scan])!;
+        if (cropped.PixelWidth is < 248 or > 258 || cropped.PixelWidth != cropped.PixelHeight)
+            throw new InvalidOperationException($"Disc scanner margin crop was too loose: {cropped.PixelWidth}x{cropped.PixelHeight}.");
+
+        var tightPixels = new byte[180 * 180 * 4];
+        for (var y = 0; y < 180; y++)
+        for (var x = 0; x < 180; x++)
+        {
+            var p = (y * 180 + x) * 4;
+            tightPixels[p] = (byte)(20 + x);
+            tightPixels[p + 1] = (byte)(30 + y);
+            tightPixels[p + 2] = (byte)(40 + (x + y) / 2);
+            tightPixels[p + 3] = 255;
+        }
+        var tight = BitmapSource.Create(180, 180, 96, 96, PixelFormats.Bgra32, null, tightPixels, 180 * 4);
+        var unchanged = (BitmapSource)crop.Invoke(null, [tight])!;
+        if (unchanged.PixelWidth != 180 || unchanged.PixelHeight != 180)
+            throw new InvalidOperationException("Edge-to-edge Disc artwork must not be cropped.");
+        Console.WriteLine("Disc scanner-margin detection and conservative crop tests passed.");
+    }
+
     private static void VerifyRearInsertCrops()
     {
         var helper = typeof(MainWindow).Assembly.GetType("ZipMp3Player.RearInsertArtwork")!;
@@ -1764,8 +1876,72 @@ internal static class Program
         var scan = new RenderTargetBitmap(600, 472, 96, 96, PixelFormats.Pbgra32);
         scan.Render(visual);
         scan.Freeze();
+        var obiVisual = new DrawingVisual();
+        using (var dc = obiVisual.RenderOpen())
+        {
+            dc.DrawRectangle(Brushes.Black, null, new Rect(0, 0, 240, 1200));
+            dc.DrawRectangle(Brushes.DimGray, null, new Rect(240, 0, 120, 1200));
+            dc.DrawRectangle(Brushes.DarkOrange, null, new Rect(360, 0, 240, 1200));
+            dc.DrawRectangle(Brushes.White, null, new Rect(238, 0, 3, 1200));
+            dc.DrawRectangle(Brushes.White, null, new Rect(359, 0, 3, 1200));
+        }
+        var obi = new RenderTargetBitmap(600, 1200, 96, 96, PixelFormats.Pbgra32);
+        obi.Render(obiVisual); obi.Freeze();
+        var obiHelper = typeof(MainWindow).Assembly.GetType("ZipMp3Player.SpineCardArtwork")!;
+        var obiRegions = obiHelper.GetMethod("GetRegions")!.Invoke(null, [obi])!;
+        var detectedBack = (Int32Rect)obiRegions.GetType().GetProperty("Back")!.GetValue(obiRegions)!;
+        var detectedSpine = (Int32Rect)obiRegions.GetType().GetProperty("Spine")!.GetValue(obiRegions)!;
+        var detectedFront = (Int32Rect)obiRegions.GetType().GetProperty("Front")!.GetValue(obiRegions)!;
+        if (Math.Abs(detectedBack.Width - 240) > 12 || Math.Abs(detectedSpine.Width - 120) > 24
+            || Math.Abs(detectedFront.Width - 240) > 12)
+            throw new InvalidOperationException($"Spine Card folds were not detected symmetrically: {detectedBack} / {detectedSpine} / {detectedFront}");
+        var offsetVisual = new DrawingVisual();
+        using (var dc = offsetVisual.RenderOpen())
+        {
+            dc.DrawRectangle(Brushes.Black, null, new Rect(0, 0, 652, 1118));
+            dc.DrawRectangle(Brushes.White, null, new Rect(285, 0, 100, 1118));
+            // Strong symmetric artwork boundaries must not beat the slightly
+            // off-centre pair of real fold boundaries.
+            dc.DrawRectangle(Brushes.DarkRed, null, new Rect(208, 0, 8, 1118));
+            dc.DrawRectangle(Brushes.DarkRed, null, new Rect(436, 0, 8, 1118));
+        }
+        var offsetObi = new RenderTargetBitmap(652, 1118, 96, 96, PixelFormats.Pbgra32);
+        offsetObi.Render(offsetVisual); offsetObi.Freeze();
+        var offsetRegions = obiHelper.GetMethod("GetRegions")!.Invoke(null, [offsetObi])!;
+        var offsetBack = (Int32Rect)offsetRegions.GetType().GetProperty("Back")!.GetValue(offsetRegions)!;
+        var offsetSpine = (Int32Rect)offsetRegions.GetType().GetProperty("Spine")!.GetValue(offsetRegions)!;
+        var offsetFront = (Int32Rect)offsetRegions.GetType().GetProperty("Front")!.GetValue(offsetRegions)!;
+        if (Math.Abs(offsetBack.Width - 285) > 10 || Math.Abs(offsetSpine.Width - 100) > 14
+            || Math.Abs(offsetFront.Width - 267) > 10)
+            throw new InvalidOperationException($"Slightly off-centre Spine Card folds were not preserved: {offsetBack} / {offsetSpine} / {offsetFront}");
+        var printedEdgeVisual = new DrawingVisual();
+        using (var dc = printedEdgeVisual.RenderOpen())
+        {
+            dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(12, 12, 12)), null, new Rect(0, 0, 652, 1113));
+            dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(72, 68, 78)), null, new Rect(278, 0, 106, 1113));
+            dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(42, 38, 44)), null, new Rect(384, 0, 268, 1113));
+            dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(120, 115, 125)), null, new Rect(405, 0, 7, 1113));
+        }
+        var printedEdgeObi = new RenderTargetBitmap(652, 1113, 96, 96, PixelFormats.Pbgra32);
+        printedEdgeObi.Render(printedEdgeVisual); printedEdgeObi.Freeze();
+        var printedEdgeRegions = obiHelper.GetMethod("GetRegions")!.Invoke(null, [printedEdgeObi])!;
+        var printedEdgeBack = (Int32Rect)printedEdgeRegions.GetType().GetProperty("Back")!.GetValue(printedEdgeRegions)!;
+        var printedEdgeSpine = (Int32Rect)printedEdgeRegions.GetType().GetProperty("Spine")!.GetValue(printedEdgeRegions)!;
+        if (Math.Abs(printedEdgeBack.Width - 278) > 10 || Math.Abs(printedEdgeSpine.Width - 106) > 14)
+            throw new InvalidOperationException($"Printed flap artwork was mistaken for a Spine Card fold: {printedEdgeBack} / {printedEdgeSpine}");
         var item = new JewelCaseCoverFlowItem("inlay", "Inlay test", "Artist", "ZIP", "Clear",
-            null, null, null, null, null, scan, null, false);
+            null, null, null, null, null, scan, null, false) { SpineCard = obi };
+        var spineCardScanPath = Environment.GetEnvironmentVariable("ZIPMP3PLAYER_TEST_SPINE_CARD_SCAN");
+        if (!string.IsNullOrWhiteSpace(spineCardScanPath))
+        {
+            var actualObi = new BitmapImage(new Uri(spineCardScanPath)); actualObi.Freeze();
+            item = item with { SpineCard = actualObi };
+            var actualRegions = obiHelper.GetMethod("GetRegions")!.Invoke(null, [actualObi])!;
+            Console.WriteLine($"SPINE CARD {actualObi.PixelWidth}x{actualObi.PixelHeight}: "
+                + $"{actualRegions.GetType().GetProperty("Back")!.GetValue(actualRegions)} / "
+                + $"{actualRegions.GetType().GetProperty("Spine")!.GetValue(actualRegions)} / "
+                + $"{actualRegions.GetType().GetProperty("Front")!.GetValue(actualRegions)}");
+        }
         var split = typeof(JewelCaseCoverFlowItem).GetMethod("SplitInlay", BindingFlags.Instance | BindingFlags.NonPublic)!;
         var panels = (System.Runtime.CompilerServices.ITuple)split.Invoke(item, null)!;
         if (((CroppedBitmap)panels[0]!).SourceRect != new Int32Rect(24, 0, 552, 472)
@@ -1787,6 +1963,7 @@ internal static class Program
         using var scene = (IDisposable)Activator.CreateInstance(type)!;
         var viewport = (HelixToolkit.Wpf.SharpDX.Viewport3DX)type.GetProperty("Viewport")!.GetValue(scene)!;
         var previewDirectory = Environment.GetEnvironmentVariable("ZIPMP3PLAYER_INLAY_PREVIEWS");
+        if (!string.IsNullOrEmpty(previewDirectory)) Directory.CreateDirectory(previewDirectory);
         var window = new Window { Width = 1100, Height = 720, Content = viewport, ShowInTaskbar = false };
         try
         {
@@ -1798,6 +1975,48 @@ internal static class Program
                 var root = (HelixToolkit.Wpf.SharpDX.GroupModel3D)type.GetField("_baseRoot", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
                 var meshes = root.Children.OfType<HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D>().ToList();
                 var panel = meshes.Single(m => m.Material?.Name == "Inlay artwork");
+                var spineCardRoot = (HelixToolkit.Wpf.SharpDX.GroupModel3D)type.GetField("_spineCardRoot", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
+                var spineCardMeshes = spineCardRoot.Children.OfType<HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D>().ToList();
+                if (spineCardMeshes.Count(m => m.Material?.Name is "Spine Card back flap" or "Spine Card spine" or "Spine Card front flap") != 3)
+                    throw new InvalidOperationException("All three Spine Card faces must belong to one independently removable group.");
+                var activeRegions = obiHelper.GetMethod("GetRegions")!.Invoke(null, [item.SpineCard!])!;
+                var activeBack = (Int32Rect)activeRegions.GetType().GetProperty("Back")!.GetValue(activeRegions)!;
+                var activeSpine = (Int32Rect)activeRegions.GetType().GetProperty("Spine")!.GetValue(activeRegions)!;
+                var backGeometry = (HelixToolkit.SharpDX.MeshGeometry3D)spineCardMeshes.Single(
+                    m => m.Material?.Name == "Spine Card back flap").Geometry!;
+                var spineGeometry = (HelixToolkit.SharpDX.MeshGeometry3D)spineCardMeshes.Single(
+                    m => m.Material?.Name == "Spine Card spine").Geometry!;
+                var backPositions = backGeometry.Positions ?? throw new InvalidOperationException("Spine Card Back geometry has no vertices.");
+                var spinePositions = spineGeometry.Positions ?? throw new InvalidOperationException("Spine Card spine geometry has no vertices.");
+                var frontGeometry = (HelixToolkit.SharpDX.MeshGeometry3D)spineCardMeshes.Single(
+                    m => m.Material?.Name == "Spine Card front flap").Geometry!;
+                var frontPositions = frontGeometry.Positions ?? throw new InvalidOperationException("Spine Card Front geometry has no vertices.");
+                var mappedBackWidth = backPositions.Max(p => p.X) - backPositions.Min(p => p.X);
+                var mappedHeight = backPositions.Max(p => p.Y) - backPositions.Min(p => p.Y);
+                var mappedSpineWidth = spinePositions.Max(p => p.Z) - spinePositions.Min(p => p.Z);
+                if (Math.Abs(mappedBackWidth / mappedSpineWidth - (double)activeBack.Width / activeSpine.Width) > 0.015
+                    || Math.Abs(mappedHeight - 2.12 * 120 / 125) > 0.015
+                    || mappedHeight >= 2.12)
+                    throw new InvalidOperationException("Spine Card must preserve its fold-based horizontal scale while fitting its full height inside the case.");
+                var foldX = spinePositions[0].X;
+                if (Math.Abs(backPositions.Min(p => p.X) - foldX) > .0001
+                    || Math.Abs(frontPositions.Min(p => p.X) - foldX) > .0001)
+                    throw new InvalidOperationException("All Spine Card faces must meet at one continuous physical fold line.");
+                type.GetMethod("SetSpineCardRemoved")!.Invoke(scene, [true, false]);
+                var spineCardTranslation = (System.Windows.Media.Media3D.TranslateTransform3D)type.GetField(
+                    "_spineCardTranslation", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
+                if (spineCardTranslation.OffsetX >= -.45
+                    || Math.Abs(spineCardTranslation.OffsetY - -.08) > .001
+                    || Math.Abs(spineCardTranslation.OffsetZ - -.16) > .001)
+                    throw new InvalidOperationException("Spine Card must slide clear of the open lid and remain visible as one folded piece.");
+                var spineCardDragTranslation = (System.Windows.Media.Media3D.TranslateTransform3D)type.GetField(
+                    "_spineCardDragTranslation", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
+                spineCardDragTranslation.OffsetX = .25;
+                spineCardDragTranslation.OffsetY = -.18;
+                spineCardDragTranslation.OffsetZ = .09;
+                type.GetMethod("SetSpineCardRemoved")!.Invoke(scene, [false, false]);
+                if (spineCardDragTranslation.OffsetX != 0 || spineCardDragTranslation.OffsetY != 0 || spineCardDragTranslation.OffsetZ != 0)
+                    throw new InvalidOperationException("Returning the Spine Card must reset its user drag offset.");
                 var innerSpines = meshes.Where(m => m.Material?.Name == "Spine paper reverse").ToList();
                 if (!((HelixToolkit.Wpf.SharpDX.PhongMaterial)panel.Material!).RenderDiffuseMap
                     || innerSpines.Count != 2 || innerSpines.Any(m => !((HelixToolkit.Wpf.SharpDX.PhongMaterial)m.Material!).RenderDiffuseMap))
@@ -1835,6 +2054,24 @@ internal static class Program
                 }
                 if (!string.IsNullOrEmpty(previewDirectory))
                 {
+                    type.GetMethod("SetCaseOpen")!.Invoke(scene, [false, false]);
+                    type.GetMethod("SetSpineCardRemoved")!.Invoke(scene, [false, false]);
+                    window.UpdateLayout();
+                    var closedFrame = new System.Windows.Threading.DispatcherFrame();
+                    var closedTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(450) };
+                    closedTimer.Tick += (_, _) => { closedTimer.Stop(); closedFrame.Continue = false; };
+                    closedTimer.Start(); System.Windows.Threading.Dispatcher.PushFrame(closedFrame);
+                    HelixToolkit.Wpf.SharpDX.ViewportExtensions.SaveScreen(viewport,
+                        Path.Combine(previewDirectory, $"SpineCard-Closed-{mode}.png"));
+                    type.GetMethod("SetRotation")!.Invoke(scene, [78.0, 0.0]);
+                    window.UpdateLayout();
+                    HelixToolkit.Wpf.SharpDX.ViewportExtensions.SaveScreen(viewport,
+                        Path.Combine(previewDirectory, $"SpineCard-Edge-{mode}.png"));
+                    type.GetMethod("SetRotation")!.Invoke(scene, [-12.0, 15.0]);
+                    type.GetMethod("SetSpineCardRemoved")!.Invoke(scene, [true, false]);
+                    window.UpdateLayout();
+                    HelixToolkit.Wpf.SharpDX.ViewportExtensions.SaveScreen(viewport,
+                        Path.Combine(previewDirectory, $"SpineCard-Removed-{mode}.png"));
                     type.GetMethod("SetCaseOpen")!.Invoke(scene, [true, false]);
                     type.GetMethod("SetDiscRemoved")!.Invoke(scene, [true, false]);
                     // Remove the disc only in the inspection image to expose all

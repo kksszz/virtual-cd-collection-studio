@@ -25,6 +25,7 @@ public sealed record JewelCaseCoverFlowItem(
     bool IsPlaying)
 {
     public Func<BookletContent>? LoadBooklet { get; init; }
+    public BitmapSource? SpineCard { get; init; }
     // Inlay is the inside of the rear insert, not the booklet or exterior Back.
     // A standard full scan is 6 + 138 + 6 mm wide by 118 mm high.
     internal (BitmapSource? Panel, BitmapSource? Left, BitmapSource? Right) SplitInlay()
@@ -54,6 +55,7 @@ public sealed class JewelCaseCoverFlow : Grid
     private readonly Button _caseOpenButton = new();
     private readonly Button _discButton = new();
     private readonly Button _bookletButton = new();
+    private readonly Button _spineCardButton = new();
     private bool _isOpeningBooklet;
     private readonly bool _isFullScreen;
     private IReadOnlyList<JewelCaseCoverFlowItem> _items = [];
@@ -69,7 +71,10 @@ public sealed class JewelCaseCoverFlow : Grid
     private readonly TranslateTransform3D _wpfPan = new();
     private bool _isCaseOpen;
     private bool _isDiscRemoved;
+    private bool _isSpineCardRemoved;
+    private bool _isCaseTransitioning;
     private bool _isDraggingDisc;
+    private bool _isDraggingSpineCard;
 
     public event EventHandler<JewelCaseCoverFlowSelectionChangedEventArgs>? SelectionChanged;
     public event EventHandler<JewelCaseCoverFlowSelectionChangedEventArgs>? ItemActivated;
@@ -104,7 +109,7 @@ public sealed class JewelCaseCoverFlow : Grid
             _dxScene = new DxJewelCaseScene();
             _dxScene.Viewport.MouseDoubleClick += (_, e) =>
             {
-                if (e.ChangedButton == MouseButton.Left && !_isPanning && !_isDraggingDisc) RaiseActivated();
+                if (e.ChangedButton == MouseButton.Left && !_isPanning && !_isDraggingDisc && !_isDraggingSpineCard) RaiseActivated();
             };
             Children.Add(_dxScene.Viewport);
         }
@@ -173,7 +178,7 @@ public sealed class JewelCaseCoverFlow : Grid
         _caseOpenButton.BorderBrush = new SolidColorBrush(Color.FromRgb(74, 88, 102));
         _caseOpenButton.Cursor = Cursors.Hand;
         _caseOpenButton.Visibility = _dxScene is null ? Visibility.Collapsed : Visibility.Visible;
-        _caseOpenButton.Click += (_, _) => SetCaseOpen(!_isCaseOpen, true);
+        _caseOpenButton.Click += async (_, _) => await SetCaseOpenAsync(!_isCaseOpen, true);
         UpdateCaseOpenButton();
         overlay.Children.Add(_caseOpenButton);
 
@@ -207,6 +212,26 @@ public sealed class JewelCaseCoverFlow : Grid
         _bookletButton.Visibility = Visibility.Collapsed;
         _bookletButton.Click += async (_, _) => await OpenBookletAsync();
         overlay.Children.Add(_bookletButton);
+
+        _spineCardButton.Width = 150;
+        _spineCardButton.Height = 25;
+        _spineCardButton.Padding = new Thickness(5, 0, 5, 0);
+        _spineCardButton.Margin = new Thickness(403, 0, 0, 0);
+        _spineCardButton.HorizontalAlignment = HorizontalAlignment.Left;
+        _spineCardButton.VerticalAlignment = VerticalAlignment.Top;
+        _spineCardButton.FontSize = 11;
+        _spineCardButton.Foreground = Brushes.White;
+        _spineCardButton.Background = _discButton.Background;
+        _spineCardButton.BorderBrush = _discButton.BorderBrush;
+        _spineCardButton.Cursor = Cursors.Hand;
+        _spineCardButton.Visibility = Visibility.Collapsed;
+        _spineCardButton.Click += async (_, _) =>
+        {
+            if (!_isCaseTransitioning)
+                await SetSpineCardRemovedAsync(!_isSpineCardRemoved, true);
+        };
+        UpdateSpineCardButton();
+        overlay.Children.Add(_spineCardButton);
 
         var previous = CreateNavigationButton("‹", HorizontalAlignment.Left);
         previous.Click += (_, _) => MoveSelection(-1);
@@ -261,8 +286,8 @@ public sealed class JewelCaseCoverFlow : Grid
         };
         PreviewKeyDown += OnPreviewKeyDown;
         ToolTip = LocalizationService.Select(
-            "左ドラッグ: 回転（取り出したCD上ではCDを移動） ／ 中央ボタンドラッグ: 全体を移動 ／ R: 位置を戻す",
-            "Left drag: rotate (drag an extracted CD to move it) / Middle drag: move all / R: reset position");
+            "左ドラッグ: 回転（取り出したCD・帯の上では個別に移動） ／ 中央ボタンドラッグ: 全体を移動 ／ R: 位置を戻す",
+            "Left drag: rotate (drag an extracted CD or obi to move it) / Middle drag: move all / R: reset position");
         PreviewMouseDown += OnDiscDragStarted;
         PreviewMouseUp += OnDiscDragEnded;
         MouseMove += OnDiscDragMoved;
@@ -344,11 +369,15 @@ public sealed class JewelCaseCoverFlow : Grid
                 e.Handled = true;
                 break;
             case Key.C when _selectedIndex >= 0:
-                SetCaseOpen(!_isCaseOpen, true);
+                _ = SetCaseOpenAsync(!_isCaseOpen, true);
                 e.Handled = true;
                 break;
             case Key.D when _selectedIndex >= 0 && _isCaseOpen:
                 SetDiscRemoved(!_isDiscRemoved, true);
+                e.Handled = true;
+                break;
+            case Key.S when _selectedIndex >= 0 && HasSelectedSpineCard() && !_isCaseOpen:
+                _ = SetSpineCardRemovedAsync(!_isSpineCardRemoved, true);
                 e.Handled = true;
                 break;
             case Key.Enter when _selectedIndex >= 0: RaiseActivated(); e.Handled = true; break;
@@ -360,6 +389,7 @@ public sealed class JewelCaseCoverFlow : Grid
         if (_items.Count == 0) return;
         var fullScreenFlow = new JewelCaseCoverFlow(true);
         fullScreenFlow.SetItems(_items, SelectedKey);
+        fullScreenFlow.ApplySpineCardRemoved(_isSpineCardRemoved, false);
         fullScreenFlow.SetCaseOpen(_isCaseOpen, false);
         fullScreenFlow.SetDiscRemoved(_isDiscRemoved, false);
         fullScreenFlow.SelectionChanged += (_, e) =>
@@ -430,6 +460,10 @@ public sealed class JewelCaseCoverFlow : Grid
         var hasItems = _items.Count > 0 && _selectedIndex >= 0;
         if (_dxScene is not null) _dxScene.Viewport.Visibility = hasItems ? Visibility.Visible : Visibility.Collapsed;
         _bookletButton.Visibility = hasItems && _items[_selectedIndex].LoadBooklet is not null ? Visibility.Visible : Visibility.Collapsed;
+        var hasSpineCard = hasItems && _items[_selectedIndex].SpineCard is not null;
+        _spineCardButton.Visibility = _dxScene is not null && hasSpineCard ? Visibility.Visible : Visibility.Collapsed;
+        if (!hasSpineCard) _isSpineCardRemoved = false;
+        UpdateSpineCardButton();
         _emptyText.Visibility = hasItems ? Visibility.Collapsed : Visibility.Visible;
         _counterText.Text = hasItems ? $"{_selectedIndex + 1} / {_items.Count}" : "0 / 0";
         _titleText.Text = hasItems ? _items[_selectedIndex].Title : "";
@@ -439,6 +473,7 @@ public sealed class JewelCaseCoverFlow : Grid
         if (!hasItems) return;
 
         _dxScene?.SetItem(_items[_selectedIndex], _caseYaw, _casePitch);
+        _dxScene?.SetSpineCardRemoved(_isSpineCardRemoved, false);
 
         const int visibleRadius = 5;
         var start = Math.Max(0, _selectedIndex - visibleRadius);
@@ -635,6 +670,37 @@ public sealed class JewelCaseCoverFlow : Grid
             new Point3D(width / 2 - 0.055, -height / 2 + 0.055, depth / 2 + 0.015),
             new Point3D(-width / 2 + 0.07, -height / 2 + 0.055, depth / 2 + 0.015),
             new DiffuseMaterial(sheenBrush)));
+        if (item.SpineCard is { } spineCard)
+        {
+            var (obiBack, obiSpine, obiFront) = SpineCardArtwork.Split(spineCard);
+            var wrappedSpineWidth = depth + 0.040;
+            var horizontalScale = wrappedSpineWidth / Math.Max(1, obiSpine.PixelWidth);
+            var backWidth = horizontalScale * obiBack.PixelWidth;
+            var frontWidth = horizontalScale * obiFront.PixelWidth;
+            const double obiHeightMm = 120;
+            const double caseHeightMm = 125;
+            var cardHeight = height * obiHeightMm / caseHeightMm;
+            var outsideX = -width / 2 - 0.014;
+            var foldX = outsideX;
+            group.Children.Add(CreateQuad(
+                new Point3D(foldX, cardHeight / 2, -depth / 2 - 0.020),
+                new Point3D(foldX + backWidth, cardHeight / 2, -depth / 2 - 0.020),
+                new Point3D(foldX + backWidth, -cardHeight / 2, -depth / 2 - 0.020),
+                new Point3D(foldX, -cardHeight / 2, -depth / 2 - 0.020),
+                CreateImageMaterial(obiBack, item.Title, 0.97), reflected: true));
+            group.Children.Add(CreateQuad(
+                new Point3D(foldX, cardHeight / 2, depth / 2 + 0.020),
+                new Point3D(foldX + frontWidth, cardHeight / 2, depth / 2 + 0.020),
+                new Point3D(foldX + frontWidth, -cardHeight / 2, depth / 2 + 0.020),
+                new Point3D(foldX, -cardHeight / 2, depth / 2 + 0.020),
+                CreateImageMaterial(obiFront, item.Title, 0.97)));
+            group.Children.Add(CreateQuad(
+                new Point3D(outsideX, cardHeight / 2, depth / 2 + 0.020),
+                new Point3D(outsideX, cardHeight / 2, -depth / 2 - 0.020),
+                new Point3D(outsideX, -cardHeight / 2, -depth / 2 - 0.020),
+                new Point3D(outsideX, -cardHeight / 2, depth / 2 + 0.020),
+                CreateImageMaterial(obiSpine, item.Title, 0.97)));
+        }
         return container;
     }
 
@@ -650,8 +716,7 @@ public sealed class JewelCaseCoverFlow : Grid
             if (!IsLoaded || key != SelectedKey) return;
             if (!_isCaseOpen)
             {
-                SetCaseOpen(true, true);
-                await Task.Delay(1200);
+                if (!await SetCaseOpenAsync(true, true)) return;
             }
             if (!IsLoaded || key != SelectedKey) return;
             if (_dxScene is not null && !await _dxScene.AnimateBookletAsync(true)) return;
@@ -679,11 +744,13 @@ public sealed class JewelCaseCoverFlow : Grid
 
     private void OnDiscDragStarted(object sender, MouseButtonEventArgs e)
     {
-        if (e.ChangedButton != MouseButton.Left || !_isDiscRemoved || _dxScene is null || _isPanning) return;
+        if (e.ChangedButton != MouseButton.Left || _dxScene is null || _isPanning
+            || (!_isDiscRemoved && !_isSpineCardRemoved)) return;
         for (var element = e.OriginalSource as DependencyObject; element is not null && element != this;
              element = element is Visual ? VisualTreeHelper.GetParent(element) : LogicalTreeHelper.GetParent(element))
             if (element is System.Windows.Controls.Primitives.ButtonBase) return;
-        if (TryBeginDiscDrag(e.GetPosition(_dxScene.Viewport))) e.Handled = true;
+        var position = e.GetPosition(_dxScene.Viewport);
+        if (TryBeginDiscDrag(position) || TryBeginSpineCardDrag(position)) e.Handled = true;
     }
 
     private bool TryBeginDiscDrag(Point position)
@@ -697,17 +764,30 @@ public sealed class JewelCaseCoverFlow : Grid
         return _isDraggingDisc;
     }
 
+    private bool TryBeginSpineCardDrag(Point position)
+    {
+        if (!_isSpineCardRemoved || _dxScene is null || _isPanning || !_dxScene.BeginSpineCardDrag(position)) return false;
+        Focus();
+        _isRotating = false;
+        _isDraggingSpineCard = CaptureMouse();
+        if (_isDraggingSpineCard) Cursor = Cursors.SizeAll;
+        else _dxScene.EndSpineCardDrag();
+        return _isDraggingSpineCard;
+    }
+
     private void OnDiscDragMoved(object sender, MouseEventArgs e)
     {
-        if (!_isDraggingDisc || _dxScene is null) return;
+        if ((!_isDraggingDisc && !_isDraggingSpineCard) || _dxScene is null) return;
         if (e.LeftButton != MouseButtonState.Pressed) { EndPointerDrag(); return; }
-        _dxScene.DragDiscTo(e.GetPosition(_dxScene.Viewport));
+        var position = e.GetPosition(_dxScene.Viewport);
+        if (_isDraggingDisc) _dxScene.DragDiscTo(position);
+        else _dxScene.DragSpineCardTo(position);
         e.Handled = true;
     }
 
     private void OnDiscDragEnded(object sender, MouseButtonEventArgs e)
     {
-        if (!_isDraggingDisc || e.ChangedButton != MouseButton.Left) return;
+        if ((!_isDraggingDisc && !_isDraggingSpineCard) || e.ChangedButton != MouseButton.Left) return;
         EndPointerDrag();
         e.Handled = true;
     }
@@ -773,7 +853,9 @@ public sealed class JewelCaseCoverFlow : Grid
     private void EndPointerDrag()
     {
         _isDraggingDisc = false;
+        _isDraggingSpineCard = false;
         _dxScene?.EndDiscDrag();
+        _dxScene?.EndSpineCardDrag();
         _isPanning = false;
         _isRotating = false;
         if (IsMouseCaptured) ReleaseMouseCapture();
@@ -782,7 +864,7 @@ public sealed class JewelCaseCoverFlow : Grid
 
     private void OnRotationStarted(object sender, MouseButtonEventArgs e)
     {
-        if (_isPanning || _isDraggingDisc) return;
+        if (_isPanning || _isDraggingDisc || _isDraggingSpineCard) return;
         Focus();
         if (_selectedIndex < 0) return;
         _isRotating = true;
@@ -834,16 +916,94 @@ public sealed class JewelCaseCoverFlow : Grid
         _caseZoom = 1;
         _dxScene?.SetViewZoom(_caseZoom);
         SetCaseOpen(false, false);
+        ApplySpineCardRemoved(false, false);
+    }
+
+    private bool HasSelectedSpineCard() =>
+        _selectedIndex >= 0 && _selectedIndex < _items.Count && _items[_selectedIndex].SpineCard is not null;
+
+    private async Task<bool> SetCaseOpenAsync(bool open, bool animate)
+    {
+        if (_isCaseTransitioning) return false;
+        _isCaseTransitioning = true;
+        UpdateCaseOpenButton();
+        UpdateDiscButton();
+        UpdateSpineCardButton();
+        var key = SelectedKey;
+        try
+        {
+            // A folded obi physically locks the lid to the back of the case.
+            // Remove it completely before beginning the hinge animation.
+            if (open && HasSelectedSpineCard() && !_isSpineCardRemoved
+                && !await SetSpineCardRemovedAsync(true, animate))
+                return false;
+            if (key != SelectedKey) return false;
+            SetCaseOpen(open, animate);
+            if (animate) await WaitOnDispatcherAsync(1200);
+            return key == SelectedKey;
+        }
+        finally
+        {
+            _isCaseTransitioning = false;
+            UpdateCaseOpenButton();
+            UpdateDiscButton();
+            UpdateSpineCardButton();
+        }
+    }
+
+    private Task WaitOnDispatcherAsync(int milliseconds)
+    {
+        var completion = new TaskCompletionSource<bool>();
+        var timer = new DispatcherTimer(DispatcherPriority.Normal, Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(milliseconds)
+        };
+        timer.Tick += Complete;
+        timer.Start();
+        return completion.Task;
+
+        void Complete(object? sender, EventArgs e)
+        {
+            timer.Stop();
+            timer.Tick -= Complete;
+            completion.TrySetResult(true);
+        }
     }
 
     private void SetCaseOpen(bool open, bool animate)
     {
+        // Keep the invariant for non-animated state restoration and tests too.
+        if (open && HasSelectedSpineCard() && !_isSpineCardRemoved)
+            ApplySpineCardRemoved(true, false);
         if (!open && _isDiscRemoved)
             SetDiscRemoved(false, false);
         _isCaseOpen = open;
         _dxScene?.SetCaseOpen(open, animate);
         UpdateCaseOpenButton();
         UpdateDiscButton();
+    }
+
+    private void ApplySpineCardRemoved(bool removed, bool animate)
+    {
+        if (!HasSelectedSpineCard()) removed = false;
+        _isSpineCardRemoved = removed;
+        _dxScene?.SetSpineCardRemoved(removed, animate);
+        UpdateSpineCardButton();
+    }
+
+    private async Task<bool> SetSpineCardRemovedAsync(bool removed, bool animate)
+    {
+        if (!HasSelectedSpineCard() || (!removed && _isCaseOpen)) return false;
+        _isSpineCardRemoved = removed;
+        UpdateSpineCardButton();
+        if (_dxScene is null || !animate)
+        {
+            _dxScene?.SetSpineCardRemoved(removed, false);
+            return true;
+        }
+        var completed = await _dxScene.AnimateSpineCardAsync(removed);
+        UpdateSpineCardButton();
+        return completed;
     }
 
     private void SetDiscRemoved(bool removed, bool animate)
@@ -857,6 +1017,7 @@ public sealed class JewelCaseCoverFlow : Grid
 
     private void UpdateCaseOpenButton()
     {
+        _caseOpenButton.IsEnabled = !_isCaseTransitioning;
         _caseOpenButton.Content = _isCaseOpen
             ? LocalizationService.Select("▰ ケースを閉じる", "▰ Close case")
             : LocalizationService.Select("▱ ケースを開く", "▱ Open case");
@@ -867,14 +1028,27 @@ public sealed class JewelCaseCoverFlow : Grid
 
     private void UpdateDiscButton()
     {
-        _discButton.IsEnabled = _isCaseOpen;
-        _discButton.Opacity = _isCaseOpen ? 1 : 0.48;
+        _discButton.IsEnabled = _isCaseOpen && !_isCaseTransitioning;
+        _discButton.Opacity = _discButton.IsEnabled ? 1 : 0.48;
         _discButton.Content = _isDiscRemoved
             ? LocalizationService.Select("◉ CDを戻す", "◉ Insert CD")
             : LocalizationService.Select("◎ CDを取り出す", "◎ Remove CD");
         _discButton.ToolTip = LocalizationService.Select(
             _isCaseOpen ? "CDを取り出す／戻す (D)。取り出したCDは左ドラッグで移動できます" : "先にケースを開いてください",
             _isCaseOpen ? "Remove/insert the CD (D). Left-drag an extracted CD to move it" : "Open the case first");
+    }
+
+    private void UpdateSpineCardButton()
+    {
+        var canInsert = !_isCaseOpen;
+        _spineCardButton.IsEnabled = HasSelectedSpineCard() && !_isCaseTransitioning && canInsert;
+        _spineCardButton.Opacity = _spineCardButton.IsEnabled ? 1 : 0.48;
+        _spineCardButton.Content = _isSpineCardRemoved
+            ? LocalizationService.Select("▥ Spine（帯）を戻す", "▥ Insert obi")
+            : LocalizationService.Select("▤ Spine（帯）を外す", "▤ Remove obi");
+        _spineCardButton.ToolTip = LocalizationService.Select(
+            _isCaseOpen ? "帯は左ドラッグで移動できます。戻すには先にケースを閉じてください" : "Spine（帯）を横へスライドして外す／戻す (S)。外した帯は左ドラッグで移動できます",
+            _isCaseOpen ? "Left-drag the obi to move it. Close the case before inserting it" : "Slide the spine card (obi) sideways to remove/insert it (S). Left-drag it after removal");
     }
 
     private static double NormalizeAngle(double angle)
