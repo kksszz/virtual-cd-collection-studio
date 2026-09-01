@@ -36,12 +36,16 @@
                  Margin="0,5,0,0" Foreground="#A9D8B5"/>
       </StackPanel>
     </Border>
-    <DockPanel Grid.Row="2" Margin="0,0,0,8">
-      <Button Content="選択セルの値を全曲へ適用" Padding="11,5" Click="ApplySelectedCellToAll_Click"
+    <StackPanel Grid.Row="2" Margin="0,0,0,8">
+      <WrapPanel>
+        <Button Content="選択セルの値を全曲へ適用" Padding="11,5" Click="ApplySelectedCellToAll_Click"
               ToolTip="アーティストやアルバムなど、現在のセルと同じ列へ一括適用"/>
-      <TextBlock x:Name="BatchStatusText" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#8FD2FF"/>
-      <TextBlock DockPanel.Dock="Right" Text="複数セルのコピー・貼り付け: Ctrl+C / Ctrl+V" VerticalAlignment="Center" Foreground="#AEB8C4"/>
-    </DockPanel>
+        <Button x:Name="NormalizeAlphaNumericButton" Content="全曲の英数字・空白を半角に" Padding="11,5" Margin="8,0,0,0"
+                Click="NormalizeAlphaNumeric_Click" ToolTip="このアルバム全曲の編集欄にある全角英数字・全角スペースを半角へ変換します。日本語・記号・スペースの数・ファイル名は変更しません。保存するまで元ファイルは変わりません。"/>
+        <TextBlock Text="複数セルのコピー・貼り付け: Ctrl+C / Ctrl+V" Margin="12,5,0,5" VerticalAlignment="Center" Foreground="#AEB8C4"/>
+      </WrapPanel>
+      <TextBlock x:Name="BatchStatusText" Margin="0,5,0,0" Foreground="#8FD2FF" TextWrapping="Wrap"/>
+    </StackPanel>
     <DataGrid x:Name="TagsGrid" Grid.Row="3" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
               SelectionMode="Extended" SelectionUnit="CellOrRowHeader" ClipboardCopyMode="ExcludeHeader"
               PreviewKeyDown="TagsGrid_PreviewKeyDown" Background="#1E2127" Foreground="#F2F3F5"

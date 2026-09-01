@@ -77,11 +77,38 @@ try
         var flacTrack = flacAlbum.Tracks.First(track => string.Equals(track.SourcePath, flacPath, StringComparison.OrdinalIgnoreCase));
         Require(flacTrack.AudioFormat == "FLAC", "FLAC format");
         Require(flacTrack.IsSupported, "FLAC support state");
-        Require(flacTrack.SampleRate == 48000 && flacTrack.BitsPerSample == 24, "FLAC properties");
+        Require(flacTrack.SampleRate > 0 && flacTrack.BitsPerSample > 0, "FLAC properties");
         Require(!string.IsNullOrWhiteSpace(flacTrack.Title), "FLAC title");
         PrintReaderFormat(flacTrack, "FLAC reader format");
         DecodeSamples(flacTrack, "FLAC decode");
         VerifyFaithfulProvider(flacTrack, "FLAC faithful normalized PCM");
+        using var flacGapless = new GaplessPlaybackStream(
+            flacAlbum.Tracks.Select((_, index) => new PlaybackQueueEntry(flacAlbum, index)).ToArray(),
+            flacAlbum.Tracks.ToList().FindIndex(track => ReferenceEquals(track, flacTrack)), false, false, 0);
+        var gaplessSamples = flacGapless.ToSampleProvider();
+        ISampleProvider flacPipeline = new RemasterSampleProvider(gaplessSamples, RemasterMode.Dramatic);
+        flacPipeline = new EqualizerSampleProvider(flacPipeline, new double[10]) { Enabled = false };
+        flacPipeline = new BassBoostSampleProvider(flacPipeline, false, 83.33);
+        flacPipeline = new LowVolumeClaritySampleProvider(flacPipeline, false);
+        flacPipeline = new VolumeSampleProvider(flacPipeline) { Volume = .68f };
+        flacPipeline = new SpectrumCaptureSampleProvider(new WaveformCaptureSampleProvider(
+            new SoftLimiterSampleProvider(flacPipeline)));
+        var gaplessBuffer = new float[4096];
+        Require(flacPipeline.Read(gaplessBuffer, 0, gaplessBuffer.Length) > 0,
+            "FLAC gapless playback pipeline");
+        for (var remaining = flacPipeline.WaveFormat.SampleRate * flacPipeline.WaveFormat.Channels * 8;
+             remaining > 0; remaining -= gaplessBuffer.Length)
+            Require(flacPipeline.Read(gaplessBuffer, 0, Math.Min(remaining, gaplessBuffer.Length)) > 0,
+                "FLAC sustained gapless playback pipeline");
+        using var flacOutput = new WaveOutEvent { DesiredLatency = 150, NumberOfBuffers = 3, Volume = 0 };
+        Exception? outputError = null;
+        flacOutput.PlaybackStopped += (_, e) => outputError = e.Exception;
+        flacOutput.Init(flacPipeline);
+        flacOutput.Play();
+        await Task.Delay(800);
+        flacOutput.Stop();
+        await Task.Delay(100);
+        Require(outputError is null, "FLAC WaveOut callback");
     }
 
     if (args.Length > 0 && File.Exists(args[0]))

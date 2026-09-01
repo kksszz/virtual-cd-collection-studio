@@ -80,6 +80,36 @@ public partial class TagEditorWindow : Window
             $"Applied “{value}” to {_rows.Count} tracks (not saved yet)");
     }
 
+    private void NormalizeAlphaNumeric_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TagsGrid.CommitEdit(DataGridEditingUnit.Cell, true) || !TagsGrid.CommitEdit(DataGridEditingUnit.Row, true))
+        {
+            BatchStatusText.Text = LocalizationService.Select("編集中のセルを確定してから変換してください。", "Finish editing the current cell before converting.");
+            return;
+        }
+        var tracks = 0;
+        var cells = 0;
+        foreach (var row in _rows)
+        {
+            var changed = false;
+            foreach (var column in TagsGrid.Columns)
+            {
+                if (GetColumnProperty(column) is not { } property || !TryGetValue(row, property, out var value)) continue;
+                var converted = TagTextNormalization.ToHalfWidthAlphaNumeric(value);
+                if (converted == value) continue;
+                SetValue(row, property, converted);
+                cells++;
+                changed = true;
+            }
+            if (changed) tracks++;
+        }
+        TagsGrid.Items.Refresh();
+        BatchStatusText.Text = cells == 0
+            ? LocalizationService.Select("変換対象の全角英数字・全角スペースはありません。", "No full-width letters, digits or spaces to convert.")
+            : LocalizationService.Select($"{tracks}曲・{cells}項目の英数字・空白を半角にしました（未保存）。確認後に「まとめて保存」を押してください。",
+                $"Converted letters, digits and spaces in {cells} fields across {tracks} tracks (not saved). Review, then choose Save All.");
+    }
+
     private void TagsGrid_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key != Key.V || !Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) return;

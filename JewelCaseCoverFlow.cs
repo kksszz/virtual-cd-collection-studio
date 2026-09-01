@@ -22,7 +22,20 @@ public sealed record JewelCaseCoverFlowItem(
     BitmapSource? RightSpineCover,
     BitmapSource? InlayCover,
     BitmapSource? DiscImage,
-    bool IsPlaying);
+    bool IsPlaying)
+{
+    public Func<BookletContent>? LoadBooklet { get; init; }
+    // Inlay is the inside of the rear insert, not the booklet or exterior Back.
+    // A standard full scan is 6 + 138 + 6 mm wide by 118 mm high.
+    internal (BitmapSource? Panel, BitmapSource? Left, BitmapSource? Right) SplitInlay()
+    {
+        if (InlayCover is not { } image) return (null, null, null);
+        var regions = RearInsertArtwork.GetRegions(image, forceSpines: false);
+        return (RearInsertArtwork.Crop(image, regions.Panel),
+            regions.Left is { } left ? RearInsertArtwork.Crop(image, left) : null,
+            regions.Right is { } right ? RearInsertArtwork.Crop(image, right) : null);
+    }
+}
 
 public sealed class JewelCaseCoverFlowSelectionChangedEventArgs(JewelCaseCoverFlowItem item) : EventArgs
 {
@@ -40,6 +53,8 @@ public sealed class JewelCaseCoverFlow : Grid
     private readonly Button _fullScreenButton = new();
     private readonly Button _caseOpenButton = new();
     private readonly Button _discButton = new();
+    private readonly Button _bookletButton = new();
+    private bool _isOpeningBooklet;
     private readonly bool _isFullScreen;
     private IReadOnlyList<JewelCaseCoverFlowItem> _items = [];
     private int _selectedIndex = -1;
@@ -54,6 +69,7 @@ public sealed class JewelCaseCoverFlow : Grid
     private readonly TranslateTransform3D _wpfPan = new();
     private bool _isCaseOpen;
     private bool _isDiscRemoved;
+    private bool _isDraggingDisc;
 
     public event EventHandler<JewelCaseCoverFlowSelectionChangedEventArgs>? SelectionChanged;
     public event EventHandler<JewelCaseCoverFlowSelectionChangedEventArgs>? ItemActivated;
@@ -88,7 +104,7 @@ public sealed class JewelCaseCoverFlow : Grid
             _dxScene = new DxJewelCaseScene();
             _dxScene.Viewport.MouseDoubleClick += (_, e) =>
             {
-                if (e.ChangedButton == MouseButton.Left && !_isPanning) RaiseActivated();
+                if (e.ChangedButton == MouseButton.Left && !_isPanning && !_isDraggingDisc) RaiseActivated();
             };
             Children.Add(_dxScene.Viewport);
         }
@@ -180,6 +196,18 @@ public sealed class JewelCaseCoverFlow : Grid
         UpdateDiscButton();
         overlay.Children.Add(_discButton);
 
+        _bookletButton.Content = LocalizationService.Select("▤ ジャケットを見る", "▤ View booklet");
+        _bookletButton.Width = 145; _bookletButton.Height = 25;
+        _bookletButton.Margin = new Thickness(252, 0, 0, 0);
+        _bookletButton.HorizontalAlignment = HorizontalAlignment.Left;
+        _bookletButton.VerticalAlignment = VerticalAlignment.Top;
+        _bookletButton.Foreground = Brushes.White; _bookletButton.Background = _discButton.Background;
+        _bookletButton.BorderBrush = _discButton.BorderBrush; _bookletButton.Cursor = Cursors.Hand;
+        _bookletButton.ToolTip = LocalizationService.Select("ジャケットを取り出して、Front・PAGE・ライナーノーツ・Front背面を閲覧", "Extract the booklet and browse Front, pages, liner notes and Inside Front");
+        _bookletButton.Visibility = Visibility.Collapsed;
+        _bookletButton.Click += async (_, _) => await OpenBookletAsync();
+        overlay.Children.Add(_bookletButton);
+
         var previous = CreateNavigationButton("‹", HorizontalAlignment.Left);
         previous.Click += (_, _) => MoveSelection(-1);
         Grid.SetRow(previous, 1);
@@ -233,8 +261,11 @@ public sealed class JewelCaseCoverFlow : Grid
         };
         PreviewKeyDown += OnPreviewKeyDown;
         ToolTip = LocalizationService.Select(
-            "左ドラッグ: 回転 ／ 中央ボタンドラッグ: 移動 ／ R: 位置を戻す",
-            "Left drag: rotate / Middle drag: move / R: reset position");
+            "左ドラッグ: 回転（取り出したCD上ではCDを移動） ／ 中央ボタンドラッグ: 全体を移動 ／ R: 位置を戻す",
+            "Left drag: rotate (drag an extracted CD to move it) / Middle drag: move all / R: reset position");
+        PreviewMouseDown += OnDiscDragStarted;
+        PreviewMouseUp += OnDiscDragEnded;
+        MouseMove += OnDiscDragMoved;
         PreviewMouseDown += OnPanStarted;
         PreviewMouseUp += OnPanEnded;
         MouseMove += OnPanMoved;
@@ -397,6 +428,8 @@ public sealed class JewelCaseCoverFlow : Grid
         _viewport.Children.Add(new ModelVisual3D { Content = lightGroup });
 
         var hasItems = _items.Count > 0 && _selectedIndex >= 0;
+        if (_dxScene is not null) _dxScene.Viewport.Visibility = hasItems ? Visibility.Visible : Visibility.Collapsed;
+        _bookletButton.Visibility = hasItems && _items[_selectedIndex].LoadBooklet is not null ? Visibility.Visible : Visibility.Collapsed;
         _emptyText.Visibility = hasItems ? Visibility.Collapsed : Visibility.Visible;
         _counterText.Text = hasItems ? $"{_selectedIndex + 1} / {_items.Count}" : "0 / 0";
         _titleText.Text = hasItems ? _items[_selectedIndex].Title : "";
@@ -466,12 +499,13 @@ public sealed class JewelCaseCoverFlow : Grid
             "Black" => Color.FromRgb(18, 20, 24),
             "Gray" => Color.FromRgb(90, 94, 98),
             "Clear" => Color.FromArgb(44, 224, 232, 236),
-            _ => item.IsPlaying ? Color.FromRgb(24, 112, 77) : Color.FromRgb(29, 32, 37)
+            _ => Color.FromRgb(29, 32, 37)
         };
         var dark = CreateMaterial(trayColor, 28);
         var back = CreateOptionalArtworkMaterial(item.BackCover, item.Title, 0.92);
-        var spine = CreateOptionalArtworkMaterial(item.SpineCover, item.Title, 0.96);
-        var rightSpine = CreateOptionalArtworkMaterial(item.RightSpineCover, item.Title, 0.96);
+        // Source Back is viewed from the opposite side of the model.
+        var spine = CreateOptionalArtworkMaterial(item.RightSpineCover, item.Title, 0.96);
+        var rightSpine = CreateOptionalArtworkMaterial(item.SpineCover, item.Title, 0.96);
 
         // Clear acrylic shell, the darker hinge rail and the two hinge knuckles.
         group.Children.Add(CreateBeveledBox(width, 0.052, depth, 0.022,
@@ -504,6 +538,36 @@ public sealed class JewelCaseCoverFlow : Grid
             new Point3D(width / 2 + 0.003, height / 2 - 0.07, -depth / 2 + 0.008),
             new Point3D(width / 2 + 0.003, -height / 2 + 0.07, -depth / 2 + 0.008),
             new Point3D(width / 2 + 0.003, -height / 2 + 0.07, depth / 2 - 0.008), rightSpine));
+
+        var inlay = item.SplitInlay();
+        var insideBack = CreateOptionalArtworkMaterial(inlay.Panel, item.Title, 0.92);
+        var insideLeft = CreateOptionalArtworkMaterial(inlay.Left, item.Title, 0.96);
+        var insideRight = CreateOptionalArtworkMaterial(inlay.Right, item.Title, 0.96);
+        void AddInside(Point3D topLeft, Point3D topRight, Point3D bottomRight, Point3D bottomLeft, Material material)
+        {
+            var face = CreateQuad(topLeft, topRight, bottomRight, bottomLeft, material);
+            ((MeshGeometry3D)face.Geometry).TriangleIndices = [0, 2, 1, 0, 3, 2];
+            face.BackMaterial = null;
+            group.Children.Add(face);
+        }
+        AddInside(
+            new Point3D(-width / 2 + 0.065, height / 2 - 0.075, -depth / 2 + 0.002),
+            new Point3D(width / 2 - 0.065, height / 2 - 0.075, -depth / 2 + 0.002),
+            new Point3D(width / 2 - 0.065, -height / 2 + 0.075, -depth / 2 + 0.002),
+            new Point3D(-width / 2 + 0.065, -height / 2 + 0.075, -depth / 2 + 0.002), insideBack);
+        AddInside(
+            new Point3D(-width / 2 - 0.002, height / 2 - 0.07, depth / 2 - 0.008),
+            new Point3D(-width / 2 - 0.002, height / 2 - 0.07, -depth / 2 + 0.008),
+            new Point3D(-width / 2 - 0.002, -height / 2 + 0.07, -depth / 2 + 0.008),
+            new Point3D(-width / 2 - 0.002, -height / 2 + 0.07, depth / 2 - 0.008), insideLeft);
+        AddInside(
+            new Point3D(width / 2 + 0.002, height / 2 - 0.07, -depth / 2 + 0.008),
+            new Point3D(width / 2 + 0.002, height / 2 - 0.07, depth / 2 - 0.008),
+            new Point3D(width / 2 + 0.002, -height / 2 + 0.07, depth / 2 - 0.008),
+            new Point3D(width / 2 + 0.002, -height / 2 + 0.07, -depth / 2 + 0.008), insideRight);
+        // The fallback renderer also keeps the insert behind the removable tray.
+        group.Children.Add(CreateBox(width - 0.13, height - 0.15, 0.006,
+            new Point3D(0, 0, -depth / 2 + 0.012), dark));
 
         for (var rib = 0; rib < 8; rib++)
         {
@@ -574,6 +638,80 @@ public sealed class JewelCaseCoverFlow : Grid
         return container;
     }
 
+    private async Task OpenBookletAsync()
+    {
+        if (_isOpeningBooklet || _selectedIndex < 0 || _items[_selectedIndex].LoadBooklet is not { } loader) return;
+        var key = SelectedKey;
+        var title = _items[_selectedIndex].Title;
+        _isOpeningBooklet = true; IsEnabled = false; EndPointerDrag();
+        try
+        {
+            var booklet = await Task.Run(loader);
+            if (!IsLoaded || key != SelectedKey) return;
+            if (!_isCaseOpen)
+            {
+                SetCaseOpen(true, true);
+                await Task.Delay(1200);
+            }
+            if (!IsLoaded || key != SelectedKey) return;
+            if (_dxScene is not null && !await _dxScene.AnimateBookletAsync(true)) return;
+            if (!IsLoaded || key != SelectedKey) return;
+            var viewer = new BookletViewerWindow(title, booklet) { Owner = Window.GetWindow(this) };
+            if (_isFullScreen) viewer.WindowState = WindowState.Maximized;
+            viewer.ShowDialog();
+        }
+        catch (Exception ex)
+        {
+            if (IsLoaded) MessageBox.Show(Window.GetWindow(this), ex.Message,
+                LocalizationService.Select("ジャケットを表示できません", "Unable to open booklet"), MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            // Close the reader first so the user sees the real booklet aligned
+            // with the empty lid, then slid back under its retaining tabs.
+            if (_dxScene is not null && IsLoaded && key == SelectedKey)
+                await _dxScene.AnimateBookletAsync(false);
+            _dxScene?.SetBookletRemoved(false, false);
+            _isOpeningBooklet = false; IsEnabled = true;
+            if (IsLoaded) Focus();
+        }
+    }
+
+    private void OnDiscDragStarted(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left || !_isDiscRemoved || _dxScene is null || _isPanning) return;
+        for (var element = e.OriginalSource as DependencyObject; element is not null && element != this;
+             element = element is Visual ? VisualTreeHelper.GetParent(element) : LogicalTreeHelper.GetParent(element))
+            if (element is System.Windows.Controls.Primitives.ButtonBase) return;
+        if (TryBeginDiscDrag(e.GetPosition(_dxScene.Viewport))) e.Handled = true;
+    }
+
+    private bool TryBeginDiscDrag(Point position)
+    {
+        if (!_isDiscRemoved || _dxScene is null || _isPanning || !_dxScene.BeginDiscDrag(position)) return false;
+        Focus();
+        _isRotating = false;
+        _isDraggingDisc = CaptureMouse();
+        if (_isDraggingDisc) Cursor = Cursors.SizeAll;
+        else _dxScene.EndDiscDrag();
+        return _isDraggingDisc;
+    }
+
+    private void OnDiscDragMoved(object sender, MouseEventArgs e)
+    {
+        if (!_isDraggingDisc || _dxScene is null) return;
+        if (e.LeftButton != MouseButtonState.Pressed) { EndPointerDrag(); return; }
+        _dxScene.DragDiscTo(e.GetPosition(_dxScene.Viewport));
+        e.Handled = true;
+    }
+
+    private void OnDiscDragEnded(object sender, MouseButtonEventArgs e)
+    {
+        if (!_isDraggingDisc || e.ChangedButton != MouseButton.Left) return;
+        EndPointerDrag();
+        e.Handled = true;
+    }
+
     private void OnPanStarted(object sender, MouseButtonEventArgs e)
     {
         if (e.ChangedButton != MouseButton.Middle || _selectedIndex < 0) return;
@@ -634,6 +772,8 @@ public sealed class JewelCaseCoverFlow : Grid
 
     private void EndPointerDrag()
     {
+        _isDraggingDisc = false;
+        _dxScene?.EndDiscDrag();
         _isPanning = false;
         _isRotating = false;
         if (IsMouseCaptured) ReleaseMouseCapture();
@@ -642,7 +782,7 @@ public sealed class JewelCaseCoverFlow : Grid
 
     private void OnRotationStarted(object sender, MouseButtonEventArgs e)
     {
-        if (_isPanning) return;
+        if (_isPanning || _isDraggingDisc) return;
         Focus();
         if (_selectedIndex < 0) return;
         _isRotating = true;
@@ -709,6 +849,7 @@ public sealed class JewelCaseCoverFlow : Grid
     private void SetDiscRemoved(bool removed, bool animate)
     {
         if (!_isCaseOpen && removed) return;
+        EndPointerDrag();
         _isDiscRemoved = removed;
         _dxScene?.SetDiscRemoved(removed, animate);
         UpdateDiscButton();
@@ -732,8 +873,8 @@ public sealed class JewelCaseCoverFlow : Grid
             ? LocalizationService.Select("◉ CDを戻す", "◉ Insert CD")
             : LocalizationService.Select("◎ CDを取り出す", "◎ Remove CD");
         _discButton.ToolTip = LocalizationService.Select(
-            _isCaseOpen ? "CDを取り出す／戻す (D)" : "先にケースを開いてください",
-            _isCaseOpen ? "Remove/insert the CD (D)" : "Open the case first");
+            _isCaseOpen ? "CDを取り出す／戻す (D)。取り出したCDは左ドラッグで移動できます" : "先にケースを開いてください",
+            _isCaseOpen ? "Remove/insert the CD (D). Left-drag an extracted CD to move it" : "Open the case first");
     }
 
     private static double NormalizeAngle(double angle)

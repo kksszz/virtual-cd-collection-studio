@@ -11,9 +11,9 @@
     <Product>zip.mp3 Player and Manager Plus</Product>
     <Description>Music player and library manager for ZIP.MP3 and standard audio files</Description>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
-    <Version>0.50.0</Version>
-    <AssemblyVersion>0.50.0.0</AssemblyVersion>
-    <FileVersion>0.50.0.0</FileVersion>
+    <Version>0.71.0</Version>
+    <AssemblyVersion>0.71.0.0</AssemblyVersion>
+    <FileVersion>0.71.0.0</FileVersion>
   </PropertyGroup>
   <ItemGroup>
     <Resource Include="Assets\AppIcon.ico" />
@@ -32,6 +32,8 @@
     <Compile Remove="OcrDevHarness\**\*.cs" />
     <Compile Remove="LyricsDevHarness\**\*.cs" />
     <Compile Remove="FormatDevHarness\**\*.cs" />
+    <Compile Remove="GaplessDevHarness\**\*.cs" />
+    <None Remove="GaplessDevHarness\**\*" />
     <Compile Remove="TagEditDevHarness\**\*.cs" />
     <None Remove="BackupDevHarness\**\*" />
     <None Remove="AudioDevHarness\**\*" />

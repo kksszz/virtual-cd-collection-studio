@@ -25,6 +25,9 @@ public partial class MainWindow : Window
     private IWavePlayer? _output;
     private WaveStream? _reader;
     private TrackAudioReader? _trackReader;
+    private GaplessPlaybackStream? _gapless;
+    private int _gaplessRevision;
+    private bool _gaplessEnabled = true;
     private RemasterSampleProvider? _remaster;
     private EqualizerSampleProvider? _equalizer;
     private BassBoostSampleProvider? _bassBoost;
@@ -71,8 +74,14 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<AlbumListItem> _albums = [];
     private readonly ObservableCollection<ArtistTreeNode> _artistTreeRoots = [];
     private readonly ICollectionView _albumView;
+    private readonly DispatcherTimer _albumSearchTimer = new(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(180) };
+    private string[] _albumSearchWords = [];
+    private bool _albumSearchComposing;
+    private bool _albumSearchPending;
+    private bool _artistTreeDirty = true;
     private readonly List<AlbumImageSource> _albumImages = [];
     private Dictionary<string, string> _currentArtworkRoles = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, int> _currentArtworkRotations = new(StringComparer.OrdinalIgnoreCase);
     private string _currentTrayColor = "Auto";
     private int _albumImageIndex = -1;
     private int _selectedAlbumImageIndex = -1;
@@ -93,6 +102,8 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _scanCancellation;
     private readonly PlaybackUsageStore _usageStore;
     private readonly FavoritesStore _favoritesStore;
+    private IReadOnlyList<FavoriteTrackEntry> _favoriteQueue = [];
+    private int _favoriteQueueIndex = -1;
     private PlaybackUsageEntry? _activeUsageEntry;
     private DateTime _usageLastTickUtc;
     private double _activeUsageSessionSeconds;
@@ -153,6 +164,15 @@ public partial class MainWindow : Window
         _albumView.Filter = item => item is AlbumListItem album && MatchesAlbumFilter(album);
         AlbumList.ItemsSource = _albumView;
         ArtistTree.ItemsSource = _artistTreeRoots;
+        _albumSearchTimer.Tick += (_, _) => ApplyAlbumSearch();
+        TextCompositionManager.AddPreviewTextInputStartHandler(AlbumFilterTextBox, (_, _) =>
+        { _albumSearchComposing = true; _albumSearchTimer.Stop(); });
+        TextCompositionManager.AddPreviewTextInputUpdateHandler(AlbumFilterTextBox, (_, _) =>
+        { _albumSearchComposing = true; _albumSearchTimer.Stop(); });
+        TextCompositionManager.AddPreviewTextInputHandler(AlbumFilterTextBox, (_, _) =>
+        { _albumSearchComposing = false; _albumSearchTimer.Stop(); _albumSearchTimer.Start(); });
+        AlbumFilterTextBox.LostKeyboardFocus += (_, _) => { _albumSearchComposing = false; if (_albumSearchPending) ApplyAlbumSearch(); };
+        Closed += (_, _) => { _albumSearchTimer.Stop(); _coverFlowHighResolutionCancellation?.Cancel(); };
         UpdateAlbumFilterResult();
         EqPresetCombo.SelectedIndex = 0;
         Application.Current.SessionEnding += (_, _) => _forceClose = true;
@@ -478,6 +498,20 @@ public partial class MainWindow : Window
     private void AlbumFilter_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
     {
         if (_albumView is null) return;
+        // Normalize once per input change, not once for every album/predicate pass.
+        _albumSearchWords = NormalizeAlbumSearch(AlbumFilterTextBox.Text).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        _albumSearchPending = true;
+        _albumSearchTimer.Stop();
+        _coverFlowHighResolutionCancellation?.Cancel();
+        if (_albumSearchWords.Length == 0 && !_albumSearchComposing) ApplyAlbumSearch();
+        else if (!_albumSearchComposing) _albumSearchTimer.Start();
+    }
+
+    private void ApplyAlbumSearch()
+    {
+        _albumSearchTimer.Stop();
+        if (_albumSearchComposing) return;
+        _albumSearchPending = false;
         _albumView.Refresh();
         RebuildArtistTree();
         UpdateAlbumFilterResult();
@@ -492,10 +526,9 @@ public partial class MainWindow : Window
     private bool MatchesAlbumFilter(AlbumListItem album)
     {
         if (!IsAlbumFolderEnabled(album.Album.Path)) return false;
-        if (AlbumFilterTextBox is null || string.IsNullOrWhiteSpace(AlbumFilterTextBox.Text)) return true;
-        var words = NormalizeAlbumSearch(AlbumFilterTextBox.Text)
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return words.All(word => album.SearchText.Contains(word, StringComparison.Ordinal));
+        foreach (var word in _albumSearchWords)
+            if (!album.SearchText.Contains(word, StringComparison.Ordinal)) return false;
+        return true;
     }
 
     private static string NormalizeAlbumSearch(string value) => string.Join(' ',
@@ -526,15 +559,24 @@ public partial class MainWindow : Window
 
     private void RebuildArtistTree()
     {
+        _artistTreeDirty = true;
+        if (_albumSortMode != AlbumSortMode.ArtistTree) return;
         _artistTreeRoots.Clear();
-        foreach (var album in _albums.Where(MatchesAlbumFilter)) AddAlbumToArtistTree(album);
+        var comparer = StringComparer.CurrentCultureIgnoreCase;
+        foreach (var albums in _albums.Where(MatchesAlbumFilter).GroupBy(album => album.Artist, comparer).OrderBy(group => group.Key, comparer))
+        {
+            var group = ArtistTreeNode.CreateGroup(albums.Key);
+            foreach (var album in albums.OrderBy(album => album.Title, comparer)) group.Children.Add(ArtistTreeNode.CreateAlbum(album));
+            _artistTreeRoots.Add(group);
+        }
+        _artistTreeDirty = false;
     }
 
     private void UpdateAlbumFilterResult()
     {
         if (AlbumFilterResultText is null) return;
         var enabled = _albums.Count(album => IsAlbumFolderEnabled(album.Album.Path));
-        var visible = _albums.Count(MatchesAlbumFilter);
+        var visible = _albumView.Cast<object>().Count();
         AlbumFilterResultText.Text = string.IsNullOrWhiteSpace(AlbumFilterTextBox?.Text)
             ? $"{enabled}件" : $"{visible}/{enabled}件";
         QueueCoverFlowRefresh();
@@ -547,6 +589,8 @@ public partial class MainWindow : Window
         AlbumList.Visibility = treeMode || coverFlowMode ? Visibility.Collapsed : Visibility.Visible;
         ArtistTree.Visibility = treeMode ? Visibility.Visible : Visibility.Collapsed;
         AlbumCoverFlow.Visibility = coverFlowMode ? Visibility.Visible : Visibility.Collapsed;
+        if (treeMode && _artistTreeDirty) RebuildArtistTree();
+        if (!coverFlowMode) _coverFlowHighResolutionCancellation?.Cancel();
         if (coverFlowMode)
         {
             RefreshCoverFlowItems();
@@ -556,7 +600,7 @@ public partial class MainWindow : Window
 
     private void QueueCoverFlowRefresh()
     {
-        if (_coverFlowRefreshPending || AlbumCoverFlow is null) return;
+        if (_albumSortMode != AlbumSortMode.CoverFlow || _coverFlowRefreshPending || AlbumCoverFlow is null) return;
         _coverFlowRefreshPending = true;
         Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
         {
@@ -567,7 +611,7 @@ public partial class MainWindow : Window
 
     private void RefreshCoverFlowItems()
     {
-        if (AlbumCoverFlow is null || _albumView is null) return;
+        if (_albumSortMode != AlbumSortMode.CoverFlow || _albumSearchTimer.IsEnabled || _albumSearchComposing || AlbumCoverFlow is null || _albumView is null) return;
         const int nearbyArtworkWidth = 640;
         var selectedPath = (AlbumList.SelectedItem as AlbumListItem)?.Album.Path ?? _album?.Path;
         var visibleAlbums = _albumView.Cast<object>().OfType<AlbumListItem>().ToList();
@@ -580,49 +624,56 @@ public partial class MainWindow : Window
             foreach (var album in visibleAlbums)
                 if (album != visibleAlbums[selectedIndex] && album.CaseArtworkDecodeWidth > nearbyArtworkWidth)
                     album.ReleaseHighResolutionCaseArtwork(nearbyArtworkWidth);
-            for (var index = Math.Max(0, selectedIndex - 5); index <= Math.Min(visibleAlbums.Count - 1, selectedIndex + 5); index++)
-                visibleAlbums[index].EnsureCaseArtworkLoaded(nearbyArtworkWidth);
-            QueueSelectedCoverHighResolution(visibleAlbums[selectedIndex]);
+            QueueCoverFlowArtwork(visibleAlbums, selectedIndex);
         }
         var items = visibleAlbums
             .Select(album => new JewelCaseCoverFlowItem(album.Album.Path, album.Title,
                 album.Artist == "アーティスト不明" ? LocalizationService.Select("アーティスト不明", "Unknown Artist") : album.Artist,
                 album.SourceBadge, album.TrayColorMode, album.CaseFrontThumbnail, album.InsideFrontThumbnail,
                 album.BackCoverThumbnail, album.SpineThumbnail,
-                album.RightSpineThumbnail, album.InlayThumbnail, album.DiscThumbnail, album.IsPlaying))
+                album.RightSpineThumbnail, album.InlayThumbnail, album.DiscThumbnail, album.IsPlaying)
+                { LoadBooklet = album.HasFrontSpread ? album.LoadBooklet : null })
             .ToList();
         AlbumCoverFlow.SetItems(items, selectedPath);
     }
 
-    private void QueueSelectedCoverHighResolution(AlbumListItem album)
+    private void QueueCoverFlowArtwork(IReadOnlyList<AlbumListItem> albums, int selectedIndex)
     {
-        const int selectedArtworkWidth = 2048;
-        if (album.CaseArtworkDecodeWidth >= selectedArtworkWidth) return;
+        var selected = albums[selectedIndex];
+        var requests = new List<(AlbumListItem Album, int Width)> { (selected, 2048) };
+        for (var index = Math.Max(0, selectedIndex - 5); index <= Math.Min(albums.Count - 1, selectedIndex + 5); index++)
+            if (index != selectedIndex) requests.Add((albums[index], 640));
+        requests.RemoveAll(request => request.Album.CaseArtworkDecodeWidth >= request.Width);
+        if (requests.Count == 0) return;
         _coverFlowHighResolutionCancellation?.Cancel();
         _coverFlowHighResolutionCancellation?.Dispose();
         var cancellation = new CancellationTokenSource();
         _coverFlowHighResolutionCancellation = cancellation;
-        _ = LoadSelectedCoverHighResolutionAsync(album, selectedArtworkWidth, cancellation.Token);
+        _ = LoadCoverFlowArtworkAsync(requests, cancellation.Token);
     }
 
-    private async Task LoadSelectedCoverHighResolutionAsync(AlbumListItem album, int decodePixelWidth,
+    private async Task LoadCoverFlowArtworkAsync(IReadOnlyList<(AlbumListItem Album, int Width)> requests,
         CancellationToken cancellationToken)
     {
         try
         {
             // Avoid decoding every album while the user is rapidly browsing.
             await Task.Delay(140, cancellationToken);
-            await album.EnsureCaseArtworkLoadedAsync(decodePixelWidth, cancellationToken);
+            foreach (var request in requests)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await request.Album.EnsureCaseArtworkLoadedAsync(request.Width, cancellationToken);
+            }
             cancellationToken.ThrowIfCancellationRequested();
-            var selectedPath = (AlbumList.SelectedItem as AlbumListItem)?.Album.Path ?? _album?.Path;
-            if (!string.Equals(selectedPath, album.Album.Path, StringComparison.OrdinalIgnoreCase)) return;
             RefreshCoverFlowItems();
         }
         catch (OperationCanceledException) { }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Cover artwork load failed: {ex.Message}"); }
     }
 
     private void AddAlbumToArtistTree(AlbumListItem album)
     {
+        if (_albumSortMode != AlbumSortMode.ArtistTree) { _artistTreeDirty = true; return; }
         if (!MatchesAlbumFilter(album)) return;
         var comparer = StringComparer.CurrentCultureIgnoreCase;
         var group = _artistTreeRoots.FirstOrDefault(node => comparer.Equals(node.ArtistKey, album.Artist));
@@ -641,6 +692,7 @@ public partial class MainWindow : Window
 
     private void RemoveAlbumFromArtistTree(AlbumListItem album)
     {
+        if (_albumSortMode != AlbumSortMode.ArtistTree) { _artistTreeDirty = true; return; }
         var group = _artistTreeRoots.FirstOrDefault(node => node.Children.Any(child => ReferenceEquals(child.AlbumItem, album)));
         if (group is null) return;
         var child = group.Children.First(node => ReferenceEquals(node.AlbumItem, album));
@@ -755,6 +807,7 @@ public partial class MainWindow : Window
 
     private void AlbumContextMenu_Opened(object sender, RoutedEventArgs e)
     {
+        AlbumPropertiesContextMenu_Opened(sender, e);
         var item = GetSelectedAlbumItem();
         var isArchive = item?.IsArchive == true && File.Exists(item.Album.Path);
         var isCompressed = false;
@@ -900,6 +953,19 @@ public partial class MainWindow : Window
         StatusText.Text = "リストから削除しました（元ファイルは変更していません）";
     }
 
+    private void AlbumPropertiesContextMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.ContextMenu menu)
+            foreach (var item in menu.Items.OfType<System.Windows.Controls.MenuItem>().Where(item => Equals(item.Tag, "AlbumProperties")))
+                item.IsEnabled = GetSelectedAlbumItem() is not null;
+    }
+
+    private void AlbumProperties_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetSelectedAlbumItem();
+        if (item is not null) new AlbumPropertiesWindow(item.Album) { Owner = this }.ShowDialog();
+    }
+
     private void OpenAlbumInExplorer_Click(object sender, RoutedEventArgs e)
     {
         var item = GetSelectedAlbumItem();
@@ -949,7 +1015,7 @@ public partial class MainWindow : Window
                 item.RightSpineThumbnail,
                 item.InlayThumbnail,
                 item.DiscThumbnail,
-                item.IsPlaying);
+                item.IsPlaying) { LoadBooklet = item.HasFrontSpread ? item.LoadBooklet : null };
 
             StatusText.Text = LocalizationService.Select(
                 $"3Dケースを表示しています: {item.Title}",
@@ -1016,6 +1082,7 @@ public partial class MainWindow : Window
             _settings.PlaybackSpeed = _playbackSpeed;
             _settings.PreservePitch = _preservePitch;
             _settings.FaithfulMode = _faithfulMode;
+            _settings.GaplessPlayback = _gaplessEnabled;
             _settings.EqEnabled = EqEnabledCheck.IsChecked == true;
             _settings.EqGains = _eqGains.ToArray();
             _settings.BassBoostEnabled = BassBoostEnabledCheck.IsChecked == true;
@@ -1051,6 +1118,8 @@ public partial class MainWindow : Window
         VolumeSlider.Value = Math.Clamp(_settings.Volume, 0, 2);
         _preservePitch = _settings.PreservePitch;
         _faithfulMode = _settings.FaithfulMode;
+        _gaplessEnabled = _settings.GaplessPlayback;
+        GaplessCheck.IsChecked = _gaplessEnabled;
         FaithfulModeCheck.IsChecked = _faithfulMode;
         EqEnabledCheck.IsChecked = _settings.EqEnabled;
         BassBoostEnabledCheck.IsChecked = _settings.BassBoostEnabled;
@@ -1183,10 +1252,16 @@ public partial class MainWindow : Window
         => PlayTrack(_album, index, startAt, startPlaying, countAsNewUsageSession: true);
 
     private void PlayTrack(ZipAlbum? album, int index, TimeSpan? startAt = null, bool startPlaying = true,
-        bool countAsNewUsageSession = true)
+        bool countAsNewUsageSession = true, bool fromFavorites = false,
+        IReadOnlyList<PlaybackQueueEntry>? queueOverride = null, bool forceStandardPlayback = false)
     {
         if (album is null || index < 0 || index >= album.Tracks.Count) return;
         var track = album.Tracks[index];
+        if (countAsNewUsageSession && !fromFavorites)
+        {
+            _favoriteQueue = [];
+            _favoriteQueueIndex = -1;
+        }
         if (!track.IsSupported)
         {
             MessageBox.Show(this, LocalizationService.Select(
@@ -1205,8 +1280,24 @@ public partial class MainWindow : Window
             _currentIndex = index;
             UpdatePlayingAlbumIndicator(album);
             SelectNowPlayingButton.IsEnabled = true;
-            _trackReader = TrackAudioReader.Open(track);
-            _reader = _trackReader.Reader;
+            if (_gaplessEnabled && !forceStandardPlayback)
+            {
+                var queue = queueOverride ?? BuildGaplessQueue(album);
+                var queueIndex = queue.ToList().FindIndex(entry => ReferenceEquals(entry.Album, album) && entry.TrackIndex == index);
+                _gapless = new GaplessPlaybackStream(queue, queueIndex, _faithfulMode, _shuffle, (int)_repeat);
+                var activeStream = _gapless;
+                _gapless.TrackChanged += () => Dispatcher.BeginInvoke(() =>
+                {
+                    if (ReferenceEquals(_gapless, activeStream)) SynchronizeGaplessTrack();
+                });
+                _gaplessRevision = 0;
+                _reader = _gapless;
+            }
+            else
+            {
+                _trackReader = TrackAudioReader.Open(track);
+                _reader = _trackReader.Reader;
+            }
             if (_faithfulMode)
             {
                 _output = CreateFaithfulOutput(_reader, out _faithfulExclusiveActive);
@@ -1262,6 +1353,8 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             DisposeAudio();
+            _favoriteQueue = [];
+            _favoriteQueueIndex = -1;
             _playingAlbum = null;
             _currentIndex = -1;
             UpdatePlayingAlbumIndicator(null);
@@ -1320,8 +1413,42 @@ public partial class MainWindow : Window
             if (_ignoreStopped) return;
             if (e.Exception is not null)
             {
+                // Media Foundation and some output drivers can reject a FLAC
+                // callback even though the same stream decodes correctly. If
+                // this happened on the gapless wrapper, resume the exact track
+                // and position with its direct reader instead of stopping.
+                if (_gapless is { } failedGapless)
+                {
+                    var snapshot = failedGapless.Snapshot;
+                    System.Diagnostics.Debug.WriteLine($"Gapless output failed; retrying direct playback: {e.Exception}");
+                    PlaybackStatusText.Text = "通常再生へ切り替えています…";
+                    PlayTrack(snapshot.Entry.Album, snapshot.Entry.TrackIndex, snapshot.Position,
+                        startPlaying: true, countAsNewUsageSession: false,
+                        fromFavorites: snapshot.Entry.FavoriteIndex >= 0,
+                        forceStandardPlayback: true);
+                    if (_reader is not null)
+                        StatusText.Text = "FLACを通常再生へ自動的に切り替えました";
+                    return;
+                }
                 PlaybackStatusText.Text = "再生中にエラーが発生しました";
                 MessageBox.Show(this, e.Exception.Message, "再生エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            if (_gapless is not null)
+            {
+                SynchronizeGaplessTrack();
+                var fallback = _gapless.FallbackEntry;
+                if (fallback is not null)
+                {
+                    PlayQueueEntry(fallback);
+                    StatusText.Text = LocalizationService.Select("音声形式の変更または先読み待ちのため通常の曲切り替えを使用しました",
+                        "Used a standard track transition for a format change or pending prefetch");
+                }
+                else
+                {
+                    StopPlayback(resetPosition: true);
+                    PlaybackStatusText.Text = LocalizationService.Select("再生リストの再生が終了しました", "Playback queue finished");
+                }
                 return;
             }
             PlayFollowingTrack(naturalEnd: true);
@@ -1361,6 +1488,20 @@ public partial class MainWindow : Window
 
     private void PlayRelative(int delta)
     {
+        if (_gapless is not null)
+        {
+            SynchronizeGaplessTrack();
+            _gapless.ConfigureNavigation(_shuffle, (int)_repeat);
+            PlayQueueEntry(_gapless.RelativeEntry(delta));
+            return;
+        }
+        if (_favoriteQueue.Count > 0)
+        {
+            var nextFavorite = _favoriteQueueIndex + delta;
+            if (_repeat == RepeatMode.All) nextFavorite = (nextFavorite + _favoriteQueue.Count) % _favoriteQueue.Count;
+            PlayFavoriteTrack(Math.Clamp(nextFavorite, 0, _favoriteQueue.Count - 1));
+            return;
+        }
         var album = _playingAlbum ?? _album;
         if (album is null) return;
         var next = _currentIndex < 0 ? 0 : _currentIndex + delta;
@@ -1371,6 +1512,36 @@ public partial class MainWindow : Window
 
     private void PlayFollowingTrack(bool naturalEnd)
     {
+        if (_gapless is not null)
+        {
+            SynchronizeGaplessTrack();
+            _gapless.ConfigureNavigation(_shuffle, (int)_repeat);
+            var nextEntry = _gapless.FollowingEntry(naturalEnd);
+            if (nextEntry is null) { StopPlayback(resetPosition: true); return; }
+            PlayQueueEntry(nextEntry);
+            return;
+        }
+        if (_favoriteQueue.Count > 0)
+        {
+            var nextFavorite = _favoriteQueueIndex + 1;
+            if (naturalEnd && _repeat == RepeatMode.One) nextFavorite = _favoriteQueueIndex;
+            else if (_shuffle && _favoriteQueue.Count > 1)
+            {
+                do nextFavorite = _random.Next(_favoriteQueue.Count); while (nextFavorite == _favoriteQueueIndex);
+            }
+            if (nextFavorite >= _favoriteQueue.Count)
+            {
+                if (_repeat == RepeatMode.All) nextFavorite = 0;
+                else
+                {
+                    StopPlayback(resetPosition: true);
+                    PlaybackStatusText.Text = LocalizationService.Select("お気に入りの再生が終了しました", "Favorites playback finished");
+                    return;
+                }
+            }
+            PlayFavoriteTrack(nextFavorite);
+            return;
+        }
         var album = _playingAlbum ?? _album;
         if (album is null) return;
         if (naturalEnd && _repeat == RepeatMode.One) { PlayTrack(album, _currentIndex); return; }
@@ -1403,6 +1574,15 @@ public partial class MainWindow : Window
     {
         var row = FindVisualParent<System.Windows.Controls.DataGridRow>(e.OriginalSource as DependencyObject);
         if (row is not null) TrackGrid.SelectedItem = row.Item;
+    }
+
+    private void TrackContextMenu_Opened(object sender, RoutedEventArgs e)
+        => TrackPropertiesMenuItem.IsEnabled = TrackGrid.SelectedItem is ZipTrack;
+
+    private void TrackProperties_Click(object sender, RoutedEventArgs e)
+    {
+        if (TrackGrid.SelectedItem is ZipTrack track)
+            new AlbumPropertiesWindow(track) { Owner = this }.ShowDialog();
     }
 
     private async void EditTrackTags_Click(object sender, RoutedEventArgs e)
@@ -1536,6 +1716,7 @@ public partial class MainWindow : Window
     private void Shuffle_Click(object sender, RoutedEventArgs e)
     {
         _shuffle = !_shuffle;
+        _gapless?.ConfigureNavigation(_shuffle, (int)_repeat);
         ShuffleButton.Content = _shuffle ? "⤨ ON" : "⤨ OFF";
         ShuffleButton.Background = _shuffle ? System.Windows.Media.Brushes.SteelBlue : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(44, 49, 58));
     }
@@ -1543,6 +1724,7 @@ public partial class MainWindow : Window
     private void Repeat_Click(object sender, RoutedEventArgs e)
     {
         _repeat = _repeat switch { RepeatMode.Off => RepeatMode.All, RepeatMode.All => RepeatMode.One, _ => RepeatMode.Off };
+        _gapless?.ConfigureNavigation(_shuffle, (int)_repeat);
         RepeatButton.Content = _repeat switch { RepeatMode.All => "↻ 全曲", RepeatMode.One => "↻ 1曲", _ => "↻ OFF" };
     }
 
@@ -2100,14 +2282,17 @@ public partial class MainWindow : Window
 
     private void RebuildAudioEffects()
     {
+        SynchronizeGaplessTrack();
         if (_reader is null || _output is null || _playingAlbum is null || _currentIndex < 0) return;
         var position = _reader.CurrentTime;
         var wasPlaying = _output.PlaybackState == PlaybackState.Playing;
-        PlayTrack(_playingAlbum, _currentIndex, position, wasPlaying, countAsNewUsageSession: false);
+        PlayTrack(_playingAlbum, _currentIndex, position, wasPlaying, countAsNewUsageSession: false,
+            queueOverride: _gapless?.Entries);
     }
 
     private void SeekReaderSafely(double seconds)
     {
+        SynchronizeGaplessTrack();
         if (_reader is not null)
         {
             var safeMaximum = Math.Max(0, _reader.TotalTime.TotalSeconds - 0.05);
@@ -2118,6 +2303,7 @@ public partial class MainWindow : Window
 
     private void UpdatePosition()
     {
+        SynchronizeGaplessTrack();
         AccumulateUsageTime();
         if (_reader is not null)
         {
@@ -2128,6 +2314,102 @@ public partial class MainWindow : Window
             UpdateLyricsAutoScroll(_reader.CurrentTime.TotalSeconds, _reader.TotalTime.TotalSeconds);
             return;
         }
+    }
+
+    private void Gapless_Changed(object sender, RoutedEventArgs e)
+    {
+        var enabled = GaplessCheck?.IsChecked == true;
+        if (_gaplessEnabled == enabled) return;
+        _gaplessEnabled = enabled;
+        RebuildAudioEffects();
+    }
+
+    private List<PlaybackQueueEntry> BuildGaplessQueue(ZipAlbum current)
+    {
+        if (_favoriteQueue.Count > 0)
+            return _favoriteQueue.Select((entry, index) => new PlaybackQueueEntry(entry.Album,
+                entry.Album.Tracks.ToList().IndexOf(entry.Track), index))
+                .Where(entry => entry.TrackIndex >= 0 && entry.Track.IsSupported).ToList();
+        // Capture the currently displayed album order. Browsing during playback
+        // does not mutate the active queue; a new explicit play captures it again.
+        var albums = _albumView.Cast<AlbumListItem>().Select(item => item.Album).ToList();
+        if (!albums.Any(album => ReferenceEquals(album, current))) albums.Insert(0, current);
+        return albums.SelectMany(album => album.Tracks.Select((track, index) => new PlaybackQueueEntry(album, index)))
+            .Where(entry => entry.Track.IsSupported).ToList();
+    }
+
+    private void PlayQueueEntry(PlaybackQueueEntry entry)
+    {
+        var queue = _gapless?.Entries;
+        var fromFavorites = entry.FavoriteIndex >= 0 && entry.FavoriteIndex < _favoriteQueue.Count;
+        if (fromFavorites) _favoriteQueueIndex = entry.FavoriteIndex;
+        SetCurrentAlbum(entry.Album);
+        PlayTrack(entry.Album, entry.TrackIndex, fromFavorites: fromFavorites, queueOverride: queue);
+    }
+
+    private void SynchronizeGaplessTrack()
+    {
+        if (_gapless is null) return;
+        var snapshot = _gapless.Snapshot;
+        if (snapshot.Revision == _gaplessRevision) return;
+        AccumulateUsageTime();
+        var wasViewingPlayingAlbum = ReferenceEquals(_album, _playingAlbum);
+        _gaplessRevision = snapshot.Revision;
+        _playingAlbum = snapshot.Entry.Album;
+        _currentIndex = snapshot.Entry.TrackIndex;
+        if (snapshot.Entry.FavoriteIndex >= 0) _favoriteQueueIndex = snapshot.Entry.FavoriteIndex;
+        UpdatePlayingAlbumIndicator(_playingAlbum);
+        if (wasViewingPlayingAlbum)
+        {
+            var albumItem = _albums.FirstOrDefault(item => ReferenceEquals(item.Album, _playingAlbum));
+            if (albumItem is not null) AlbumList.SelectedItem = albumItem;
+            SetCurrentAlbum(_playingAlbum);
+            TrackGrid.SelectedIndex = _currentIndex;
+        }
+        PositionSlider.Maximum = Math.Max(0.1, snapshot.Duration.TotalSeconds);
+        if (!_draggingPosition) PositionSlider.Value = Math.Min(PositionSlider.Maximum, snapshot.Position.TotalSeconds);
+        TotalText.Text = FormatTime(snapshot.Duration);
+        ShowNowPlaying(snapshot.Entry.Track);
+        StartUsageTracking(snapshot.Entry.Track, countAsNewSession: true);
+        Title = $"{snapshot.Entry.Track.Title} — {_applicationTitle}";
+        PlaybackStatusText.Text = _output?.PlaybackState == PlaybackState.Paused
+            ? LocalizationService.Select("一時停止", "Paused")
+            : LocalizationService.Select($"再生中: {snapshot.Entry.Track.Title}  •  ギャップレス",
+                $"Playing: {snapshot.Entry.Track.Title}  •  Gapless");
+    }
+
+    private void Favorites_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new FavoritesWindow(BuildFavoriteEntries()) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        _favoriteQueue = dialog.PlaybackQueue;
+        PlayFavoriteTrack(dialog.PlaybackIndex);
+    }
+
+    private IReadOnlyList<FavoriteTrackEntry> BuildFavoriteEntries() =>
+        _albums.SelectMany(album => album.Album.Tracks.Select(track => new FavoriteTrackEntry(
+            album.Album, track, _favoritesStore.IsAlbumFavorite(album.Album), _favoritesStore.IsTrackFavorite(track))))
+            .Where(entry => entry.AlbumFavorite || entry.TrackFavorite).ToList();
+
+    private void PlayFavoriteTrack(int index)
+    {
+        if (index < 0 || index >= _favoriteQueue.Count) return;
+        var entry = _favoriteQueue[index];
+        var trackIndex = entry.Album.Tracks.ToList().IndexOf(entry.Track);
+        if (trackIndex < 0) { StopPlayback(resetPosition: true); return; }
+        _favoriteQueueIndex = index;
+        var albumItem = _albums.FirstOrDefault(item => ReferenceEquals(item.Album, entry.Album));
+        if (albumItem is not null)
+        {
+            if (!MatchesAlbumFilter(albumItem)) AlbumFilterTextBox.Clear();
+            AlbumList.SelectedItem = albumItem;
+            AlbumList.ScrollIntoView(albumItem);
+        }
+        SetCurrentAlbum(entry.Album);
+        PlayTrack(entry.Album, trackIndex, fromFavorites: true);
+        if (_favoriteQueue.Count > 0)
+            StatusText.Text = LocalizationService.Select($"お気に入り {index + 1} / {_favoriteQueue.Count}: {entry.Title}",
+                $"Favorites {index + 1} / {_favoriteQueue.Count}: {entry.Title}");
     }
 
     private void Usage_Click(object sender, RoutedEventArgs e)
@@ -2719,6 +3001,7 @@ public partial class MainWindow : Window
     {
         _albumImages.Clear();
         _currentArtworkRoles = LoadArtworkRoles(album.Path);
+        _currentArtworkRotations = LoadArtworkRotations(album.Path);
         _currentTrayColor = LoadTrayColor(album.Path);
         UpdateTrayColorCombo();
         _albumImageIndex = -1;
@@ -2729,7 +3012,7 @@ public partial class MainWindow : Window
                 .OrderBy(image => GetAlbumImagePriority(image.FileName))
                 .ThenBy(image => GetAlbumImageSequence(image.FileName))
                 .ThenBy(image => image.FileName, StringComparer.CurrentCultureIgnoreCase)
-                .Select(image => new AlbumImageSource(image.FileName, null, image)));
+                .Select(image => WithArtworkRotation(new AlbumImageSource(image.FileName, null, image), _currentArtworkRotations)));
 
             var downloadedDirectory = GetDownloadedArtworkDirectory(album.Path);
             if (Directory.Exists(downloadedDirectory))
@@ -2739,12 +3022,13 @@ public partial class MainWindow : Window
                     .OrderBy(GetAlbumImagePriority)
                     .ThenBy(GetAlbumImageSequence)
                     .ThenBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase)
-                    .Select(path => new AlbumImageSource(GetManagedArtworkDisplayName(path), path, null)));
+                    .Select(path => WithArtworkRotation(new AlbumImageSource(GetManagedArtworkDisplayName(path), path, null), _currentArtworkRotations)));
             }
 
             _albumImages.AddRange(EnumerateExternalAlbumImagePaths(album)
-                .Select(path => new AlbumImageSource(Path.GetFileName(path), path, null)));
+                .Select(path => WithArtworkRotation(new AlbumImageSource(Path.GetFileName(path), path, null), _currentArtworkRotations)));
 
+            UpdateTrayColorCombo();
             if (_albumImages.Count > 0) { _albumImageIndex = 0; _selectedAlbumImageIndex = 0; ShowCurrentAlbumImage(); }
             else ClearAlbumImages();
         }
@@ -2968,6 +3252,9 @@ public partial class MainWindow : Window
     private static string GetArtworkRolesPath(string albumPath) =>
         Path.Combine(GetDownloadedArtworkDirectory(albumPath), "artwork-roles.json");
 
+    private static string GetArtworkRotationsPath(string albumPath) =>
+        Path.Combine(GetDownloadedArtworkDirectory(albumPath), "artwork-rotations.json");
+
     private static string GetCaseAppearancePath(string albumPath) =>
         Path.Combine(GetDownloadedArtworkDirectory(albumPath), "case-appearance.json");
 
@@ -2989,6 +3276,57 @@ public partial class MainWindow : Window
         File.WriteAllText(path, JsonSerializer.Serialize(
             new CaseAppearanceSettings { TrayColor = trayColor },
             new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private static bool HasInlayArtwork(IEnumerable<AlbumImageSource> sources, IReadOnlyDictionary<string, string> roles) =>
+        sources.Any(source => string.Equals(GetEffectiveArtworkRole(source, roles), "Inlay", StringComparison.OrdinalIgnoreCase));
+
+    private static List<AlbumImageSource> GetCaseArtworkSources(ZipAlbum album, string downloadedDirectory)
+    {
+        var rotations = LoadArtworkRotations(album.Path);
+        var sources = new List<AlbumImageSource>();
+        if (Directory.Exists(downloadedDirectory))
+            sources.AddRange(Directory.EnumerateFiles(downloadedDirectory, "*", SearchOption.TopDirectoryOnly)
+                .Where(IsAlbumImage).OrderBy(GetAlbumImagePriority).ThenBy(GetAlbumImageSequence)
+                .ThenBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase)
+                .Select(path => WithArtworkRotation(new AlbumImageSource(GetManagedArtworkDisplayName(path), path, null), rotations)));
+        sources.AddRange(album.Images.OrderBy(image => GetAlbumImagePriority(image.FileName))
+            .ThenBy(image => GetAlbumImageSequence(image.FileName))
+            .ThenBy(image => image.FileName, StringComparer.CurrentCultureIgnoreCase)
+            .Select(image => WithArtworkRotation(new AlbumImageSource(image.FileName, null, image), rotations)));
+        sources.AddRange(EnumerateExternalAlbumImagePaths(album)
+            .Select(path => WithArtworkRotation(new AlbumImageSource(Path.GetFileName(path), path, null), rotations)));
+        return sources;
+    }
+
+    private static int NormalizeArtworkRotation(int degrees)
+    {
+        degrees %= 360;
+        if (degrees < 0) degrees += 360;
+        return degrees / 90 * 90;
+    }
+
+    private static AlbumImageSource WithArtworkRotation(AlbumImageSource source, IReadOnlyDictionary<string, int> rotations) =>
+        source with { RotationDegrees = rotations.TryGetValue(source.RoleKey, out var value) ? NormalizeArtworkRotation(value) : 0 };
+
+    private static Dictionary<string, int> LoadArtworkRotations(string albumPath)
+    {
+        try
+        {
+            var path = GetArtworkRotationsPath(albumPath);
+            if (!File.Exists(path)) return new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var stored = JsonSerializer.Deserialize<Dictionary<string, int>>(File.ReadAllText(path)) ?? [];
+            return new Dictionary<string, int>(stored.ToDictionary(pair => pair.Key,
+                pair => NormalizeArtworkRotation(pair.Value)), StringComparer.OrdinalIgnoreCase);
+        }
+        catch { return new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase); }
+    }
+
+    private static void SaveArtworkRotations(string albumPath, Dictionary<string, int> rotations)
+    {
+        var path = GetArtworkRotationsPath(albumPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, JsonSerializer.Serialize(rotations, new JsonSerializerOptions { WriteIndented = true }));
     }
 
     private sealed class CaseAppearanceSettings
@@ -3020,6 +3358,12 @@ public partial class MainWindow : Window
         if (roles.TryGetValue(source.RoleKey, out var stored) && !string.Equals(stored, "Auto", StringComparison.OrdinalIgnoreCase))
             return stored;
         var name = Path.GetFileNameWithoutExtension(source.RoleHint).ToLowerInvariant();
+        // An obi is a separate paper band, not one of the case's printed spines.
+        if (Regex.IsMatch(name, @"spine[\s_-]*card|(?:^|[\s_-])obi(?:$|[\s_\d-])")
+            || name.Contains("帯", StringComparison.Ordinal)) return "SpineCard";
+        if (Regex.IsMatch(name, @"liner[\s_-]*notes?")
+            || name.Contains("ライナーノー", StringComparison.Ordinal)) return "LinerNotes";
+        if (Regex.IsMatch(name, @"(?:^|[\s_\-])pages?(?:$|[\s_\-\d])") || name.Contains("冊子ページ", StringComparison.Ordinal)) return "Page";
         if (name.Contains("spine", StringComparison.Ordinal) || name.Contains("背表紙", StringComparison.Ordinal)) return "Spine";
         if (name.Contains("inlay", StringComparison.Ordinal) || name.Contains("inray", StringComparison.Ordinal)
             || name.Contains("tray", StringComparison.Ordinal) || name.Contains("インレイ", StringComparison.Ordinal)) return "Inlay";
@@ -3063,6 +3407,7 @@ public partial class MainWindow : Window
         try
         {
             SaveArtworkRoles(_album.Path, _currentArtworkRoles);
+            UpdateTrayColorCombo();
             var item = _albums.FirstOrDefault(candidate =>
                 string.Equals(candidate.Album.Path, _album.Path, StringComparison.OrdinalIgnoreCase));
             item?.RefreshImageCount();
@@ -3083,10 +3428,16 @@ public partial class MainWindow : Window
         _updatingTrayColorCombo = true;
         try
         {
+            // Preserve the saved preference, but expose the Inlay whenever present.
+            var hasInlay = HasInlayArtwork(_albumImages, _currentArtworkRoles);
+            var displayedColor = hasInlay ? "Clear" : _currentTrayColor;
             TrayColorCombo.SelectedItem = TrayColorCombo.Items.OfType<System.Windows.Controls.ComboBoxItem>()
-                .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), _currentTrayColor,
+                .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), displayedColor,
                     StringComparison.OrdinalIgnoreCase)) ?? TrayColorCombo.Items[0];
-            TrayColorCombo.IsEnabled = _album is not null;
+            TrayColorCombo.IsEnabled = _album is not null && !hasInlay;
+            TrayColorCombo.ToolTip = hasInlay
+                ? LocalizationService.Select("Inlay画像があるため、自動的に透明トレイを使用します", "A clear tray is selected automatically while Inlay artwork is present")
+                : LocalizationService.Select("3D CDケースのインナートレイ色", "Inner tray color of the 3D CD case");
         }
         finally { _updatingTrayColorCombo = false; }
     }
@@ -3095,6 +3446,7 @@ public partial class MainWindow : Window
     {
         if (_updatingTrayColorCombo || _album is null
             || TrayColorCombo.SelectedItem is not System.Windows.Controls.ComboBoxItem selected) return;
+        if (HasInlayArtwork(_albumImages, _currentArtworkRoles)) { UpdateTrayColorCombo(); return; }
         var color = selected.Tag?.ToString() ?? "Auto";
         try
         {
@@ -3168,6 +3520,7 @@ public partial class MainWindow : Window
             NextImageButton.IsEnabled = _albumImages.Count > _albumImagePageSize;
             UpdateDeleteAlbumImageButton();
             UpdateArtworkRoleCombo();
+            UpdateArtworkRotationButtons();
         }
         catch
         {
@@ -3211,12 +3564,23 @@ public partial class MainWindow : Window
         return LoadBitmap(stream, decodePixelWidth);
     }
 
-    private static BitmapImage LoadBitmap(AlbumImageSource source, int decodePixelWidth)
+    private static BitmapSource LoadBitmap(AlbumImageSource source, int decodePixelWidth)
     {
-        if (source.FilePath is not null) return LoadBitmap(source.FilePath, decodePixelWidth);
+        BitmapImage bitmap;
+        var quarterTurn = source.RotationDegrees is 90 or 270;
+        if (source.FilePath is not null)
+        {
+            using var stream = new FileStream(source.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            bitmap = LoadBitmap(stream, decodePixelWidth, quarterTurn);
+            return RotateArtworkBitmap(bitmap, source.RotationDegrees);
+        }
         if (source.ZipEntry is null) throw new InvalidDataException("画像データがありません。");
         using var bounded = new BoundedFileStream(source.ZipEntry.SourcePath, source.ZipEntry.DataOffset, source.ZipEntry.CompressedSize);
-        if (source.ZipEntry.CompressionMethod == 0) return LoadBitmap(bounded, decodePixelWidth);
+        if (source.ZipEntry.CompressionMethod == 0)
+        {
+            bitmap = LoadBitmap(bounded, decodePixelWidth, quarterTurn);
+            return RotateArtworkBitmap(bitmap, source.RotationDegrees);
+        }
         if (source.ZipEntry.CompressionMethod == 8)
         {
             using var deflate = new DeflateStream(bounded, CompressionMode.Decompress);
@@ -3224,21 +3588,35 @@ public partial class MainWindow : Window
                 ? (int)source.ZipEntry.UncompressedSize : 0);
             deflate.CopyTo(memory);
             memory.Position = 0;
-            return LoadBitmap(memory, decodePixelWidth);
+            bitmap = LoadBitmap(memory, decodePixelWidth, quarterTurn);
+            return RotateArtworkBitmap(bitmap, source.RotationDegrees);
         }
         throw new NotSupportedException("この画像のZIP圧縮方式には対応していません。");
     }
 
-    private static BitmapImage LoadBitmap(Stream stream, int decodePixelWidth)
+    private static BitmapImage LoadBitmap(Stream stream, int decodePixelWidth, bool decodeByHeight = false)
     {
         var image = new BitmapImage();
         image.BeginInit();
         image.CacheOption = BitmapCacheOption.OnLoad;
-        if (decodePixelWidth > 0) image.DecodePixelWidth = decodePixelWidth;
+        if (decodePixelWidth > 0)
+        {
+            if (decodeByHeight) image.DecodePixelHeight = decodePixelWidth;
+            else image.DecodePixelWidth = decodePixelWidth;
+        }
         image.StreamSource = stream;
         image.EndInit();
         image.Freeze();
         return image;
+    }
+
+    private static BitmapSource RotateArtworkBitmap(BitmapSource source, int degrees)
+    {
+        degrees = NormalizeArtworkRotation(degrees);
+        if (degrees == 0) return source;
+        var rotated = new TransformedBitmap(source, new System.Windows.Media.RotateTransform(degrees));
+        rotated.Freeze();
+        return rotated;
     }
 
     private void ApplyImageLyricsRatio()
@@ -3337,6 +3715,7 @@ public partial class MainWindow : Window
         UpdateAlbumImageSelectionFrames();
         UpdateDeleteAlbumImageButton();
         UpdateArtworkRoleCombo();
+        UpdateArtworkRotationButtons();
         if (e.ClickCount < 2) return;
         try
         {
@@ -3427,10 +3806,11 @@ public partial class MainWindow : Window
             void ScheduleFit() => popup.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(FitImage));
             void RotateImage(int degrees)
             {
-                popupRotation = (popupRotation + degrees) % 360;
-                if (popupRotation < 0) popupRotation += 360;
-                rotation.Angle = popupRotation;
-                if (fitToWindow) ScheduleFit();
+                images[popupIndex] = SetArtworkRotation(images[popupIndex],
+                    images[popupIndex].RotationDegrees + degrees);
+                popupRotation = 0;
+                rotation.Angle = 0;
+                UpdatePopup();
             }
             void ToggleFullScreen()
             {
@@ -3517,6 +3897,59 @@ public partial class MainWindow : Window
         }
     }
 
+    private void UpdateArtworkRotationButtons()
+    {
+        if (RotateAlbumImageLeftButton is null) return;
+        var enabled = _album is not null && _selectedAlbumImageIndex >= 0
+            && _selectedAlbumImageIndex < _albumImages.Count;
+        RotateAlbumImageLeftButton.IsEnabled = enabled;
+        RotateAlbumImageRightButton.IsEnabled = enabled;
+        ResetAlbumImageRotationButton.IsEnabled = enabled
+            && _albumImages[_selectedAlbumImageIndex].RotationDegrees != 0;
+    }
+
+    private AlbumImageSource SetArtworkRotation(AlbumImageSource source, int degrees)
+    {
+        if (_album is null) return source;
+        degrees = NormalizeArtworkRotation(degrees);
+        if (degrees == 0) _currentArtworkRotations.Remove(source.RoleKey);
+        else _currentArtworkRotations[source.RoleKey] = degrees;
+        SaveArtworkRotations(_album.Path, _currentArtworkRotations);
+        var updated = source with { RotationDegrees = degrees };
+        for (var index = 0; index < _albumImages.Count; index++)
+            if (string.Equals(_albumImages[index].RoleKey, source.RoleKey, StringComparison.OrdinalIgnoreCase))
+                _albumImages[index] = updated;
+        var item = _albums.FirstOrDefault(candidate =>
+            string.Equals(candidate.Album.Path, _album.Path, StringComparison.OrdinalIgnoreCase));
+        item?.RefreshImageCount();
+        ShowCurrentAlbumImage();
+        QueueCoverFlowRefresh();
+        StatusText.Text = degrees == 0
+            ? $"画像の向きを元に戻しました: {source.DisplayName}"
+            : $"画像を{degrees}度回転しました: {source.DisplayName}";
+        return updated;
+    }
+
+    private void RotateAlbumImageLeft_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedAlbumImageIndex < 0 || _selectedAlbumImageIndex >= _albumImages.Count) return;
+        var source = _albumImages[_selectedAlbumImageIndex];
+        SetArtworkRotation(source, source.RotationDegrees - 90);
+    }
+
+    private void RotateAlbumImageRight_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedAlbumImageIndex < 0 || _selectedAlbumImageIndex >= _albumImages.Count) return;
+        var source = _albumImages[_selectedAlbumImageIndex];
+        SetArtworkRotation(source, source.RotationDegrees + 90);
+    }
+
+    private void ResetAlbumImageRotation_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedAlbumImageIndex < 0 || _selectedAlbumImageIndex >= _albumImages.Count) return;
+        SetArtworkRotation(_albumImages[_selectedAlbumImageIndex], 0);
+    }
+
     private bool CanDeleteAlbumImage(int index)
     {
         if (_album is null || index < 0 || index >= _albumImages.Count || _albumImages[index].FilePath is not { } path) return false;
@@ -3560,6 +3993,7 @@ public partial class MainWindow : Window
                 Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
                 Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
             if (_currentArtworkRoles.Remove(source.RoleKey)) SaveArtworkRoles(_album.Path, _currentArtworkRoles);
+            if (_currentArtworkRotations.Remove(source.RoleKey)) SaveArtworkRotations(_album.Path, _currentArtworkRotations);
             var item = _albums.FirstOrDefault(candidate =>
                 string.Equals(candidate.Album.Path, _album.Path, StringComparison.OrdinalIgnoreCase));
             item?.RefreshImageCount();
@@ -3614,12 +4048,17 @@ public partial class MainWindow : Window
         PreviousImageButton.IsEnabled = false;
         NextImageButton.IsEnabled = false;
         DeleteAlbumImageButton.IsEnabled = false;
+        RotateAlbumImageLeftButton.IsEnabled = false;
+        RotateAlbumImageRightButton.IsEnabled = false;
+        ResetAlbumImageRotationButton.IsEnabled = false;
         ArtworkRoleCombo.IsEnabled = false;
         TrayColorCombo.IsEnabled = _album is not null;
     }
 
     private void StopPlayback(bool resetPosition)
     {
+        _favoriteQueue = [];
+        _favoriteQueueIndex = -1;
         AccumulateUsageTime();
         _ignoreStopped = true;
         try { _output?.Stop(); } catch { }
@@ -3643,7 +4082,8 @@ public partial class MainWindow : Window
     private void DisposeAudio()
     {
         if (_output is not null) _output.PlaybackStopped -= Output_PlaybackStopped;
-        _output?.Dispose(); _trackReader?.Dispose();
+        _output?.Dispose(); _gapless?.Dispose(); _trackReader?.Dispose();
+        _gapless = null;
         _output = null; _reader = null; _trackReader = null; _remaster = null; _equalizer = null;
         _bassBoost = null; _lowVolumeClarity = null; _volumeGain = null; _waveform = null; _spectrum = null;
         _faithfulExclusiveActive = false;
@@ -3764,6 +4204,7 @@ public partial class MainWindow : Window
         public double PlaybackSpeed { get; set; } = 1.0;
         public bool PreservePitch { get; set; } = true;
         public bool FaithfulMode { get; set; }
+        public bool GaplessPlayback { get; set; } = true;
         public bool EqEnabled { get; set; } = true;
         public double[] EqGains { get; set; } = new double[10];
         public bool BassBoostEnabled { get; set; }
@@ -3788,7 +4229,7 @@ public partial class MainWindow : Window
         public List<ZipAlbum> Albums { get; set; } = [];
     }
     private sealed record ScanUpdate(string Message, AlbumListItem? Album);
-    private sealed record AlbumImageSource(string DisplayName, string? FilePath, ZipImage? ZipEntry)
+    private sealed record AlbumImageSource(string DisplayName, string? FilePath, ZipImage? ZipEntry, int RotationDegrees = 0)
     {
         public string RoleKey => FilePath is not null
             ? $"file:{Path.GetFullPath(FilePath)}"
@@ -3848,7 +4289,9 @@ public partial class MainWindow : Window
         public bool HasImages => ImageCount > 0;
         public string ImageBadge => LocalizationService.Select($"画像 {ImageCount}", $"Images {ImageCount}");
         public BitmapSource? CoverThumbnail => _coverThumbnail;
-        public BitmapSource? CaseFrontThumbnail => _caseFrontThumbnail ?? _coverThumbnail;
+        // Gallery thumbnails may be supplementary scans. Only role-resolved
+        // artwork is safe to use on the physical case.
+        public BitmapSource? CaseFrontThumbnail => _caseFrontThumbnail;
         public BitmapSource? InsideFrontThumbnail => _insideFrontThumbnail;
         public BitmapSource? BackCoverThumbnail => _backCoverThumbnail;
         public BitmapSource? SpineThumbnail => _spineThumbnail;
@@ -3859,6 +4302,42 @@ public partial class MainWindow : Window
         public bool HasCoverThumbnail => _coverThumbnail is not null;
         public string CoverDescription => _coverDescription;
         public string TrayColorMode => _trayColorMode;
+        public bool HasFrontSpread { get; private set; }
+
+        public BookletContent LoadBooklet()
+        {
+            var roles = LoadArtworkRoles(Album.Path);
+            var sources = GetCaseArtworkSources(Album, GetDownloadedArtworkDirectory(Album.Path));
+            var spread = sources.FirstOrDefault(source => GetEffectiveArtworkRole(source, roles) == "FrontSpread");
+            var front = sources.FirstOrDefault(source => GetEffectiveArtworkRole(source, roles) == "Front");
+            var frontInside = sources.FirstOrDefault(source => GetEffectiveArtworkRole(source, roles) == "FrontInside");
+            if (spread is null && (front is null || frontInside is null))
+                throw new InvalidOperationException(LocalizationService.Select(
+                    "Front見開き、またはFrontとFront背面の画像が必要です。",
+                    "A Front Spread, or both Front and Inside Front artwork, is required."));
+            var pages = new List<BookletPage>
+            {
+                front is not null
+                    ? new BookletPage(front.DisplayName, "Front", () => LoadBitmap(front, 3000))
+                    : new BookletPage(LocalizationService.Select("Front（表紙）", "Front cover"), "Front",
+                        () => CropArtwork(LoadBitmap(spread!, 6000), "RightHalf"))
+            };
+            pages.AddRange(sources.Where(source => GetEffectiveArtworkRole(source, roles) is "Page" or "LinerNotes")
+                .OrderBy(source => GetEffectiveArtworkRole(source, roles) == "Page" ? 0 : 1)
+                .ThenBy(source => GetAlbumImageSequence(source.DisplayName))
+                .ThenBy(source => source.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+                .Select(source => new BookletPage(source.DisplayName, GetEffectiveArtworkRole(source, roles), () => LoadBitmap(source, 3000)))
+                .ToList());
+            pages.Add(frontInside is not null
+                ? new BookletPage(frontInside.DisplayName, "FrontInside", () => LoadBitmap(frontInside, 3000))
+                : new BookletPage(LocalizationService.Select("Front背面", "Inside front cover"), "FrontInside",
+                    () => CropArtwork(LoadBitmap(spread!, 6000), "LeftHalf")));
+            // When both individual sides exist, the spread scan is redundant
+            // and is not even used for the opening frame.
+            var openingArtwork = front is not null && frontInside is not null
+                ? LoadBitmap(front, 2400) : LoadBitmap(spread!, 2400);
+            return new BookletContent(openingArtwork, pages);
+        }
         public bool IsFavorite => _isFavorite;
         public string FavoriteGlyph => IsFavorite ? "★" : "☆";
         public bool IsPlaying => _isPlaying;
@@ -3899,8 +4378,14 @@ public partial class MainWindow : Window
 
         public void RefreshImageCount()
         {
-            _trayColorMode = LoadTrayColor(Album.Path);
             var directory = GetDownloadedArtworkDirectory(Album.Path);
+            var sources = GetCaseArtworkSources(Album, directory);
+            var roles = LoadArtworkRoles(Album.Path);
+            var roleSet = sources.Select(source => GetEffectiveArtworkRole(source, roles)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            HasFrontSpread = roleSet.Contains("FrontSpread") || (roleSet.Contains("Front") && roleSet.Contains("FrontInside"));
+            _trayColorMode = HasInlayArtwork(sources, roles)
+                ? "Clear" : LoadTrayColor(Album.Path);
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(TrayColorMode)));
             _downloadedImageCount = Directory.Exists(directory)
                 ? Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly).Count(IsAlbumImage) : 0;
             (_coverThumbnail, _coverDescription) = LoadCoverThumbnail(directory);
@@ -3933,7 +4418,6 @@ public partial class MainWindow : Window
             (_caseFrontThumbnail, _insideFrontThumbnail, _backCoverThumbnail, _spineThumbnail,
                 _rightSpineThumbnail, _inlayThumbnail, _discThumbnail, _)
                 = LoadCaseArtwork(directory, decodePixelWidth);
-            _caseFrontThumbnail ??= _coverThumbnail;
             if (decodePixelWidth <= 640)
             {
                 _mediumCaseFrontThumbnail = _caseFrontThumbnail;
@@ -3954,7 +4438,7 @@ public partial class MainWindow : Window
             var artwork = await Task.Run(() => LoadCaseArtwork(directory, decodePixelWidth), cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (_caseArtworkLoaded && _caseArtworkDecodeWidth >= decodePixelWidth) return;
-            _caseFrontThumbnail = artwork.Front ?? _coverThumbnail;
+            _caseFrontThumbnail = artwork.Front;
             _insideFrontThumbnail = artwork.InsideFront;
             _backCoverThumbnail = artwork.Back;
             _spineThumbnail = artwork.Spine;
@@ -3990,13 +4474,19 @@ public partial class MainWindow : Window
 
         private (BitmapSource? Image, string Description) LoadCoverThumbnail(string downloadedDirectory)
         {
+            var rotations = LoadArtworkRotations(Album.Path);
             if (Directory.Exists(downloadedDirectory))
             {
                 foreach (var path in Directory.EnumerateFiles(downloadedDirectory, "*", SearchOption.TopDirectoryOnly)
                     .Where(IsAlbumImage).OrderBy(GetAlbumImagePriority).ThenBy(GetAlbumImageSequence)
                     .ThenBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase))
                 {
-                    try { return (LoadBitmap(path, 120), $"{GetManagedArtworkDisplayName(path)}\n{path}"); } catch { }
+                    try
+                    {
+                        var source = WithArtworkRotation(new AlbumImageSource(GetManagedArtworkDisplayName(path), path, null), rotations);
+                        return (LoadBitmap(source, 120), $"{GetManagedArtworkDisplayName(path)}\n{path}");
+                    }
+                    catch { }
                 }
             }
             foreach (var image in Album.Images.OrderBy(image => GetAlbumImagePriority(image.FileName))
@@ -4005,14 +4495,20 @@ public partial class MainWindow : Window
             {
                 try
                 {
-                    return (LoadBitmap(new AlbumImageSource(image.FileName, null, image), 120),
+                    var source = WithArtworkRotation(new AlbumImageSource(image.FileName, null, image), rotations);
+                    return (LoadBitmap(source, 120),
                         $"ZIP内画像\n{image.FileName}");
                 }
                 catch { }
             }
             foreach (var path in EnumerateExternalAlbumImagePaths(Album))
             {
-                try { return (LoadBitmap(path, 120), $"アルバムフォルダ画像\n{path}"); } catch { }
+                try
+                {
+                    var source = WithArtworkRotation(new AlbumImageSource(Path.GetFileName(path), path, null), rotations);
+                    return (LoadBitmap(source, 120), $"アルバムフォルダ画像\n{path}");
+                }
+                catch { }
             }
             return (null, "画像はありません");
         }
@@ -4022,20 +4518,7 @@ public partial class MainWindow : Window
             BitmapSource? Disc, string Description) LoadCaseArtwork(
                 string downloadedDirectory, int targetWidth)
         {
-            var sources = new List<AlbumImageSource>();
-            if (Directory.Exists(downloadedDirectory))
-            {
-                sources.AddRange(Directory.EnumerateFiles(downloadedDirectory, "*", SearchOption.TopDirectoryOnly)
-                    .Where(IsAlbumImage).OrderBy(GetAlbumImagePriority).ThenBy(GetAlbumImageSequence)
-                    .ThenBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase)
-                    .Select(path => new AlbumImageSource(GetManagedArtworkDisplayName(path), path, null)));
-            }
-            sources.AddRange(Album.Images.OrderBy(image => GetAlbumImagePriority(image.FileName))
-                .ThenBy(image => GetAlbumImageSequence(image.FileName))
-                .ThenBy(image => image.FileName, StringComparer.CurrentCultureIgnoreCase)
-                .Select(image => new AlbumImageSource(image.FileName, null, image)));
-            sources.AddRange(EnumerateExternalAlbumImagePaths(Album)
-                .Select(path => new AlbumImageSource(Path.GetFileName(path), path, null)));
+            var sources = GetCaseArtworkSources(Album, downloadedDirectory);
             if (sources.Count == 0) return (null, null, null, null, null, null, null, "画像はありません");
 
             var roles = LoadArtworkRoles(Album.Path);
@@ -4053,6 +4536,10 @@ public partial class MainWindow : Window
                 catch { }
             }
             if (candidates.Count == 0) return (null, null, null, null, null, null, null, "画像を開けません");
+            // Supplementary scans remain in the gallery, but must not become
+            // case textures through Front/Back/Disc aspect-ratio fallbacks.
+            candidates.RemoveAll(candidate => candidate.Role is "LinerNotes" or "SpineCard" or "Page");
+            if (candidates.Count == 0) return (null, null, null, null, null, null, null, "3Dケース用の画像はありません");
 
             var frontSpreadCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "FrontSpread");
             var frontCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "Front");
@@ -4136,6 +4623,12 @@ public partial class MainWindow : Window
 
         private static BitmapSource CropArtwork(BitmapSource source, string mode)
         {
+            if (mode is "BackPanel" or "LeftSpine" or "RightSpine")
+            {
+                var regions = RearInsertArtwork.GetRegions(source, forceSpines: true);
+                var region = mode == "LeftSpine" ? regions.Left : mode == "RightSpine" ? regions.Right : regions.Panel;
+                return RearInsertArtwork.Crop(source, region ?? regions.Panel);
+            }
             Int32Rect rectangle;
             if (mode == "RightHalf")
             {
@@ -4151,18 +4644,6 @@ public partial class MainWindow : Window
             {
                 var side = Math.Min(source.PixelWidth, source.PixelHeight);
                 rectangle = new Int32Rect((source.PixelWidth - side) / 2, (source.PixelHeight - side) / 2, side, side);
-            }
-            else if (mode == "BackPanel")
-            {
-                // Standard rear inlay: 6 mm spine + 138 mm back + 6 mm spine.
-                var spineWidth = Math.Max(1, (int)Math.Round(source.PixelWidth * 0.04));
-                rectangle = new Int32Rect(spineWidth, 0,
-                    Math.Max(1, source.PixelWidth - spineWidth * 2), source.PixelHeight);
-            }
-            else if (mode == "RightSpine")
-            {
-                var width = Math.Max(1, (int)Math.Round(source.PixelWidth * 0.04));
-                rectangle = new Int32Rect(source.PixelWidth - width, 0, width, source.PixelHeight);
             }
             else
             {

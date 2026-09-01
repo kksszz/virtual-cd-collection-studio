@@ -68,6 +68,7 @@
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
         <Button Content="ファイルを開く" Click="Open_Click" Padding="13,6"/>
         <Button Content="履歴" Click="Usage_Click" Padding="13,6" ToolTip="再生履歴・Usageを表示"/>
+        <Button Content="★ お気に入り" Click="Favorites_Click" Padding="10,6" ToolTip="お気に入りの曲・アルバムを一覧から連続再生"/>
         <Button Content="⚙" Width="40" Padding="0,7" FontSize="16"
                 Click="Settings_Click" ToolTip="設定（フォルダ管理・バックアップ・移行）"/>
       </StackPanel>
@@ -104,6 +105,9 @@
     <ScrollViewer x:Name="ExtensionPanel" Grid.Column="2" Grid.Row="0" Grid.RowSpan="7" Margin="8,0,0,0"
                   VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel Margin="4,0,4,8">
+        <CheckBox x:Name="GaplessCheck" Content="ギャップレス再生" IsChecked="True" Margin="8,0,4,10"
+                  Checked="Gapless_Changed" Unchecked="Gapless_Changed"
+                  ToolTip="次の曲を先読みし、表示順で次のアルバムまで連続再生します。原音忠実モードの形式変更時は通常切り替えになります。"/>
         <Expander Header="音質向上（リアルタイム）" Foreground="White" IsExpanded="True" Margin="0,0,0,8">
           <StackPanel Margin="8,7,4,4">
             <Border Background="#1C3040" BorderBrush="#3E6A88" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,0,0,8">
@@ -239,7 +243,9 @@
                    SelectionChanged="AlbumList_SelectionChanged" PreviewMouseRightButtonDown="AlbumList_RightButtonDown"
                    MouseDoubleClick="AlbumList_MouseDoubleClick"
                    ClipToBounds="True" HorizontalContentAlignment="Stretch"
-                   ScrollViewer.CanContentScroll="False"
+                   ScrollViewer.CanContentScroll="True"
+                   VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                   VirtualizingPanel.ScrollUnit="Pixel"
                    ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                    ScrollViewer.VerticalScrollBarVisibility="Visible">
             <ListBox.ContextMenu>
@@ -253,6 +259,8 @@
                           ToolTip="音声を再エンコードせず、ZIP内の全収録物をStore方式へ変換"/>
                 <Separator/>
                 <MenuItem Header="リストから削除" Click="RemoveAlbumFromList_Click"/>
+                <Separator/>
+                <MenuItem Header="プロパティ" Tag="AlbumProperties" Click="AlbumProperties_Click"/>
               </ContextMenu>
             </ListBox.ContextMenu>
             <ListBox.ItemContainerStyle>
@@ -335,17 +343,21 @@
                     Visibility="Collapsed" SelectedItemChanged="ArtistTree_SelectedItemChanged"
                     PreviewMouseRightButtonDown="ArtistTree_RightButtonDown" MouseDoubleClick="ArtistTree_MouseDoubleClick"
                     ClipToBounds="True" HorizontalContentAlignment="Stretch"
-                    ScrollViewer.CanContentScroll="False"
+                    ScrollViewer.CanContentScroll="True"
+                    VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                    VirtualizingPanel.ScrollUnit="Pixel"
                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                     ScrollViewer.VerticalScrollBarVisibility="Visible">
             <TreeView.ContextMenu>
-              <ContextMenu>
+              <ContextMenu Opened="AlbumPropertiesContextMenu_Opened">
                 <MenuItem Header="3Dケースをフルスクリーン表示" Click="ShowAlbum3DFullScreen_Click"/>
                 <Separator/>
                 <MenuItem Header="エクスプローラーで場所を開く" Click="OpenAlbumInExplorer_Click"/>
                 <MenuItem Header="インターネットからアルバム画像を取得" Click="DownloadAlbumArtwork_Click"/>
                 <Separator/>
                 <MenuItem Header="リストから削除" Click="RemoveAlbumFromList_Click"/>
+                <Separator/>
+                <MenuItem Header="プロパティ" Tag="AlbumProperties" Click="AlbumProperties_Click"/>
               </ContextMenu>
             </TreeView.ContextMenu>
             <TreeView.ItemContainerStyle>
@@ -397,7 +409,13 @@
             <local:JewelCaseCoverFlow x:Name="AlbumCoverFlow" Visibility="Collapsed"
                                       SelectionChanged="AlbumCoverFlow_SelectionChanged"
                                       ItemActivated="AlbumCoverFlow_ItemActivated"
-                                      ToolTip="マウスホイールまたは左右キーで選択、ダブルクリックまたはEnterで再生"/>
+                                      ToolTip="マウスホイールまたは左右キーで選択、ダブルクリックまたはEnterで再生">
+              <local:JewelCaseCoverFlow.ContextMenu>
+                <ContextMenu Opened="AlbumPropertiesContextMenu_Opened">
+                  <MenuItem Header="プロパティ" Tag="AlbumProperties" Click="AlbumProperties_Click"/>
+                </ContextMenu>
+              </local:JewelCaseCoverFlow.ContextMenu>
+            </local:JewelCaseCoverFlow>
           </Grid>
         </DockPanel>
       </Border>
@@ -410,8 +428,10 @@
               GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#303640"
               HeadersVisibility="Column" CanUserAddRows="False">
       <DataGrid.ContextMenu>
-        <ContextMenu>
+        <ContextMenu Opened="TrackContextMenu_Opened">
           <MenuItem Header="アルバムのタグを編集…" Click="EditTrackTags_Click" InputGestureText="Ctrl+E"/>
+          <Separator/>
+          <MenuItem x:Name="TrackPropertiesMenuItem" Header="プロパティ" Click="TrackProperties_Click"/>
         </ContextMenu>
       </DataGrid.ContextMenu>
       <DataGrid.Columns>
@@ -499,10 +519,16 @@
                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
               </Grid>
             </Border>
-            <StackPanel x:Name="ImageNavigationPanel" Grid.Row="2" Margin="0,8,0,3" Orientation="Horizontal" HorizontalAlignment="Center">
+            <WrapPanel x:Name="ImageNavigationPanel" Grid.Row="2" Margin="0,8,0,3" Orientation="Horizontal" HorizontalAlignment="Center">
               <Button x:Name="PreviousImageButton" Content="◀" Padding="10,4" Click="PreviousImage_Click" IsEnabled="False"/>
               <TextBlock x:Name="AlbumImageCountText" Text="0 / 0" Width="62" HorizontalAlignment="Center" TextAlignment="Center"/>
               <Button x:Name="NextImageButton" Content="▶" Padding="10,4" Click="NextImage_Click" IsEnabled="False"/>
+              <Button x:Name="RotateAlbumImageLeftButton" Content="↶ 90°" Padding="8,4" Margin="7,0,1,0"
+                      Click="RotateAlbumImageLeft_Click" IsEnabled="False" ToolTip="選択画像を左へ90度回転して保存"/>
+              <Button x:Name="RotateAlbumImageRightButton" Content="90° ↷" Padding="8,4" Margin="1,0"
+                      Click="RotateAlbumImageRight_Click" IsEnabled="False" ToolTip="選択画像を右へ90度回転して保存"/>
+              <Button x:Name="ResetAlbumImageRotationButton" Content="向きを戻す" Padding="8,4" Margin="1,0"
+                      Click="ResetAlbumImageRotation_Click" IsEnabled="False" ToolTip="選択画像を元の向きへ戻す"/>
               <TextBlock Text="用途" Margin="9,0,3,0" VerticalAlignment="Center" Foreground="#A6AFBB"/>
               <ComboBox x:Name="ArtworkRoleCombo" Width="196" Height="27" SelectedIndex="0"
                         SelectionChanged="ArtworkRole_Changed" ToolTip="3D CDケースでの画像の割り当て">
@@ -517,6 +543,9 @@
                 <ComboBoxItem Content="右Spine" Tag="RightSpine"/>
                 <ComboBoxItem Content="Inlay" Tag="Inlay"/>
                 <ComboBoxItem Content="Disc" Tag="Disc"/>
+                <ComboBoxItem Content="ライナーノーツ" Tag="LinerNotes"/>
+                <ComboBoxItem Content="PAGE（冊子ページ）" Tag="Page"/>
+                <ComboBoxItem Content="Spine Card（帯）" Tag="SpineCard"/>
                 <ComboBoxItem Content="Other" Tag="Other"/>
               </ComboBox>
               <TextBlock Text="トレイ" Margin="9,0,3,0" VerticalAlignment="Center" Foreground="#A6AFBB"/>
@@ -531,7 +560,7 @@
               <Button x:Name="DeleteAlbumImageButton" Content="画像を削除" Padding="9,4" Margin="10,3,3,3"
                       Click="DeleteAlbumImage_Click" IsEnabled="False"
                       ToolTip="選択した貼り付け・追加・取得画像を削除"/>
-            </StackPanel>
+            </WrapPanel>
             <TextBlock x:Name="AlbumImageNameText" Grid.Row="3" Foreground="#A6AFBB" FontSize="11"
                        TextAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
           </Grid>

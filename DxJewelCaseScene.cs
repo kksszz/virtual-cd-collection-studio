@@ -32,6 +32,13 @@ internal sealed class DxJewelCaseScene : IDisposable
     private readonly GroupModel3D _caseRoot = new();
     private readonly GroupModel3D _baseRoot = new();
     private readonly GroupModel3D _lidRoot = new();
+    private readonly GroupModel3D _bookletRoot = new();
+    private readonly TranslateTransform3D _bookletTranslation = new();
+    private readonly AxisAngleRotation3D _bookletTilt = new(new Vector3D(0, 1, 0), 0);
+    private readonly RotateTransform3D _bookletLift;
+    private readonly DispatcherTimer _bookletMotionTimer = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
+    private TaskCompletionSource<bool>? _bookletMotionCompletion;
+    private double _bookletProgress;
     private readonly GroupModel3D _discRoot = new();
     private readonly Dictionary<BitmapSource, TextureModel> _textureCache =
         new(ReferenceEqualityComparer.Instance);
@@ -44,9 +51,16 @@ internal sealed class DxJewelCaseScene : IDisposable
     private readonly TranslateTransform3D _viewPan = new();
     private readonly TranslateTransform3D _discTranslation = new();
     private readonly AxisAngleRotation3D _discTiltRotation = new(new Vector3D(0, 1, 0), 0);
+    // Once removed, keep the complete tilted disc above the highest case/tray
+    // surface. The value includes the projected radius, thickness and a gap.
+    private const double RemovedDiscMinimumZ = 0.35;
     private readonly Transform3DGroup _caseTransform = new();
     private readonly DispatcherTimer _animationRenderTimer;
     private int _caseAnimationGeneration;
+    private int _discAnimationGeneration;
+    private bool _discRemoved;
+    private Point3D? _discDragPoint;
+    private Vector3D _discDragNormal;
     private readonly DynamicReflectionMap3D _reflection = new()
     {
         Size = 256,
@@ -68,6 +82,11 @@ internal sealed class DxJewelCaseScene : IDisposable
         _caseTransform.Children.Add(_viewPan);
         _caseRoot.Transform = _caseTransform;
         _lidRoot.Transform = new RotateTransform3D(_lidHingeRotation, new Point3D(AssembledHingeX, 0, 0));
+        _bookletLift = new RotateTransform3D(_bookletTilt);
+        var bookletTransform = new Transform3DGroup();
+        bookletTransform.Children.Add(_bookletLift);
+        bookletTransform.Children.Add(_bookletTranslation);
+        _bookletRoot.Transform = bookletTransform;
         var discTransform = new Transform3DGroup();
         discTransform.Children.Add(new RotateTransform3D(_discTiltRotation));
         discTransform.Children.Add(_discTranslation);
@@ -101,6 +120,9 @@ internal sealed class DxJewelCaseScene : IDisposable
             IsRotationEnabled = false,
             IsPanEnabled = false,
             IsZoomEnabled = false,
+            // Picking is handled by the parent's preview events so model clicks
+            // do not take over the established case-rotation controls.
+            EnableMouseButtonHitTest = false,
             EnableDpiScale = true,
             EnableD2DRendering = false
         };
@@ -155,8 +177,11 @@ internal sealed class DxJewelCaseScene : IDisposable
 
     public void SetItem(JewelCaseCoverFlowItem item, double yaw, double pitch)
     {
+        EndDiscDrag();
         _baseRoot.Children.Clear();
         _lidRoot.Children.Clear();
+        _bookletRoot.Children.Clear();
+        _lidRoot.Children.Add(_bookletRoot);
         _discRoot.Children.Clear();
         _baseRoot.Children.Add(_discRoot);
         const float width = 2.42f;
@@ -230,7 +255,6 @@ internal sealed class DxJewelCaseScene : IDisposable
             "Black" => new Color4(0.025f, 0.029f, 0.035f, 1),
             "Gray" => new Color4(0.29f, 0.31f, 0.33f, 1),
             "Clear" => new Color4(0.90f, 0.92f, 0.93f, 0.12f),
-            _ when item.IsPlaying => new Color4(0.035f, 0.22f, 0.14f, 1),
             _ => new Color4(0.045f, 0.052f, 0.064f, 1)
         };
         var trayIsClear = string.Equals(item.TrayColorMode, "Clear", StringComparison.OrdinalIgnoreCase);
@@ -258,7 +282,6 @@ internal sealed class DxJewelCaseScene : IDisposable
             "White" => new Color4(0.61f, 0.59f, 0.53f, 1),
             "Black" => new Color4(0.012f, 0.014f, 0.017f, 1),
             "Gray" => new Color4(0.20f, 0.215f, 0.23f, 1),
-            _ when item.IsPlaying => new Color4(0.022f, 0.145f, 0.09f, 1),
             _ => new Color4(0.026f, 0.031f, 0.039f, 1)
         };
         var trayGroove = new PBRMaterial
@@ -332,6 +355,9 @@ internal sealed class DxJewelCaseScene : IDisposable
         var bookletTop = frontPlaneCenterY + bookletHeightMm / 2;
         var bookletWidth = bookletRight - bookletLeft;
         var bookletHeight = bookletTop - bookletBottom;
+        _bookletLift.CenterX = (bookletLeft + bookletRight) / 2;
+        _bookletLift.CenterY = (bookletBottom + bookletTop) / 2;
+        _bookletLift.CenterZ = shell.FrontArtworkArea.Z;
         // Only the actual page edges have thickness.  The artwork itself is a
         // surface nested in the upper STL, so the clear hinge strip remains
         // genuinely empty instead of looking like a continuation of the page.
@@ -339,14 +365,14 @@ internal sealed class DxJewelCaseScene : IDisposable
         {
             var pageZ = shell.FrontArtworkArea.Z - 0.004f + page * 0.0015f;
             AddBox(new Vector3(bookletRight + 0.0015f, 0, pageZ),
-                0.0025f, bookletHeight - 0.008f, 0.0012f, bookletPageEdge, false, _lidRoot);
+                0.0025f, bookletHeight - 0.008f, 0.0012f, bookletPageEdge, false, _bookletRoot);
             AddBox(new Vector3((bookletLeft + bookletRight) / 2, bookletBottom - 0.0015f, pageZ),
-                bookletWidth - 0.008f, 0.0025f, 0.0012f, bookletPageEdge, false, _lidRoot);
+                bookletWidth - 0.008f, 0.0025f, 0.0012f, bookletPageEdge, false, _bookletRoot);
         }
         AddArtwork(item.FrontCover, bookletLeft, bookletRight, bookletBottom, bookletTop,
-            shell.FrontArtworkArea.Z + 0.001f, false, _lidRoot);
+            shell.FrontArtworkArea.Z + 0.001f, false, _bookletRoot);
         AddArtwork(item.InsideFrontCover, bookletLeft, bookletRight, bookletBottom, bookletTop,
-            shell.FrontArtworkArea.Z - 0.003f, true, _lidRoot);
+            shell.FrontArtworkArea.Z - 0.003f, true, _bookletRoot);
 
         // The rear insert is 150 x 118 mm including two 6 mm spines. The flat
         // back window therefore displays the central 138 x 118 mm panel.
@@ -362,10 +388,19 @@ internal sealed class DxJewelCaseScene : IDisposable
             -depth / 2 - 0.001f, true, _baseRoot);
         AddBackArtworkFrame(width, height, backArtworkWidth, backArtworkHeight,
             -depth / 2 - 0.002f, backFrameAcrylic);
-        AddSpine(item.SpineCover,
-            -width / 2 - 0.001f, backArtworkHeight, depth, true, _baseRoot);
+        var inlay = item.SplitInlay();
+        // Two independent printed sides of the same sheet. Keep the interior
+        // below the tray floor, so opaque resin still hides it naturally.
+        AddArtwork(inlay.Panel,
+            -backArtworkWidth / 2, backArtworkWidth / 2,
+            -backArtworkHeight / 2, backArtworkHeight / 2,
+            -depth / 2 + 0.001f, false, _baseRoot, "Inlay artwork");
+        // Back is viewed from -Z: its source-right edge is at world -X.
+        // Inlay faces +Z, so its left/right strips stay in world order.
         AddSpine(item.RightSpineCover,
-            width / 2 + 0.001f, backArtworkHeight, depth, false, _baseRoot);
+            -width / 2 - 0.001f, backArtworkHeight, depth, true, _baseRoot, inlay.Left);
+        AddSpine(item.SpineCover,
+            width / 2 + 0.001f, backArtworkHeight, depth, false, _baseRoot, inlay.Right);
         // 120 mm disc in a roughly 125 mm-high jewel case.
         AddDisc(item.DiscImage, new Vector3(discCenterX, 0.004f, -0.017f),
             discOuterRadius, 0.128f, 0.020f, _discRoot);
@@ -481,6 +516,9 @@ internal sealed class DxJewelCaseScene : IDisposable
 
     public void SetDiscRemoved(bool removed, bool animate = true)
     {
+        EndDiscDrag();
+        _discRemoved = removed;
+        var generation = ++_discAnimationGeneration;
         var targetX = removed ? 0.62d : 0d;
         var targetY = removed ? 0.08d : 0d;
         var targetZ = removed ? 0.62d : 0d;
@@ -526,6 +564,7 @@ internal sealed class DxJewelCaseScene : IDisposable
         var lift = Animation(fromZ, targetZ);
         lift.Completed += (_, _) =>
         {
+            if (generation != _discAnimationGeneration) return;
             _animationRenderTimer.Stop();
             Commit();
             Viewport.InvalidateRender();
@@ -538,6 +577,137 @@ internal sealed class DxJewelCaseScene : IDisposable
         _discTiltRotation.BeginAnimation(AxisAngleRotation3D.AngleProperty,
             Animation(fromAngle, targetAngle));
     }
+
+    public void SetBookletRemoved(bool removed, bool animate)
+    {
+        if (animate) { _ = AnimateBookletAsync(removed); return; }
+        CancelBookletMotion();
+        SetBookletProgress(removed ? 1 : 0);
+    }
+
+    // Slide almost an entire booklet width beneath all four tabs before lifting
+    // it. This prevents the paper from visibly passing through the retaining
+    // claws. Insertion retraces the same physical path.
+    private static (double X, double Y, double Z, double Tilt) BookletPose(double progress)
+    {
+        (double Time, double X, double Y, double Z, double Tilt)[] stops =
+        [
+            (0, 0, 0, 0, 0),
+            (.10, .08, 0, -.010, 0),
+            (.42, 1.58, 0, -.018, 0),
+            (.56, 2.08, 0, -.035, 0),
+            (.72, 2.08, .05, -.58, -10),
+            (1, .45, .10, -1.25, -16)
+        ];
+        progress = Math.Clamp(progress, 0, 1);
+        for (var i = 1; i < stops.Length; i++)
+        {
+            if (progress > stops[i].Time) continue;
+            var a = stops[i - 1]; var b = stops[i];
+            var t = (progress - a.Time) / (b.Time - a.Time);
+            t = t * t * (3 - 2 * t);
+            return (a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t,
+                a.Z + (b.Z - a.Z) * t, a.Tilt + (b.Tilt - a.Tilt) * t);
+        }
+        return (.45, .10, -1.25, -16);
+    }
+
+    private void SetBookletProgress(double progress)
+    {
+        _bookletProgress = Math.Clamp(progress, 0, 1);
+        var pose = BookletPose(_bookletProgress);
+        _bookletTranslation.OffsetX = pose.X;
+        _bookletTranslation.OffsetY = pose.Y;
+        _bookletTranslation.OffsetZ = pose.Z;
+        _bookletTilt.Angle = pose.Tilt;
+        Viewport.InvalidateRender();
+    }
+
+    private EventHandler? _bookletMotionTick;
+    private void CancelBookletMotion()
+    {
+        _bookletMotionTimer.Stop();
+        if (_bookletMotionTick is not null) _bookletMotionTimer.Tick -= _bookletMotionTick;
+        _bookletMotionTick = null;
+        _bookletMotionCompletion?.TrySetResult(false);
+        _bookletMotionCompletion = null;
+    }
+
+    public Task<bool> AnimateBookletAsync(bool removed)
+    {
+        CancelBookletMotion();
+        var from = _bookletProgress; var target = removed ? 1d : 0d;
+        if (Math.Abs(from - target) < .00001) { SetBookletProgress(target); return Task.FromResult(true); }
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _bookletMotionCompletion = completion;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var duration = 2.1 * Math.Abs(target - from);
+        _bookletMotionTick = (_, _) =>
+        {
+            var t = Math.Min(1, clock.Elapsed.TotalSeconds / duration);
+            SetBookletProgress(from + (target - from) * t);
+            if (t < 1) return;
+            _bookletMotionTimer.Stop();
+            _bookletMotionTimer.Tick -= _bookletMotionTick;
+            _bookletMotionTick = null; _bookletMotionCompletion = null;
+            completion.TrySetResult(true);
+        };
+        _bookletMotionTimer.Tick += _bookletMotionTick;
+        _bookletMotionTimer.Start();
+        return completion.Task;
+    }
+
+    public bool BeginDiscDrag(System.Windows.Point position)
+    {
+        if (!_discRemoved || Viewport.Camera is not DxPerspectiveCamera camera) return false;
+        var hit = Viewport.FindHits(position)?.OrderBy(result => result.Distance).FirstOrDefault();
+        if (hit is null || !_discRoot.Children.OfType<MeshGeometryModel3D>().Any(mesh =>
+            ReferenceEquals(hit.ModelHit, mesh) || ReferenceEquals(hit.ModelHit, mesh.SceneNode))) return false;
+        // Stop the extraction animation at its current position, without snapping
+        // to the animation's destination when the user grabs a moving disc.
+        ++_discAnimationGeneration;
+        var offset = new Vector3D(_discTranslation.OffsetX, _discTranslation.OffsetY, _discTranslation.OffsetZ);
+        var tilt = _discTiltRotation.Angle;
+        _discTranslation.BeginAnimation(TranslateTransform3D.OffsetXProperty, null);
+        _discTranslation.BeginAnimation(TranslateTransform3D.OffsetYProperty, null);
+        _discTranslation.BeginAnimation(TranslateTransform3D.OffsetZProperty, null);
+        _discTiltRotation.BeginAnimation(AxisAngleRotation3D.AngleProperty, null);
+        _discTranslation.OffsetX = offset.X;
+        _discTranslation.OffsetY = offset.Y;
+        _discTranslation.OffsetZ = offset.Z;
+        _discTiltRotation.Angle = tilt;
+        _animationRenderTimer.Stop();
+        _discDragPoint = new Point3D(hit.PointHit.X, hit.PointHit.Y, hit.PointHit.Z);
+        _discDragNormal = camera.LookDirection;
+        return true;
+    }
+
+    public void DragDiscTo(System.Windows.Point position)
+    {
+        if (!_discRemoved || _discDragPoint is not { } previous) return;
+        var point = Viewport.UnProjectOnPlane(position, previous, _discDragNormal);
+        if (point is not { } current) return;
+        var inverse = _caseTransform.Value;
+        if (!inverse.HasInverse) return;
+        inverse.Invert();
+        // Screen-parallel movement converted back into case coordinates. This
+        // keeps the grabbed point beneath the cursor at any case angle/zoom.
+        var delta = inverse.Transform(current - previous);
+        var constrained = ConstrainRemovedDiscOffset(new Vector3D(
+            _discTranslation.OffsetX + delta.X,
+            _discTranslation.OffsetY + delta.Y,
+            _discTranslation.OffsetZ + delta.Z));
+        _discTranslation.OffsetX = constrained.X;
+        _discTranslation.OffsetY = constrained.Y;
+        _discTranslation.OffsetZ = constrained.Z;
+        _discDragPoint = current;
+        Viewport.InvalidateRender();
+    }
+
+    private static Vector3D ConstrainRemovedDiscOffset(Vector3D proposed) =>
+        new(proposed.X, proposed.Y, Math.Max(RemovedDiscMinimumZ, proposed.Z));
+
+    public void EndDiscDrag() => _discDragPoint = null;
 
     private void ApplyRotation(double yaw, double pitch)
     {
@@ -981,7 +1151,7 @@ internal sealed class DxJewelCaseScene : IDisposable
     }
 
     private void AddArtwork(BitmapSource? bitmap, float left, float right, float bottom, float top,
-        float z, bool reverse, GroupModel3D? target = null)
+        float z, bool reverse, GroupModel3D? target = null, string name = "Artwork")
     {
         var builder = new MeshBuilder(true, true, true);
         if (!reverse)
@@ -1000,7 +1170,7 @@ internal sealed class DxJewelCaseScene : IDisposable
         }
         var material = new PhongMaterial
         {
-            Name = "Artwork",
+            Name = name,
             DiffuseColor = new Color4(1, 1, 1, 1),
             DiffuseMap = CreateTexture(bitmap),
             RenderDiffuseMap = bitmap is not null,
@@ -1018,14 +1188,13 @@ internal sealed class DxJewelCaseScene : IDisposable
     }
 
     private void AddSpine(BitmapSource? bitmap, float x, float height, float depth, bool leftSide,
-        GroupModel3D? target = null)
+        GroupModel3D? target = null, BitmapSource? insideBitmap = null)
     {
         var builder = new MeshBuilder(true, true, true);
         if (leftSide)
         {
-            // Fold the source image's left strip around the left edge without
-            // mirroring it: U=1 remains attached to the Back panel and U=0
-            // reaches toward the Front. Winding faces outward (-X).
+            // Source-right strip: U=0 meets the Back and U=1 reaches Front.
+            // Winding faces outward (-X).
             builder.AddQuad(new Vector3(x, height / 2, depth / 2 - 0.01f),
                 new Vector3(x, height / 2, -depth / 2 + 0.01f),
                 new Vector3(x, -height / 2, -depth / 2 + 0.01f),
@@ -1034,8 +1203,8 @@ internal sealed class DxJewelCaseScene : IDisposable
         }
         else
         {
-            // The right source strip starts at the Back fold (U=0) and ends
-            // toward the Front (U=1). Winding faces outward (+X).
+            // Source-left strip: U=1 meets the Back and U=0 reaches Front.
+            // Winding faces outward (+X).
             builder.AddQuad(new Vector3(x, height / 2, -depth / 2 + 0.01f),
                 new Vector3(x, height / 2, depth / 2 - 0.01f),
                 new Vector3(x, -height / 2, depth / 2 - 0.01f),
@@ -1052,9 +1221,9 @@ internal sealed class DxJewelCaseScene : IDisposable
             SpecularShininess = 10
         }, false, false, target);
 
-        // Paper has an unprinted white reverse. Keep it separate from the
-        // outward artwork so text can never appear mirrored through the case,
-        // even around small clearances beside the moulded tray wall.
+        // Only an explicitly assigned Inlay prints the inside. Do not mirror
+        // exterior spine artwork onto the paper reverse. Fold each inner strip
+        // from its matching edge of the central Inlay panel.
         var reverse = new MeshBuilder(true, true, true);
         var innerX = x + (leftSide ? 0.001f : -0.001f);
         if (leftSide)
@@ -1062,19 +1231,23 @@ internal sealed class DxJewelCaseScene : IDisposable
             reverse.AddQuad(new Vector3(innerX, height / 2, -depth / 2 + 0.01f),
                 new Vector3(innerX, height / 2, depth / 2 - 0.01f),
                 new Vector3(innerX, -height / 2, depth / 2 - 0.01f),
-                new Vector3(innerX, -height / 2, -depth / 2 + 0.01f));
+                new Vector3(innerX, -height / 2, -depth / 2 + 0.01f),
+                new Vector2(1, 0), new Vector2(0, 0), new Vector2(0, 1), new Vector2(1, 1));
         }
         else
         {
             reverse.AddQuad(new Vector3(innerX, height / 2, depth / 2 - 0.01f),
                 new Vector3(innerX, height / 2, -depth / 2 + 0.01f),
                 new Vector3(innerX, -height / 2, -depth / 2 + 0.01f),
-                new Vector3(innerX, -height / 2, depth / 2 - 0.01f));
+                new Vector3(innerX, -height / 2, depth / 2 - 0.01f),
+                new Vector2(1, 0), new Vector2(0, 0), new Vector2(0, 1), new Vector2(1, 1));
         }
         AddMesh(reverse.ToMeshGeometry3D(), new PhongMaterial
         {
             Name = "Spine paper reverse",
-            DiffuseColor = new Color4(0.82f, 0.80f, 0.73f, 1),
+            DiffuseColor = insideBitmap is null ? new Color4(0.82f, 0.80f, 0.73f, 1) : new Color4(1, 1, 1, 1),
+            DiffuseMap = CreateTexture(insideBitmap),
+            RenderDiffuseMap = insideBitmap is not null,
             SpecularColor = new Color4(0.02f, 0.02f, 0.02f, 1),
             SpecularShininess = 4
         }, false, false, target);
@@ -1229,7 +1402,7 @@ internal sealed class DxJewelCaseScene : IDisposable
             Material = material,
             IsTransparent = transparent,
             IsThrowingShadow = castsShadow && !transparent,
-            IsHitTestVisible = false,
+            IsHitTestVisible = true,
             CullMode = twoSided ? DxCullMode.None : DxCullMode.Back
         });
     }
@@ -1281,6 +1454,7 @@ internal sealed class DxJewelCaseScene : IDisposable
 
     public void Dispose()
     {
+        CancelBookletMotion();
         _animationRenderTimer.Stop();
         Viewport.Items.Clear();
         _textureCache.Clear();

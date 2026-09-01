@@ -8,6 +8,7 @@ var root = Path.Combine(Path.GetTempPath(), "ZipMp3Player-TagEditTest-" + Guid.N
 Directory.CreateDirectory(root);
 try
 {
+    TestHalfWidthNormalization();
     var wav = Path.Combine(root, "source.wav");
     WaveFileWriter.CreateWaveFile16(wav, new SignalGenerator(44100, 2)
         { Frequency = 440, Gain = 0.12, Type = SignalGeneratorType.Sin }.Take(TimeSpan.FromSeconds(1)));
@@ -106,7 +107,22 @@ static void TestArchive(string root, string first, string second, CompressionLev
     }
 }
 
-static TrackTagValues Values(string title, uint track) => new(title, "編集アーティスト", "編集アルバム", 2026, "Rock", track, 1, 2);
+static void TestHalfWidthNormalization()
+{
+    var full = "０１２３４５６７８９ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ";
+    var ascii = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    Require(TagTextNormalization.ToHalfWidthAlphaNumeric(full) == ascii, "every full-width Latin letter and digit");
+    const string untouched = "日本語 カタカナ ｶﾀｶﾅ ①Ⅳ㍑ ﬁ é α ～－．［］😀\t\n\u00a0\u2003";
+    Require(TagTextNormalization.ToHalfWidthAlphaNumeric(untouched) == untouched, "Japanese, symbols, compatibility characters, spaces and emoji preserved");
+    Require(TagTextNormalization.ToHalfWidthAlphaNumeric("Ｍｒ.Children ＢＯＬＥＲＯ １９９７") == "Mr.Children BOLERO 1997", "mixed width text");
+    Require(TagTextNormalization.ToHalfWidthAlphaNumeric("　日本語　　曲名　") == " 日本語  曲名 ", "spaces-only conversion preserves leading, trailing and repeated spaces");
+    Require(TagTextNormalization.ToHalfWidthAlphaNumeric("Ａ　 B　　１２\t\n") == "A  B  12\t\n", "mixed letters/digits/spaces and line breaks");
+    Require(TagTextNormalization.ToHalfWidthAlphaNumeric(ascii) == ascii && TagTextNormalization.ToHalfWidthAlphaNumeric("") == "", "unchanged and empty inputs");
+    Console.WriteLine("Full-width alphanumeric conversion and preservation tests passed.");
+}
+
+static TrackTagValues Values(string title, uint track) => new(TagTextNormalization.ToHalfWidthAlphaNumeric(title + "　ＡＢＣ１２３"),
+    TagTextNormalization.ToHalfWidthAlphaNumeric("編集　Ｍｒ.Children"), TagTextNormalization.ToHalfWidthAlphaNumeric("編集　　ＢＯＬＥＲＯ"), 2026, "Rock", track, 1, 2);
 static void SetInitial(string path, string title, byte id3Version)
 {
     var previousVersion = TagLib.Id3v2.Tag.DefaultVersion;
