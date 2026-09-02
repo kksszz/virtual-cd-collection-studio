@@ -28,6 +28,7 @@ internal sealed class DxJewelCaseScene : IDisposable
     // barrels meet slightly inboard of the outer left edge.
     private const double AssembledHingeX = -1.085;
     private static readonly Lazy<StlCaseGeometry> CaseGeometry = new(LoadStlCaseGeometry);
+    private static readonly Lazy<CoverFlowShellGeometry> CoverFlowGeometry = new(CreateCoverFlowShellGeometry);
     private readonly DefaultEffectsManager _effects = new();
     private readonly GroupModel3D _caseRoot = new();
     private readonly GroupModel3D _baseRoot = new();
@@ -999,6 +1000,41 @@ internal sealed class DxJewelCaseScene : IDisposable
         StlArtworkArea FrontArtworkArea);
 
     private sealed record StlArtworkArea(float Left, float Right, float Bottom, float Top, float Z);
+
+    internal sealed record CoverFlowShellGeometry(
+        System.Windows.Media.Media3D.MeshGeometry3D BottomTray,
+        System.Windows.Media.Media3D.MeshGeometry3D BottomPerimeter,
+        System.Windows.Media.Media3D.MeshGeometry3D BottomMouldedEdges,
+        System.Windows.Media.Media3D.MeshGeometry3D TopLid,
+        System.Windows.Media.Media3D.MeshGeometry3D TopMouldedEdges,
+        float FrontLeft, float FrontRight, float FrontBottom, float FrontTop, float FrontZ);
+
+    internal static CoverFlowShellGeometry GetCoverFlowShellGeometry() => CoverFlowGeometry.Value;
+
+    private static CoverFlowShellGeometry CreateCoverFlowShellGeometry()
+    {
+        var shell = CaseGeometry.Value;
+        return new CoverFlowShellGeometry(
+            Convert(shell.BottomTray), Convert(shell.BottomPerimeter), Convert(shell.BottomMouldedEdges),
+            Convert(shell.TopLid), Convert(shell.TopMouldedEdges),
+            shell.FrontArtworkArea.Left, shell.FrontArtworkArea.Right,
+            shell.FrontArtworkArea.Bottom, shell.FrontArtworkArea.Top, shell.FrontArtworkArea.Z);
+
+        static System.Windows.Media.Media3D.MeshGeometry3D Convert(DxMesh source)
+        {
+            var result = new System.Windows.Media.Media3D.MeshGeometry3D
+            {
+                Positions = new Point3DCollection(source.Positions!.Select(point =>
+                    new Point3D(point.X, point.Y, point.Z))),
+                TriangleIndices = new Int32Collection(source.Indices)
+            };
+            if (source.Normals is { Count: > 0 })
+                result.Normals = new Vector3DCollection(source.Normals.Select(normal =>
+                    new Vector3D(normal.X, normal.Y, normal.Z)));
+            result.Freeze();
+            return result;
+        }
+    }
 
     private static StlCaseGeometry LoadStlCaseGeometry()
     {

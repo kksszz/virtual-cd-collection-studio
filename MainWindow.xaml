@@ -219,7 +219,7 @@
           <Grid x:Name="AlbumToolbar" DockPanel.Dock="Top" Margin="12,7">
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
-              <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <TextBlock Text="アルバム" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center"/>
             <TextBox x:Name="AlbumFilterTextBox" Grid.Column="1" Height="27" MinWidth="48" Padding="7,3" Margin="9,0,0,0"
@@ -237,6 +237,8 @@
               <ComboBoxItem Content="アーティストツリー" Tag="ArtistTree"/>
               <ComboBoxItem Content="カバーフロー" Tag="CoverFlow"/>
             </ComboBox>
+            <Button Grid.Column="5" Content="⛶" Width="30" Height="27" Padding="0" Margin="5,0,0,0"
+                    Click="OpenAlbumBrowser_Click" ToolTip="アルバムブラウザーを全画面表示"/>
           </Grid>
           <Grid>
           <ListBox x:Name="AlbumList" Background="Transparent" Foreground="White" BorderThickness="0"
@@ -675,5 +677,22 @@
         </StackPanel>
       </StackPanel>
     </Grid>
+
+    <Border x:Name="LibraryLoadingOverlay" Grid.Row="0" Grid.RowSpan="7" Grid.Column="0" Grid.ColumnSpan="3"
+            Panel.ZIndex="100" Background="#D915171B" Visibility="Collapsed">
+      <Border Width="430" Padding="28,24" HorizontalAlignment="Center" VerticalAlignment="Center"
+              Background="#F2262D36" BorderBrush="#58738A" BorderThickness="1" CornerRadius="8">
+        <StackPanel>
+          <TextBlock x:Name="LibraryLoadingTitle" Text="音楽ファイルを読み込んでいます…"
+                     FontSize="18" FontWeight="SemiBold" Foreground="White"
+                     HorizontalAlignment="Center" TextAlignment="Center"/>
+          <ProgressBar x:Name="LibraryLoadingProgress" Height="8" Margin="0,20,0,14"
+                       IsIndeterminate="True" Foreground="#45B9F0" Background="#303943"/>
+          <TextBlock x:Name="LibraryLoadingDetail" Text="ライブラリを準備しています"
+                     Foreground="#C4CED8" FontSize="12" TextAlignment="Center"
+                     TextWrapping="Wrap" MaxWidth="370"/>
+        </StackPanel>
+      </Border>
+    </Border>
   </Grid>
 </Window>

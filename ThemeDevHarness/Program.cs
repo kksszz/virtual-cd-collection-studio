@@ -98,6 +98,8 @@ internal static class Program
         VerifyArtworkRoleSelection(data, testImage);
         VerifySupplementalArtworkRoles(data, testImage);
         VerifyCoverFlowPan(testImage);
+        VerifyAlbumLibraryBrowser(testImage);
+        VerifyLibraryLoadingIndicator();
         VerifyFavorites(data);
         VerifyPlaybackCaseColor(testImage);
         VerifyAlbumProperties(data, pump: false);
@@ -1556,6 +1558,274 @@ internal static class Program
         Console.WriteLine("Booklet roles/order, manual overrides, opening/navigation/zoom, empty state and 3D extraction/return passed.");
     }
 
+    private static void VerifyAlbumLibraryBrowser(BitmapSource image)
+    {
+        void Pump(int milliseconds = 160)
+        {
+            var frame = new System.Windows.Threading.DispatcherFrame();
+            var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(milliseconds) };
+            timer.Tick += (_, _) => { timer.Stop(); frame.Continue = false; };
+            timer.Start();
+            System.Windows.Threading.Dispatcher.PushFrame(frame);
+        }
+
+        BitmapSource Cover(byte red, byte green, byte blue)
+        {
+            return Solid(64, 64, red, green, blue);
+        }
+        BitmapSource Spine(byte red, byte green, byte blue)
+        {
+            return Solid(6, 64, red, green, blue);
+        }
+        BitmapSource Solid(int width, int height, byte red, byte green, byte blue)
+        {
+            var pixels = new byte[width * height * 4];
+            for (var index = 0; index < pixels.Length; index += 4)
+            {
+                pixels[index] = blue; pixels[index + 1] = green; pixels[index + 2] = red; pixels[index + 3] = 255;
+            }
+            var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, pixels, width * 4);
+            bitmap.Freeze();
+            return bitmap;
+        }
+        AlbumLibraryBrowserItem Item(string key, string title, string artist, BitmapSource cover) => new(
+            new JewelCaseCoverFlowItem(key, title, artist, "DIR", "Clear", cover, null, null,
+                Spine(244, 198, 28), Spine(220, 35, 176), null, null, false), cover);
+        var items = new[]
+        {
+            Item("first", "First Album", "Alpha", Cover(180, 62, 54)),
+            Item("second", "Second Album", "Beta", Cover(42, 135, 92)),
+            Item("third", "Third Album", "Gamma", Cover(48, 92, 178)),
+            Item("fourth", "Fourth Album", "Delta", Cover(173, 108, 38)),
+            Item("fifth", "Fifth Album", "Epsilon", Cover(109, 62, 160)),
+            Item("sixth", "Sixth Album", "Zeta", Cover(32, 139, 154)),
+            Item("seventh", "Seventh Album", "Eta", Cover(178, 63, 119))
+        };
+        var requestedArtworkWidth = 0;
+        var initialSecond = items[1];
+        items[1] = new AlbumLibraryBrowserItem(initialSecond.CaseItem, initialSecond.TileCover,
+            (width, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                requestedArtworkWidth = width;
+                return Task.FromResult(initialSecond.CaseItem with { FrontCover = Cover(24, 116, 74) });
+            });
+        var previousRequests = 0;
+        var pauseRequests = 0;
+        var nextRequests = 0;
+        var requestedVolume = -1d;
+        var browser = new AlbumLibraryBrowserWindow(items, "second",
+            () => new AlbumBrowserPlaybackState("Test Song  •  Test Artist", true, true, 1.25))
+        {
+            WindowState = WindowState.Normal,
+            Width = 1180,
+            Height = 760,
+            ShowInTaskbar = false
+        };
+        browser.PreviousTrackRequested += (_, _) => previousRequests++;
+        browser.PlayPauseRequested += (_, _) => pauseRequests++;
+        browser.NextTrackRequested += (_, _) => nextRequests++;
+        browser.VolumeChangedRequested += (_, args) => requestedVolume = args.Volume;
+        try
+        {
+            browser.Show();
+            browser.UpdateLayout();
+            Pump(350);
+            var tiles = (ListBox)browser.FindName("TileList");
+            var filter = (TextBox)browser.FindName("FilterBox");
+            var flow = (JewelCaseCoverFlow)browser.FindName("CoverFlow");
+            var previousTrack = (Button)browser.FindName("PreviousTrackButton");
+            var playPause = (Button)browser.FindName("BrowserPlayPauseButton");
+            var nextTrack = (Button)browser.FindName("NextTrackButton");
+            var volume = (Slider)browser.FindName("BrowserVolumeSlider");
+            var nowPlaying = (TextBlock)browser.FindName("NowPlayingTitleText");
+            if (tiles.Items.Count != 7 || browser.SelectedKey != "second" || requestedArtworkWidth != 1600)
+                throw new InvalidOperationException("Full-screen album tiles must load the complete library and preserve selection.");
+            previousTrack.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            playPause.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            nextTrack.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            volume.Value = 1.1;
+            if (nowPlaying.Text != "Test Song  •  Test Artist" || !Equals(playPause.Content, "⏸ 一時停止")
+                || previousRequests != 1 || pauseRequests != 1 || nextRequests != 1
+                || Math.Abs(requestedVolume - 1.1) > .001)
+                throw new InvalidOperationException("Album browser tile and 3D screens must share track title, transport and volume controls.");
+            filter.Text = "Gamma";
+            Pump();
+            if (tiles.Items.Count != 1 || flow.ItemCount != 1)
+                throw new InvalidOperationException("Album browser search must filter tiles and 3D CoverFlow together.");
+            filter.Clear();
+            Pump();
+            flow.SelectByKey("second", true);
+            Pump(500);
+            var modelMap = (System.Collections.IDictionary)typeof(JewelCaseCoverFlow).GetField("_collectionModels",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(flow)!;
+            var retainedModel = (System.Windows.Media.Media3D.ContainerUIElement3D)modelMap["second"]!;
+            var collectionItem = items[1].CaseItem with
+            {
+                BackCover = Cover(80, 70, 60),
+                SpineCover = Spine(40, 50, 60),
+                RightSpineCover = Spine(60, 50, 40)
+            };
+            typeof(JewelCaseCoverFlowItem).GetProperty("CollectionPresentation",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(collectionItem, true);
+            var exterior = (System.Windows.Media.Media3D.ContainerUIElement3D)typeof(JewelCaseCoverFlow)
+                .GetMethod("CreateCaseModel", BindingFlags.Static | BindingFlags.NonPublic)!
+                .Invoke(null, [collectionItem, 0, 0d, 0d, .36d])!;
+            var exteriorBody = (System.Windows.Media.Media3D.Model3DGroup)
+                ((System.Windows.Media.Media3D.ModelUIElement3D)exterior.Children[0]).Model;
+            var shell = typeof(MainWindow).Assembly.GetType("ZipMp3Player.DxJewelCaseScene")!
+                .GetMethod("GetCoverFlowShellGeometry", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, null)!;
+            var shellGeometry = shell.GetType().GetProperty("BottomTray")!.GetValue(shell);
+            var exteriorImageBrushes = exteriorBody.Children.OfType<System.Windows.Media.Media3D.GeometryModel3D>()
+                .Select(model => model.Material).OfType<System.Windows.Media.Media3D.MaterialGroup>()
+                .SelectMany(material => material.Children.OfType<System.Windows.Media.Media3D.DiffuseMaterial>())
+                .Select(material => material.Brush).OfType<ImageBrush>().ToList();
+            if (exteriorBody.Children.Count != 10
+                || !ReferenceEquals(((System.Windows.Media.Media3D.GeometryModel3D)exteriorBody.Children[0]).Geometry, shellGeometry)
+                || exteriorImageBrushes.Count != 5
+                || exteriorImageBrushes.Any(brush => brush.Stretch != Stretch.Fill)
+                || exteriorImageBrushes.Any(brush => RenderOptions.GetBitmapScalingMode(brush) != BitmapScalingMode.HighQuality))
+                throw new InvalidOperationException("Collection cases must share the 3D View STL exterior and map complete, uncropped Front, Back and both Spine textures.");
+            var exteriorSpines = exteriorBody.Children.OfType<System.Windows.Media.Media3D.GeometryModel3D>()
+                .Skip(7).Take(2).Select(model => (System.Windows.Media.Media3D.MeshGeometry3D)model.Geometry).ToList();
+            if (exteriorSpines.Count != 2
+                || exteriorSpines.SelectMany(mesh => mesh.Positions).Any(point =>
+                    Math.Abs(Math.Abs(point.X) - 1.211) > .0001
+                    || Math.Abs(point.Z) > .0526))
+                throw new InvalidOperationException("Collection Spine paper must remain beneath the side acrylic and inside both case lips.");
+            var inlayPixels = Enumerable.Repeat(new byte[] { 74, 92, 138, 255 }, 150 * 118)
+                .SelectMany(pixel => pixel).ToArray();
+            var inlayOnlyArtwork = BitmapSource.Create(150, 118, 96, 96, PixelFormats.Bgra32,
+                null, inlayPixels, 150 * 4);
+            inlayOnlyArtwork.Freeze();
+            var inlayOnlyItem = collectionItem with
+            {
+                BackCover = null,
+                SpineCover = null,
+                RightSpineCover = null,
+                InlayCover = inlayOnlyArtwork
+            };
+            var inlayExterior = (System.Windows.Media.Media3D.ContainerUIElement3D)typeof(JewelCaseCoverFlow)
+                .GetMethod("CreateCaseModel", BindingFlags.Static | BindingFlags.NonPublic)!
+                .Invoke(null, [inlayOnlyItem, 1, 0d, 0d, .36d])!;
+            var inlayExteriorBody = (System.Windows.Media.Media3D.Model3DGroup)
+                ((System.Windows.Media.Media3D.ModelUIElement3D)inlayExterior.Children[0]).Model;
+            if (inlayExteriorBody.Children.OfType<System.Windows.Media.Media3D.GeometryModel3D>()
+                    .Select(model => model.Material).OfType<System.Windows.Media.Media3D.MaterialGroup>()
+                    .SelectMany(material => material.Children.OfType<System.Windows.Media.Media3D.DiffuseMaterial>())
+                    .Count(material => material.Brush is ImageBrush) != 5)
+                throw new InvalidOperationException("Collection exterior must use Inlay panel and folds when explicit Back/Spine images are absent.");
+            var invalidSpineItem = collectionItem with
+            {
+                SpineCover = Cover(210, 210, 210),
+                RightSpineCover = Cover(210, 210, 210),
+                InlayCover = null
+            };
+            var invalidSpineExterior = (System.Windows.Media.Media3D.ContainerUIElement3D)typeof(JewelCaseCoverFlow)
+                .GetMethod("CreateCaseModel", BindingFlags.Static | BindingFlags.NonPublic)!
+                .Invoke(null, [invalidSpineItem, 1, 0d, 0d, .36d])!;
+            var invalidSpineBody = (System.Windows.Media.Media3D.Model3DGroup)
+                ((System.Windows.Media.Media3D.ModelUIElement3D)invalidSpineExterior.Children[0]).Model;
+            if (invalidSpineBody.Children.Count != 8)
+                throw new InvalidOperationException("Square/non-spine artwork and missing Spine placeholders must not create squeezed white side faces.");
+            flow.SelectByKey("third", true);
+            var retainedAgain = (System.Windows.Media.Media3D.ContainerUIElement3D)modelMap["second"]!;
+            var retainedTransforms = (System.Windows.Media.Media3D.Transform3DGroup)retainedAgain.Transform;
+            var retainedTranslation = (System.Windows.Media.Media3D.TranslateTransform3D)retainedTransforms.Children[3];
+            if (!ReferenceEquals(retainedModel, retainedAgain) || !retainedTranslation.HasAnimatedProperties)
+                throw new InvalidOperationException("3D CoverFlow must retain and animate case models instead of replacing the scene.");
+            Pump(520);
+            if (browser.SelectedKey != "third" || (tiles.SelectedItem as AlbumLibraryBrowserItem)?.Key != "third")
+                throw new InvalidOperationException("Tile and 3D CoverFlow selections must remain synchronized.");
+            var leftYaw = (System.Windows.Media.Media3D.AxisAngleRotation3D)
+                ((System.Windows.Media.Media3D.RotateTransform3D)
+                    ((System.Windows.Media.Media3D.Transform3DGroup)retainedAgain.Transform).Children[2]).Rotation;
+            var rightModel = (System.Windows.Media.Media3D.ContainerUIElement3D)modelMap["fourth"]!;
+            var rightYaw = (System.Windows.Media.Media3D.AxisAngleRotation3D)
+                ((System.Windows.Media.Media3D.RotateTransform3D)
+                    ((System.Windows.Media.Media3D.Transform3DGroup)rightModel.Transform).Children[2]).Rotation;
+            if (Math.Abs(leftYaw.Angle + 55) > .01 || Math.Abs(rightYaw.Angle - 55) > .01)
+                throw new InvalidOperationException("CoverFlow side cases must turn inward so their inner Spine faces the selected album.");
+            flow.SelectByKey("second", true);
+            var incomingFromLeft = (System.Windows.Media.Media3D.ContainerUIElement3D)modelMap["second"]!;
+            var incomingYaw = (System.Windows.Media.Media3D.AxisAngleRotation3D)
+                ((System.Windows.Media.Media3D.RotateTransform3D)
+                    ((System.Windows.Media.Media3D.Transform3DGroup)incomingFromLeft.Transform).Children[2]).Rotation;
+            var incomingBaseYaw = (double)incomingYaw.GetAnimationBaseValue(
+                System.Windows.Media.Media3D.AxisAngleRotation3D.AngleProperty);
+            if (Math.Abs(incomingBaseYaw + 30) > .01)
+                throw new InvalidOperationException("A case selected from the left must turn toward the viewer without flipping across centre.");
+            flow.SelectByKey("fourth", true);
+            flow.SelectByKey("fifth", true);
+            var rapidTarget = (System.Windows.Media.Media3D.ContainerUIElement3D)modelMap["fifth"]!;
+            var rapidTranslation = (System.Windows.Media.Media3D.TranslateTransform3D)
+                ((System.Windows.Media.Media3D.Transform3DGroup)rapidTarget.Transform).Children[3];
+            if (!rapidTranslation.HasAnimatedProperties)
+                throw new InvalidOperationException("Repeated CoverFlow selection must continue from an animated pose without snapping.");
+            flow.SelectByKey("third", true);
+            var activated = 0;
+            browser.ItemActivated += (_, _) => activated++;
+            typeof(AlbumLibraryBrowserWindow).GetMethod("ActivateSelected",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(browser, null);
+            Pump();
+            if (!browser.IsVisible || activated != 1 || (tiles.SelectedItem as AlbumLibraryBrowserItem)?.IsPlaying != true)
+                throw new InvalidOperationException("Starting playback must keep the full-screen browser open and update its playing state.");
+            if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_ALBUM_BROWSER_PREVIEW") is { Length: > 0 } previewDirectory)
+            {
+                Directory.CreateDirectory(previewDirectory);
+                flow.SelectByKey("fourth", true);
+                void Save(string name)
+                {
+                    browser.UpdateLayout(); Pump(220);
+                    var bitmap = new RenderTargetBitmap((int)browser.ActualWidth, (int)browser.ActualHeight,
+                        96, 96, PixelFormats.Pbgra32);
+                    bitmap.Render(browser);
+                    var encoder = new PngBitmapEncoder();
+                    encoder.Frames.Add(BitmapFrame.Create(bitmap));
+                    using var output = File.Create(Path.Combine(previewDirectory, name));
+                    encoder.Save(output);
+                }
+                tiles.Visibility = Visibility.Visible; flow.Visibility = Visibility.Collapsed;
+                Save("album-browser-tiles.png");
+                tiles.Visibility = Visibility.Collapsed; flow.Visibility = Visibility.Visible;
+                Save("album-browser-coverflow.png");
+            }
+        }
+        finally { browser.Close(); }
+        Console.WriteLine("Full-screen album browser tile/search/3D CoverFlow selection synchronization passed.");
+    }
+
+    private static void VerifyLibraryLoadingIndicator()
+    {
+        var window = new MainWindow { ShowInTaskbar = false, WindowState = WindowState.Normal, Width = 960, Height = 620 };
+        var type = typeof(MainWindow);
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        window.Loaded -= (RoutedEventHandler)Delegate.CreateDelegate(typeof(RoutedEventHandler), window,
+            type.GetMethod("MainWindow_Loaded", flags)!);
+        try
+        {
+            window.Show();
+            var task = (Task)type.GetMethod("ShowLibraryLoadingAsync", flags)!.Invoke(window,
+                ["音楽ファイルを読み込んでいます…", "保存済みライブラリを復元中 12/120"])!;
+            var frame = new System.Windows.Threading.DispatcherFrame();
+            task.ContinueWith(_ => window.Dispatcher.BeginInvoke(() => frame.Continue = false));
+            System.Windows.Threading.Dispatcher.PushFrame(frame);
+            window.UpdateLayout();
+            var overlay = (Border)window.FindName("LibraryLoadingOverlay");
+            var title = (TextBlock)window.FindName("LibraryLoadingTitle");
+            var detail = (TextBlock)window.FindName("LibraryLoadingDetail");
+            var progress = (ProgressBar)window.FindName("LibraryLoadingProgress");
+            if (overlay.Visibility != Visibility.Visible || title.Text.Length == 0
+                || !detail.Text.Contains("12/120") || !progress.IsIndeterminate)
+                throw new InvalidOperationException("Music library loading must show a rendered progress overlay before long-running work starts.");
+            type.GetMethod("HideLibraryLoading", flags)!.Invoke(window, null);
+            if (overlay.Visibility != Visibility.Collapsed)
+                throw new InvalidOperationException("Music library loading overlay must close after work completes.");
+        }
+        finally { window.Close(); }
+        Console.WriteLine("Music library loading overlay and progress text passed.");
+    }
+
     private static void VerifyDiscDragging()
     {
         void Pump(int milliseconds = 180)
@@ -2151,6 +2421,16 @@ internal static class Program
                 .GetMethod("CreateCaseModel", BindingFlags.Static | BindingFlags.NonPublic)!
                 .Invoke(null, [test.Item, 1, -30.0, 0.0, 1.0])!;
             var body = (System.Windows.Media.Media3D.Model3DGroup)((System.Windows.Media.Media3D.ModelUIElement3D)model.Children[0]).Model;
+            var directFrontBrushes = body.Children.OfType<System.Windows.Media.Media3D.GeometryModel3D>()
+                .Select(mesh => mesh.Material).OfType<System.Windows.Media.Media3D.MaterialGroup>()
+                .SelectMany(material => material.Children.OfType<System.Windows.Media.Media3D.DiffuseMaterial>())
+                .Select(material => material.Brush)
+                .OfType<ImageBrush>()
+                .Where(brush => ReferenceEquals(brush.ImageSource, test.Item.FrontCover)
+                    && Math.Abs(brush.Opacity - 1.0) < .001)
+                .ToList();
+            if (model.Children.Count != 1 || directFrontBrushes.Count != 1)
+                throw new InvalidOperationException("WPF CoverFlow artwork must be a directly textured 3D face, not a visual-host plane.");
             // The first seven meshes form the shell; the next three are rear/left/right inserts.
             var flags = new[] { test.Back, test.Right, test.Left };
             for (var index = 0; index < flags.Length; index++)

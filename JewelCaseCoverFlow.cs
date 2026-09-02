@@ -26,6 +26,7 @@ public sealed record JewelCaseCoverFlowItem(
 {
     public Func<BookletContent>? LoadBooklet { get; init; }
     public BitmapSource? SpineCard { get; init; }
+    internal bool CollectionPresentation { get; init; }
     // Inlay is the inside of the rear insert, not the booklet or exterior Back.
     // A standard full scan is 6 + 138 + 6 mm wide by 118 mm high.
     internal (BitmapSource? Panel, BitmapSource? Left, BitmapSource? Right) SplitInlay()
@@ -75,12 +76,37 @@ public sealed class JewelCaseCoverFlow : Grid
     private bool _isCaseTransitioning;
     private bool _isDraggingDisc;
     private bool _isDraggingSpineCard;
+    private bool _collectionPresentation;
+    private int _selectionMotionDirection;
+    private readonly Dictionary<string, ContainerUIElement3D> _collectionModels =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _collectionArtworkRefreshes =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public event EventHandler<JewelCaseCoverFlowSelectionChangedEventArgs>? SelectionChanged;
     public event EventHandler<JewelCaseCoverFlowSelectionChangedEventArgs>? ItemActivated;
     public int ItemCount => _items.Count;
     public string? SelectedKey => _selectedIndex >= 0 && _selectedIndex < _items.Count ? _items[_selectedIndex].Key : null;
     public BitmapSource? SelectedFrontCover => _selectedIndex >= 0 && _selectedIndex < _items.Count ? _items[_selectedIndex].FrontCover : null;
+    public bool CollectionPresentation
+    {
+        get => _collectionPresentation;
+        set
+        {
+            if (_collectionPresentation == value) return;
+            _collectionPresentation = value;
+            _caseZoom = value ? 0.36 : 1;
+            _caseYaw = value ? 30 : -10;
+            _casePitch = -2;
+            _dxScene?.SetViewZoom(_caseZoom);
+            _fullScreenButton.Visibility = value ? Visibility.Collapsed : Visibility.Visible;
+            _caseOpenButton.Visibility = value ? Visibility.Collapsed : Visibility.Visible;
+            _discButton.Visibility = value ? Visibility.Collapsed : Visibility.Visible;
+            _bookletButton.Visibility = value ? Visibility.Collapsed : Visibility.Visible;
+            _spineCardButton.Visibility = value ? Visibility.Collapsed : Visibility.Visible;
+            RebuildScene();
+        }
+    }
 
     public JewelCaseCoverFlow() : this(false)
     {
@@ -310,6 +336,22 @@ public sealed class JewelCaseCoverFlow : Grid
     public void SetItems(IReadOnlyList<JewelCaseCoverFlowItem> items, string? selectedKey = null)
     {
         var previousKey = SelectedKey;
+        if (_collectionPresentation && _collectionModels.Count > 0)
+        {
+            var nextItems = items.ToDictionary(item => item.Key, StringComparer.OrdinalIgnoreCase);
+            foreach (var oldItem in _items)
+            {
+                if (!nextItems.TryGetValue(oldItem.Key, out var nextItem) || SameExteriorArtwork(oldItem, nextItem)) continue;
+                if (_collectionModels.Remove(oldItem.Key, out var stale))
+                {
+                    _viewport.Children.Remove(stale);
+                    // A nearby/selected cover is replaced after its larger
+                    // bitmap finishes decoding. Keep the replacement at the
+                    // current flow slot instead of flying it in from the edge.
+                    _collectionArtworkRefreshes.Add(oldItem.Key);
+                }
+            }
+        }
         _items = items;
         _selectedIndex = selectedKey is null ? -1 : FindIndex(selectedKey);
         if (_selectedIndex < 0 && _items.Count > 0) _selectedIndex = 0;
@@ -317,10 +359,19 @@ public sealed class JewelCaseCoverFlow : Grid
         RebuildScene();
     }
 
+    private static bool SameExteriorArtwork(JewelCaseCoverFlowItem left, JewelCaseCoverFlowItem right) =>
+        ReferenceEquals(left.FrontCover, right.FrontCover)
+        && ReferenceEquals(left.BackCover, right.BackCover)
+        && ReferenceEquals(left.SpineCover, right.SpineCover)
+        && ReferenceEquals(left.RightSpineCover, right.RightSpineCover)
+        && ReferenceEquals(left.InlayCover, right.InlayCover)
+        && string.Equals(left.TrayColorMode, right.TrayColorMode, StringComparison.OrdinalIgnoreCase);
+
     public void SelectByKey(string key, bool notify = false)
     {
         var index = FindIndex(key);
         if (index < 0 || index == _selectedIndex) return;
+        _selectionMotionDirection = Math.Sign(index - _selectedIndex);
         _selectedIndex = index;
         ResetCaseRotation();
         RebuildScene();
@@ -341,6 +392,7 @@ public sealed class JewelCaseCoverFlow : Grid
         var next = (current + offset) % _items.Count;
         if (next < 0) next += _items.Count;
         if (next == _selectedIndex) return;
+        _selectionMotionDirection = Math.Sign(offset);
         _selectedIndex = next;
         ResetCaseRotation();
         RebuildScene();
@@ -442,6 +494,7 @@ public sealed class JewelCaseCoverFlow : Grid
     private void SelectIndex(int index, bool notify)
     {
         if (index < 0 || index >= _items.Count || index == _selectedIndex) return;
+        _selectionMotionDirection = Math.Sign(index - _selectedIndex);
         _selectedIndex = index;
         ResetCaseRotation();
         RebuildScene();
@@ -450,18 +503,29 @@ public sealed class JewelCaseCoverFlow : Grid
 
     private void RebuildScene()
     {
-        _viewport.Children.Clear();
-        var lightGroup = new Model3DGroup();
-        lightGroup.Children.Add(new AmbientLight(Color.FromRgb(116, 126, 140)));
-        lightGroup.Children.Add(new DirectionalLight(Color.FromRgb(255, 255, 255), new Vector3D(-0.35, -0.55, -1)));
-        lightGroup.Children.Add(new DirectionalLight(Color.FromRgb(112, 164, 208), new Vector3D(0.7, 0.15, -0.5)));
-        _viewport.Children.Add(new ModelVisual3D { Content = lightGroup });
+        if (!_collectionPresentation || _viewport.Children.Count == 0)
+        {
+            _viewport.Children.Clear();
+            if (!_collectionPresentation)
+            {
+                _collectionModels.Clear();
+                _collectionArtworkRefreshes.Clear();
+            }
+            var lightGroup = new Model3DGroup();
+            lightGroup.Children.Add(new AmbientLight(Color.FromRgb(116, 126, 140)));
+            lightGroup.Children.Add(new DirectionalLight(Color.FromRgb(255, 255, 255), new Vector3D(-0.35, -0.55, -1)));
+            lightGroup.Children.Add(new DirectionalLight(Color.FromRgb(112, 164, 208), new Vector3D(0.7, 0.15, -0.5)));
+            _viewport.Children.Add(new ModelVisual3D { Content = lightGroup });
+        }
 
         var hasItems = _items.Count > 0 && _selectedIndex >= 0;
-        if (_dxScene is not null) _dxScene.Viewport.Visibility = hasItems ? Visibility.Visible : Visibility.Collapsed;
-        _bookletButton.Visibility = hasItems && _items[_selectedIndex].LoadBooklet is not null ? Visibility.Visible : Visibility.Collapsed;
+        if (_dxScene is not null) _dxScene.Viewport.Visibility = hasItems && !_collectionPresentation
+            ? Visibility.Visible : Visibility.Collapsed;
+        _bookletButton.Visibility = !_collectionPresentation && hasItems && _items[_selectedIndex].LoadBooklet is not null
+            ? Visibility.Visible : Visibility.Collapsed;
         var hasSpineCard = hasItems && _items[_selectedIndex].SpineCard is not null;
-        _spineCardButton.Visibility = _dxScene is not null && hasSpineCard ? Visibility.Visible : Visibility.Collapsed;
+        _spineCardButton.Visibility = !_collectionPresentation && _dxScene is not null && hasSpineCard
+            ? Visibility.Visible : Visibility.Collapsed;
         if (!hasSpineCard) _isSpineCardRemoved = false;
         UpdateSpineCardButton();
         _emptyText.Visibility = hasItems ? Visibility.Collapsed : Visibility.Visible;
@@ -470,7 +534,20 @@ public sealed class JewelCaseCoverFlow : Grid
         _detailText.Text = hasItems
             ? $"{(_items[_selectedIndex].IsPlaying ? "▶ " : "")}{_items[_selectedIndex].Artist}  •  {_items[_selectedIndex].SourceBadge}"
             : "";
-        if (!hasItems) return;
+        ApplyCollectionBackground(hasItems ? _items[_selectedIndex].FrontCover : null);
+        if (!hasItems)
+        {
+            foreach (var model in _collectionModels.Values) _viewport.Children.Remove(model);
+            _collectionModels.Clear();
+            _collectionArtworkRefreshes.Clear();
+            return;
+        }
+
+        if (_collectionPresentation)
+        {
+            UpdateCollectionScene();
+            return;
+        }
 
         _dxScene?.SetItem(_items[_selectedIndex], _caseYaw, _casePitch);
         _dxScene?.SetSpineCardRemoved(_isSpineCardRemoved, false);
@@ -491,6 +568,7 @@ public sealed class JewelCaseCoverFlow : Grid
                 Focus();
                 if (_selectedIndex != index)
                 {
+                    _selectionMotionDirection = Math.Sign(index - _selectedIndex);
                     _selectedIndex = index;
                     ResetCaseRotation();
                     RebuildScene();
@@ -501,7 +579,203 @@ public sealed class JewelCaseCoverFlow : Grid
             };
             _viewport.Children.Add(model);
         }
+        _viewport.RenderTransform = Transform.Identity;
         _viewport.BeginAnimation(OpacityProperty, new DoubleAnimation(0.72, 1, TimeSpan.FromMilliseconds(150)));
+    }
+
+    private readonly record struct CollectionPose(double X, double Y, double Z, double Scale, double Yaw, double Pitch);
+
+    private CollectionPose GetCollectionPose(int relative)
+    {
+        var selected = relative == 0;
+        var distance = Math.Abs(relative);
+        return new CollectionPose(
+            selected ? 0 : Math.Sign(relative) * (0.86 + (distance - 1) * 0.28),
+            selected ? 0.12 : 0.02,
+            selected ? 0.62 : -0.16 - (distance - 1) * 0.10,
+            selected ? _caseZoom : Math.Max(0.21, 0.38 - (distance - 1) * 0.014),
+            // Keep enough of both the booklet and the physical side face in
+            // view. At 72 degrees a correctly mapped 6 mm spine dominates
+            // while the 120 mm front becomes an unreadable sliver.
+            selected ? _caseYaw : relative < 0 ? -55 : 55,
+            selected ? _casePitch : 0);
+    }
+
+    private void UpdateCollectionScene()
+    {
+        const int radius = 12;
+        var initialLayout = _collectionModels.Count == 0;
+        var start = Math.Max(0, _selectedIndex - radius);
+        var end = Math.Min(_items.Count - 1, _selectedIndex + radius);
+        var targetKeys = Enumerable.Range(start, end - start + 1)
+            .Select(index => _items[index].Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var index in Enumerable.Range(start, end - start + 1)
+            .OrderByDescending(index => Math.Abs(index - _selectedIndex)))
+        {
+            var item = _items[index];
+            var relative = index - _selectedIndex;
+            if (!_collectionModels.TryGetValue(item.Key, out var model))
+            {
+                var artworkRefresh = _collectionArtworkRefreshes.Remove(item.Key);
+                var entryRelative = initialLayout || artworkRefresh ? relative : Math.Sign(relative == 0
+                    ? (_selectionMotionDirection == 0 ? 1 : _selectionMotionDirection)
+                    : relative) * (radius + 2);
+                model = CreateCaseModel(item, entryRelative, _caseYaw, _casePitch, _caseZoom);
+                var key = item.Key;
+                model.MouseLeftButtonDown += (_, e) =>
+                {
+                    Focus();
+                    var targetIndex = FindIndex(key);
+                    if (targetIndex >= 0 && targetIndex != _selectedIndex)
+                    {
+                        _selectionMotionDirection = Math.Sign(targetIndex - _selectedIndex);
+                        _selectedIndex = targetIndex;
+                        ResetCaseRotation();
+                        RebuildScene();
+                        RaiseSelectionChanged();
+                        e.Handled = true;
+                    }
+                    else if (targetIndex >= 0 && e.ClickCount >= 2)
+                    {
+                        RaiseActivated();
+                        e.Handled = true;
+                    }
+                    // A single press on the selected centre case bubbles to
+                    // OnRotationStarted, allowing direct left-drag rotation.
+                };
+                _collectionModels[item.Key] = model;
+                _viewport.Children.Add(model);
+                if (artworkRefresh) SetCollectionPose(model, GetCollectionPose(relative));
+            }
+            if (initialLayout) SetCollectionPose(model, GetCollectionPose(relative));
+            else AnimateCollectionPose(model, GetCollectionPose(relative));
+        }
+
+        foreach (var pair in _collectionModels.Where(pair => !targetKeys.Contains(pair.Key)).ToList())
+        {
+            var transforms = (Transform3DGroup)pair.Value.Transform;
+            var translation = (TranslateTransform3D)transforms.Children[3];
+            var direction = Math.Sign(translation.OffsetX);
+            if (direction == 0) direction = _selectionMotionDirection == 0 ? 1 : -_selectionMotionDirection;
+            var exitPose = GetCollectionPose(direction * (radius + 2));
+            AnimateCollectionPose(pair.Value, exitPose, () =>
+            {
+                if (IsCollectionKeyVisible(pair.Key)) return;
+                if (_collectionModels.Remove(pair.Key, out var stale)) _viewport.Children.Remove(stale);
+            });
+        }
+        _selectionMotionDirection = 0;
+    }
+
+    private bool IsCollectionKeyVisible(string key)
+    {
+        var index = FindIndex(key);
+        return index >= 0 && Math.Abs(index - _selectedIndex) <= 12;
+    }
+
+    private static void SetCollectionPose(ContainerUIElement3D model, CollectionPose pose)
+    {
+        var transforms = (Transform3DGroup)model.Transform;
+        var scale = (ScaleTransform3D)transforms.Children[0];
+        var pitch = (AxisAngleRotation3D)((RotateTransform3D)transforms.Children[1]).Rotation;
+        var yaw = (AxisAngleRotation3D)((RotateTransform3D)transforms.Children[2]).Rotation;
+        var translation = (TranslateTransform3D)transforms.Children[3];
+        scale.ScaleX = scale.ScaleY = scale.ScaleZ = pose.Scale;
+        pitch.Angle = pose.Pitch;
+        yaw.Angle = pose.Yaw;
+        translation.OffsetX = pose.X;
+        translation.OffsetY = pose.Y;
+        translation.OffsetZ = pose.Z;
+    }
+
+    private static void AnimateCollectionPose(ContainerUIElement3D model, CollectionPose pose, Action? completed = null)
+    {
+        var transforms = (Transform3DGroup)model.Transform;
+        var scale = (ScaleTransform3D)transforms.Children[0];
+        var pitch = (AxisAngleRotation3D)((RotateTransform3D)transforms.Children[1]).Rotation;
+        var yaw = (AxisAngleRotation3D)((RotateTransform3D)transforms.Children[2]).Rotation;
+        var translation = (TranslateTransform3D)transforms.Children[3];
+        // EaseOut preserves momentum when the user presses repeatedly: each
+        // new destination starts immediately from the currently rendered pose
+        // and then settles gently instead of pausing at every album.
+        var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+        const int durationMilliseconds = 560;
+        DoubleAnimation Animation(double current, double target) => new(current, target,
+            TimeSpan.FromMilliseconds(durationMilliseconds)) { EasingFunction = easing, FillBehavior = FillBehavior.Stop };
+
+        void AnimateScale(DependencyProperty property, double target)
+        {
+            var current = (double)scale.GetValue(property);
+            scale.BeginAnimation(property, null);
+            scale.SetValue(property, target);
+            scale.BeginAnimation(property, Animation(current, target));
+        }
+        void AnimateRotation(AxisAngleRotation3D rotation, double target)
+        {
+            var current = rotation.Angle;
+            rotation.BeginAnimation(AxisAngleRotation3D.AngleProperty, null);
+            rotation.Angle = target;
+            rotation.BeginAnimation(AxisAngleRotation3D.AngleProperty, Animation(current, target));
+        }
+        void AnimateTranslation(DependencyProperty property, double target, bool signalsCompletion = false)
+        {
+            var current = (double)translation.GetValue(property);
+            translation.BeginAnimation(property, null);
+            translation.SetValue(property, target);
+            var animation = Animation(current, target);
+            if (signalsCompletion && completed is not null) animation.Completed += (_, _) => completed();
+            translation.BeginAnimation(property, animation);
+        }
+
+        AnimateScale(ScaleTransform3D.ScaleXProperty, pose.Scale);
+        AnimateScale(ScaleTransform3D.ScaleYProperty, pose.Scale);
+        AnimateScale(ScaleTransform3D.ScaleZProperty, pose.Scale);
+        AnimateRotation(pitch, pose.Pitch);
+        AnimateRotation(yaw, pose.Yaw);
+        AnimateTranslation(TranslateTransform3D.OffsetYProperty, pose.Y);
+        AnimateTranslation(TranslateTransform3D.OffsetZProperty, pose.Z);
+        AnimateTranslation(TranslateTransform3D.OffsetXProperty, pose.X, true);
+    }
+
+    private void ApplyCollectionBackground(BitmapSource? cover)
+    {
+        if (!_collectionPresentation || cover is null)
+        {
+            Background = new LinearGradientBrush(
+                Color.FromRgb(11, 15, 21), Color.FromRgb(27, 35, 45), new Point(0.5, 0), new Point(0.5, 1));
+            if (_dxScene is not null) _dxScene.Viewport.BackgroundColor = Color.FromRgb(11, 15, 21);
+            return;
+        }
+        try
+        {
+            const double sampleSize = 24;
+            var scale = Math.Min(sampleSize / cover.PixelWidth, sampleSize / cover.PixelHeight);
+            var scaled = new TransformedBitmap(cover, new ScaleTransform(scale, scale));
+            var converted = new FormatConvertedBitmap(scaled, PixelFormats.Bgra32, null, 0);
+            var stride = converted.PixelWidth * 4;
+            var pixels = new byte[stride * converted.PixelHeight];
+            converted.CopyPixels(pixels, stride, 0);
+            long red = 0, green = 0, blue = 0;
+            for (var index = 0; index < pixels.Length; index += 4)
+            {
+                blue += pixels[index]; green += pixels[index + 1]; red += pixels[index + 2];
+            }
+            var count = Math.Max(1, converted.PixelWidth * converted.PixelHeight);
+            byte Tone(long total, double strength, int floor) =>
+                (byte)Math.Clamp(floor + total / (double)count * strength, 0, 255);
+            var top = Color.FromRgb(Tone(red, .25, 14), Tone(green, .22, 16), Tone(blue, .27, 22));
+            var bottom = Color.FromRgb(Tone(red, .09, 7), Tone(green, .08, 10), Tone(blue, .11, 15));
+            Background = new RadialGradientBrush(top, bottom)
+            {
+                Center = new Point(.5, .34), GradientOrigin = new Point(.5, .34), RadiusX = .82, RadiusY = .78
+            };
+            if (_dxScene is not null) _dxScene.Viewport.BackgroundColor = top;
+        }
+        catch
+        {
+            if (_dxScene is not null) _dxScene.Viewport.BackgroundColor = Color.FromRgb(11, 15, 21);
+        }
     }
 
     private static ContainerUIElement3D CreateCaseModel(JewelCaseCoverFlowItem item, int relative,
@@ -513,13 +787,22 @@ public sealed class JewelCaseCoverFlow : Grid
         const double width = 2.42;
         const double height = 2.12;
         const double depth = 0.18;
+        var collectionPresentation = item.CollectionPresentation;
         var selected = relative == 0;
         var distance = Math.Abs(relative);
-        var x = selected ? 0 : Math.Sign(relative) * (1.46 + (distance - 1) * 0.58);
-        var y = selected ? 0.12 : -0.04;
-        var z = selected ? 0.62 : -0.45 - (distance - 1) * 0.24;
-        var scale = selected ? selectedZoom : Math.Max(0.62, 0.78 - (distance - 1) * 0.035);
-        var angle = selected ? selectedYaw : relative < 0 ? 67 : -67;
+        var x = selected ? 0 : Math.Sign(relative) * (collectionPresentation
+            ? 0.82 + (distance - 1) * 0.22
+            : 1.46 + (distance - 1) * 0.58);
+        var y = selected ? 0.12 : collectionPresentation ? 0.02 : -0.04;
+        var z = selected ? 0.62 : collectionPresentation
+            ? -0.16 - (distance - 1) * 0.10
+            : -0.45 - (distance - 1) * 0.24;
+        var scale = selected ? selectedZoom : collectionPresentation
+            ? Math.Max(0.24, 0.46 - (distance - 1) * 0.018)
+            : Math.Max(0.62, 0.78 - (distance - 1) * 0.035);
+        var angle = selected ? selectedYaw : relative < 0
+            ? collectionPresentation ? -72 : 67
+            : collectionPresentation ? 72 : -67;
 
         var group = new Model3DGroup();
         var frame = CreateMaterial(selected
@@ -536,6 +819,10 @@ public sealed class JewelCaseCoverFlow : Grid
             "Clear" => Color.FromArgb(44, 224, 232, 236),
             _ => Color.FromRgb(29, 32, 37)
         };
+        if (collectionPresentation)
+            return CreateCollectionExteriorCaseModel(item, selected, x, y, z, scale, angle,
+                selected ? selectedPitch : 0, trayColor);
+
         var dark = CreateMaterial(trayColor, 28);
         var back = CreateOptionalArtworkMaterial(item.BackCover, item.Title, 0.92);
         // Source Back is viewed from the opposite side of the model.
@@ -627,20 +914,27 @@ public sealed class JewelCaseCoverFlow : Grid
                 new Point3D(-width / 2 + 0.23, -height / 2 - 1.00, depth / 2), reflection, reflected: true));
         }
 
+        // Use a regular textured 3D material for collection artwork.  A
+        // Viewport2DVisual3D is useful for interactive single-case surfaces,
+        // but WPF can leave those visual-host planes white when many cases are
+        // composed in one Viewport3D (and when the viewport is rendered to a
+        // bitmap).  A frozen BitmapSource-backed ImageBrush renders reliably
+        // for every CoverFlow entry.
+        group.Children.Add(CreateQuad(
+            new Point3D(-width / 2 + 0.235, height / 2 - 0.075, depth / 2 + 0.006),
+            new Point3D(width / 2 - 0.065, height / 2 - 0.075, depth / 2 + 0.006),
+            new Point3D(width / 2 - 0.065, -height / 2 + 0.075, depth / 2 + 0.006),
+            new Point3D(-width / 2 + 0.235, -height / 2 + 0.075, depth / 2 + 0.006),
+            CreateImageMaterial(item.FrontCover, item.Title, 1.0)));
+
         var transforms = new Transform3DGroup();
         transforms.Children.Add(new ScaleTransform3D(scale, scale, scale));
-        if (selected)
-            transforms.Children.Add(new RotateTransform3D(
-                new AxisAngleRotation3D(new Vector3D(1, 0, 0), selectedPitch)));
+        transforms.Children.Add(new RotateTransform3D(
+            new AxisAngleRotation3D(new Vector3D(1, 0, 0), selected ? selectedPitch : 0)));
         transforms.Children.Add(new RotateTransform3D(new AxisAngleRotation3D(new Vector3D(0, 1, 0), angle)));
         transforms.Children.Add(new TranslateTransform3D(x, y, z));
         var container = new ContainerUIElement3D { Transform = transforms };
         container.Children.Add(new ModelUIElement3D { Model = group });
-        container.Children.Add(CreateArtworkPlane(
-            new Point3D(-width / 2 + 0.235, height / 2 - 0.075, depth / 2 + 0.006),
-            new Point3D(width / 2 - 0.065, height / 2 - 0.075, depth / 2 + 0.006),
-            new Point3D(width / 2 - 0.065, -height / 2 + 0.075, depth / 2 + 0.006),
-            new Point3D(-width / 2 + 0.235, -height / 2 + 0.075, depth / 2 + 0.006), item.FrontCover, item.Title));
 
         // A very light transparent lid over the artwork provides the acrylic
         // highlight without washing out the cover image.
@@ -702,6 +996,128 @@ public sealed class JewelCaseCoverFlow : Grid
                 CreateImageMaterial(obiSpine, item.Title, 0.97)));
         }
         return container;
+    }
+
+    private static ContainerUIElement3D CreateCollectionExteriorCaseModel(JewelCaseCoverFlowItem item,
+        bool selected, double x, double y, double z, double scale, double yaw, double pitch, Color trayColor)
+    {
+        const double width = 2.42;
+        const double height = 2.12;
+        const double depth = 0.125;
+        var shell = DxJewelCaseScene.GetCoverFlowShellGeometry();
+        var group = new Model3DGroup();
+        var inlay = item.SplitInlay();
+        var backArtwork = item.BackCover ?? inlay.Panel;
+        var worldLeftSpineArtwork = SelectExteriorSpine(item.RightSpineCover, inlay.Left, rightEdge: true);
+        var worldRightSpineArtwork = SelectExteriorSpine(item.SpineCover, inlay.Right, rightEdge: false);
+
+        // The collection view shares the exact normalized STL shell used by
+        // the interactive DirectX viewer.  Only the closed exterior is kept:
+        // no disc, booklet, hub, opening hierarchy or draggable parts.
+        var tray = CreateMaterial(trayColor, 30);
+        var acrylic = CreateMaterial(Color.FromArgb(28, 196, 216, 226), 105);
+        var mouldedAcrylic = CreateMaterial(
+            Color.FromArgb(selected ? (byte)122 : (byte)104, 155, 174, 186), 125);
+        AddShell(shell.BottomTray, tray);
+        AddShell(shell.BottomPerimeter, acrylic);
+        AddShell(shell.BottomMouldedEdges, mouldedAcrylic);
+        AddShell(shell.TopLid, acrylic);
+        AddShell(shell.TopMouldedEdges, mouldedAcrylic);
+
+        const double caseWidthMm = 142;
+        const double caseHeightMm = 125;
+        var unitX = width / caseWidthMm;
+        var unitY = height / caseHeightMm;
+        var frontCenterX = (shell.FrontLeft + shell.FrontRight) / 2;
+        var frontCenterY = (shell.FrontBottom + shell.FrontTop) / 2;
+        var frontWidth = 120 * unitX;
+        var frontHeight = 120 * unitY;
+        var frontLeft = Math.Max(0.044 - 1.018, -width / 2 + 0.254);
+        var frontRight = frontCenterX + frontWidth / 2;
+        var frontBottom = frontCenterY - frontHeight / 2;
+        var frontTop = frontCenterY + frontHeight / 2;
+        group.Children.Add(CreateQuad(
+            // WPF Viewport3D does not provide the weighted order-independent
+            // transparency used by the DirectX viewer. Put the print at the
+            // closed lid's outer surface to prevent the transparent STL shell
+            // from sorting behind the opaque tray and hiding the artwork.
+            new Point3D(frontLeft, frontTop, depth / 2 + 0.002),
+            new Point3D(frontRight, frontTop, depth / 2 + 0.002),
+            new Point3D(frontRight, frontBottom, depth / 2 + 0.002),
+            new Point3D(frontLeft, frontBottom, depth / 2 + 0.002),
+            CreateImageMaterial(item.FrontCover, item.Title, 1.0)));
+
+        var backWidth = 138 * unitX;
+        var backHeight = 118 * unitY;
+        var backMaterial = CreateOptionalArtworkMaterial(backArtwork, item.Title, 0.98);
+        group.Children.Add(CreateQuad(
+            new Point3D(backWidth / 2, backHeight / 2, -depth / 2 - 0.001),
+            new Point3D(-backWidth / 2, backHeight / 2, -depth / 2 - 0.001),
+            new Point3D(-backWidth / 2, -backHeight / 2, -depth / 2 - 0.001),
+            new Point3D(backWidth / 2, -backHeight / 2, -depth / 2 - 0.001), backMaterial));
+
+        // Back source-right folds around the world-left edge.  Keep both
+        // physical spine faces independently textured just like the 3D viewer.
+        if (worldLeftSpineArtwork is not null)
+            group.Children.Add(CreateQuad(
+                // Match DxJewelCaseScene.AddSpine exactly: the paper sits just
+                // beneath the clear side wall and stops inside the front/back
+                // acrylic lips. Extending beyond those lips makes it read as
+                // an obi wrapped over the outside of the case.
+                new Point3D(-width / 2 - 0.001, backHeight / 2, -depth / 2 + 0.010),
+                new Point3D(-width / 2 - 0.001, backHeight / 2, depth / 2 - 0.010),
+                new Point3D(-width / 2 - 0.001, -backHeight / 2, depth / 2 - 0.010),
+                new Point3D(-width / 2 - 0.001, -backHeight / 2, -depth / 2 + 0.010),
+                CreateImageMaterial(worldLeftSpineArtwork, item.Title, 0.99)));
+        if (worldRightSpineArtwork is not null)
+            group.Children.Add(CreateQuad(
+                new Point3D(width / 2 + 0.001, backHeight / 2, depth / 2 - 0.010),
+                new Point3D(width / 2 + 0.001, backHeight / 2, -depth / 2 + 0.010),
+                new Point3D(width / 2 + 0.001, -backHeight / 2, -depth / 2 + 0.010),
+                new Point3D(width / 2 + 0.001, -backHeight / 2, depth / 2 - 0.010),
+                CreateImageMaterial(worldRightSpineArtwork, item.Title, 0.99)));
+
+        if (item.FrontCover is not null)
+        {
+            group.Children.Add(CreateQuad(
+                new Point3D(frontLeft, -height / 2 - 0.08, depth / 2),
+                new Point3D(frontRight, -height / 2 - 0.08, depth / 2),
+                new Point3D(frontRight, -height / 2 - 1.00, depth / 2),
+                new Point3D(frontLeft, -height / 2 - 1.00, depth / 2),
+                CreateImageMaterial(item.FrontCover, item.Title, selected ? 0.13 : 0.07, reflected: true),
+                reflected: true));
+        }
+
+        var transforms = new Transform3DGroup();
+        transforms.Children.Add(new ScaleTransform3D(scale, scale, scale));
+        transforms.Children.Add(new RotateTransform3D(new AxisAngleRotation3D(new Vector3D(1, 0, 0), pitch)));
+        transforms.Children.Add(new RotateTransform3D(new AxisAngleRotation3D(new Vector3D(0, 1, 0), yaw)));
+        transforms.Children.Add(new TranslateTransform3D(x, y, z));
+        var container = new ContainerUIElement3D { Transform = transforms };
+        container.Children.Add(new ModelUIElement3D { Model = group });
+        return container;
+
+        void AddShell(MeshGeometry3D geometry, Material material) =>
+            group.Children.Add(new GeometryModel3D(geometry, material) { BackMaterial = material });
+    }
+
+    private static BitmapSource? SelectExteriorSpine(BitmapSource? assigned, BitmapSource? inlayFallback,
+        bool rightEdge)
+    {
+        if (assigned is null) return inlayFallback;
+        var aspect = assigned.PixelHeight > 0 ? (double)assigned.PixelWidth / assigned.PixelHeight : 0;
+        // A prepared jewel-case spine is approximately 6 x 118 mm. Never
+        // squeeze a square cover or disc image into the narrow side face.
+        if (aspect is > 0 and <= 0.22) return assigned;
+        // A complete 6+138+6 mm rear insert is also valid, but its fold must
+        // be extracted before it is mapped to the case side.
+        if (aspect is >= 1.12 and <= 1.58)
+        {
+            var regions = RearInsertArtwork.GetRegions(assigned, forceSpines: true);
+            var region = rightEdge ? regions.Right : regions.Left;
+            if (region is not null) return RearInsertArtwork.Crop(assigned, region.Value);
+        }
+        return inlayFallback;
     }
 
     private async Task OpenBookletAsync()
@@ -882,7 +1298,10 @@ public sealed class JewelCaseCoverFlow : Grid
         _caseYaw = NormalizeAngle(_caseYaw + delta.X * 0.65);
         _casePitch = NormalizeAngle(_casePitch - delta.Y * 0.35);
         _rotationStart = current;
-        if (_dxScene is not null)
+        if (_collectionPresentation && SelectedKey is { } selectedKey
+            && _collectionModels.TryGetValue(selectedKey, out var selectedModel))
+            SetCollectionPose(selectedModel, GetCollectionPose(0));
+        else if (_dxScene is not null)
             _dxScene.SetRotation(_caseYaw, _casePitch);
         else
             RebuildScene();
@@ -911,9 +1330,15 @@ public sealed class JewelCaseCoverFlow : Grid
     private void ResetCaseRotation()
     {
         ResetCasePosition();
-        _caseYaw = -10;
+        // The collection's selected case remains mostly frontal, but is
+        // angled enough to reveal the same printed spine seen in 3D View.
+        // Turn the selected case toward the viewer while retaining the sign
+        // of its incoming side, avoiding a cross-centre 110-degree flip.
+        _caseYaw = _collectionPresentation
+            ? (_selectionMotionDirection < 0 ? -30 : 30)
+            : -10;
         _casePitch = -2;
-        _caseZoom = 1;
+        _caseZoom = _collectionPresentation ? 0.36 : 1;
         _dxScene?.SetViewZoom(_caseZoom);
         SetCaseOpen(false, false);
         ApplySpineCardRemoved(false, false);
@@ -1069,7 +1494,10 @@ public sealed class JewelCaseCoverFlow : Grid
             Height = 320
         };
         if (image is not null)
-            artwork.Background = new ImageBrush(image) { Stretch = Stretch.UniformToFill };
+            // The quad already has the artwork's physical proportions. Crop-to-fill
+            // would turn a 6 x 118 mm spine into a square viewbox and discard most
+            // of its height before the texture is mapped onto the narrow face.
+            artwork.Background = new ImageBrush(image) { Stretch = Stretch.Fill };
         else
         {
             artwork.Background = new LinearGradientBrush(Color.FromRgb(52, 67, 85), Color.FromRgb(16, 21, 29),
@@ -1255,7 +1683,12 @@ public sealed class JewelCaseCoverFlow : Grid
         Brush brush;
         if (image is not null)
         {
-            brush = new ImageBrush(image) { Stretch = Stretch.UniformToFill, Opacity = opacity };
+            // UVs cover the complete 3D face, whose geometry supplies the final
+            // aspect ratio. Preserve the complete bitmap here; UniformToFill
+            // centrally cropped tall spine scans and left only an abstract stripe.
+            var imageBrush = new ImageBrush(image) { Stretch = Stretch.Fill, Opacity = opacity };
+            RenderOptions.SetBitmapScalingMode(imageBrush, BitmapScalingMode.HighQuality);
+            brush = imageBrush;
         }
         else
         {

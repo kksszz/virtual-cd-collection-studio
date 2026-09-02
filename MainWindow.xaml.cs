@@ -183,9 +183,13 @@ public partial class MainWindow : Window
     {
         LoadSettings();
         ApplySavedAudioSettings();
-        LoadLibraryCache();
+        await ShowLibraryLoadingAsync(
+            LocalizationService.Select("音楽ファイルを読み込んでいます…", "Loading music files…"),
+            LocalizationService.Select("保存済みライブラリを復元しています", "Restoring the saved library"));
+        await LoadLibraryCacheAsync();
+        HideLibraryLoading();
         var args = Environment.GetCommandLineArgs();
-        if (args.Length > 1 && File.Exists(args[1])) OpenAlbum(args[1]);
+        if (args.Length > 1 && File.Exists(args[1])) await OpenAlbumAsync(args[1]);
         else if (_folders.Count > 0 && (_albums.Count == 0 || _cacheNeedsRefresh))
         {
             await ScanFoldersAsync();
@@ -194,7 +198,7 @@ public partial class MainWindow : Window
         else if (_albums.Count > 0) RestoreLastSelection();
     }
 
-    private void Open_Click(object sender, RoutedEventArgs e)
+    private async void Open_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog
         {
@@ -203,17 +207,22 @@ public partial class MainWindow : Window
                 "対応音楽ファイル (*.zip.mp3;*.zip;*.mp3;*.wav;*.flac;*.m4a)|*.zip.mp3;*.zip;*.mp3;*.wav;*.flac;*.m4a|すべてのファイル (*.*)|*.*",
                 "Supported music files (*.zip.mp3;*.zip;*.mp3;*.wav;*.flac;*.m4a)|*.zip.mp3;*.zip;*.mp3;*.wav;*.flac;*.m4a|All files (*.*)|*.*")
         };
-        if (dialog.ShowDialog(this) == true) OpenAlbum(dialog.FileName);
+        if (dialog.ShowDialog(this) == true) await OpenAlbumAsync(dialog.FileName);
     }
 
-    private void OpenAlbum(string path)
+    private async Task OpenAlbumAsync(string path)
     {
+        await ShowLibraryLoadingAsync(
+            LocalizationService.Select("音楽ファイルを読み込んでいます…", "Loading music files…"),
+            LocalizationService.Select($"解析中: {Path.GetFileName(path)}", $"Analyzing: {Path.GetFileName(path)}"));
         try
         {
             StatusText.Text = "アルバムを解析しています…";
             var standardAudio = ZipAlbumReader.IsStandardAudioPath(path);
             var albumPath = standardAudio ? Path.GetDirectoryName(Path.GetFullPath(path))! : path;
-            var album = standardAudio ? ZipAlbumReader.OpenFolder(albumPath) : ZipAlbumReader.Open(path);
+            var album = await Task.Run(() => standardAudio
+                ? ZipAlbumReader.OpenFolder(albumPath)
+                : ZipAlbumReader.Open(path));
             var item = new AlbumListItem(album);
             var existing = _albums.FirstOrDefault(a => string.Equals(a.Album.Path, albumPath, StringComparison.OrdinalIgnoreCase));
             if (existing is null) { InsertAlbumSorted(item); existing = item; }
@@ -231,6 +240,31 @@ public partial class MainWindow : Window
             StatusText.Text = "読み込みに失敗しました";
             MessageBox.Show(this, ex.Message, "音楽ファイルを開けません", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
+        finally { HideLibraryLoading(); }
+    }
+
+    private async Task ShowLibraryLoadingAsync(string title, string detail)
+    {
+        LibraryLoadingTitle.Text = title;
+        LibraryLoadingDetail.Text = detail;
+        LibraryLoadingOverlay.Visibility = Visibility.Visible;
+        StatusText.Text = detail;
+        Mouse.OverrideCursor = Cursors.Wait;
+        // Allow the overlay to reach the compositor before any parsing or
+        // filesystem enumeration begins.
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+    }
+
+    private void UpdateLibraryLoading(string detail)
+    {
+        LibraryLoadingDetail.Text = detail;
+        StatusText.Text = detail;
+    }
+
+    private void HideLibraryLoading()
+    {
+        LibraryLoadingOverlay.Visibility = Visibility.Collapsed;
+        Mouse.OverrideCursor = null;
     }
 
     private void SetCurrentAlbum(ZipAlbum album)
@@ -411,6 +445,9 @@ public partial class MainWindow : Window
         _albumPaths.Clear();
         AlbumTitleText.Text = "ライブラリをスキャン中";
         AlbumInfoText.Text = "登録フォルダからZIP.MP3・MP3・WAV・FLAC・M4Aを検索しています…";
+        await ShowLibraryLoadingAsync(
+            LocalizationService.Select("音楽ファイルを読み込んでいます…", "Loading music files…"),
+            LocalizationService.Select("登録フォルダを確認しています", "Checking registered folders"));
 
         try
         {
@@ -423,7 +460,7 @@ public partial class MainWindow : Window
                     InsertAlbumSorted(update.Album);
                     if (AlbumList.SelectedItem is null) AlbumList.SelectedItem = update.Album;
                 }
-                StatusText.Text = update.Message;
+                UpdateLibraryLoading(update.Message);
             });
             var found = await Task.Run(() =>
             {
@@ -448,6 +485,10 @@ public partial class MainWindow : Window
         {
             StatusText.Text = "スキャン中にエラーが発生しました";
             MessageBox.Show(this, ex.Message, "スキャンエラー", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            if (scanGeneration == _scanGeneration) HideLibraryLoading();
         }
     }
 
@@ -788,6 +829,70 @@ public partial class MainWindow : Window
         if (_album is null || _album.Tracks.Count == 0) return;
         TrackGrid.SelectedIndex = 0;
         PlayTrack(0);
+    }
+
+    private void OpenAlbumBrowser_Click(object sender, RoutedEventArgs e)
+    {
+        var visibleAlbums = _albumView.Cast<object>().OfType<AlbumListItem>().ToList();
+        if (visibleAlbums.Count == 0) return;
+        var selectedPath = (AlbumList.SelectedItem as AlbumListItem)?.Album.Path ?? _album?.Path;
+        var selected = visibleAlbums.FirstOrDefault(album =>
+            string.Equals(album.Album.Path, selectedPath, StringComparison.OrdinalIgnoreCase)) ?? visibleAlbums[0];
+        selected.EnsureCaseArtworkLoaded(640);
+        var items = visibleAlbums.Select(CreateAlbumBrowserItem).ToList();
+        AlbumBrowserPlaybackState BrowserPlaybackState()
+        {
+            ZipTrack? track = _playingAlbum is not null && _currentIndex >= 0 && _currentIndex < _playingAlbum.Tracks.Count
+                ? _playingAlbum.Tracks[_currentIndex]
+                : TrackGrid.SelectedItem as ZipTrack ?? _album?.Tracks.FirstOrDefault();
+            var title = track is null ? LocalizationService.Select("停止中", "Stopped")
+                : string.IsNullOrWhiteSpace(track.Artist) ? track.Title : $"{track.Title}  •  {track.Artist}";
+            return new AlbumBrowserPlaybackState(title,
+                _output?.PlaybackState == PlaybackState.Playing,
+                track is not null,
+                VolumeSlider.Value);
+        }
+        var browser = new AlbumLibraryBrowserWindow(items, selected.Album.Path, BrowserPlaybackState) { Owner = this };
+
+        void SelectAlbum(string key)
+        {
+            var item = _albums.FirstOrDefault(album =>
+                string.Equals(album.Album.Path, key, StringComparison.OrdinalIgnoreCase));
+            if (item is null) return;
+            AlbumList.SelectedItem = item;
+            SetCurrentAlbum(item.Album);
+        }
+
+        browser.SelectionChanged += (_, args) => SelectAlbum(args.Item.Key);
+        browser.ItemActivated += (_, args) =>
+        {
+            SelectAlbum(args.Item.Key);
+            if (_album is null || _album.Tracks.Count == 0) return;
+            TrackGrid.SelectedIndex = 0;
+            PlayTrack(0);
+        };
+        browser.PreviousTrackRequested += (_, _) => Previous_Click(browser, new RoutedEventArgs());
+        browser.PlayPauseRequested += (_, _) => PlayPause_Click(browser, new RoutedEventArgs());
+        browser.NextTrackRequested += (_, _) => Next_Click(browser, new RoutedEventArgs());
+        browser.VolumeChangedRequested += (_, args) => VolumeSlider.Value = args.Volume;
+        browser.ShowDialog();
+        if (browser.SelectedKey is { } key) SelectAlbum(key);
+        Focus();
+    }
+
+    private static AlbumLibraryBrowserItem CreateAlbumBrowserItem(AlbumListItem album)
+    {
+        JewelCaseCoverFlowItem CreateCaseItem() => new(album.Album.Path, album.Title,
+            album.Artist == "アーティスト不明" ? LocalizationService.Select("アーティスト不明", "Unknown Artist") : album.Artist,
+            album.SourceBadge, album.TrayColorMode, album.CaseFrontThumbnail ?? album.CoverThumbnail,
+            album.InsideFrontThumbnail, album.BackCoverThumbnail, album.SpineThumbnail,
+            album.RightSpineThumbnail, album.InlayThumbnail, album.DiscThumbnail, album.IsPlaying)
+        { LoadBooklet = album.HasFrontSpread ? album.LoadBooklet : null, SpineCard = album.SpineCardThumbnail };
+        return new AlbumLibraryBrowserItem(CreateCaseItem(), album.CoverThumbnail, async (width, cancellationToken) =>
+        {
+            await album.EnsureCaseArtworkLoadedAsync(width, cancellationToken);
+            return CreateCaseItem();
+        });
     }
 
     private void AlbumList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -1164,6 +1269,60 @@ public partial class MainWindow : Window
         VisualizerModeCombo.SelectedItem = VisualizerModeCombo.Items.OfType<System.Windows.Controls.ComboBoxItem>()
             .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), _settings.VisualizerMode, StringComparison.OrdinalIgnoreCase))
             ?? VisualizerModeCombo.Items[1];
+    }
+
+    private async Task LoadLibraryCacheAsync()
+    {
+        try
+        {
+            var sourcePath = File.Exists(LibraryPath) ? LibraryPath
+                : File.Exists(PartialLibraryPath) ? PartialLibraryPath : null;
+            if (sourcePath is null) return;
+            var cache = await Task.Run(() =>
+                JsonSerializer.Deserialize<LibraryCache>(File.ReadAllText(sourcePath)));
+            if (cache is null || cache.Version < 10)
+            {
+                _cacheNeedsRefresh = true;
+                return;
+            }
+            _libraryCacheComplete = cache.IsComplete;
+            _hasCompleteLibraryCache = cache.IsComplete
+                && string.Equals(sourcePath, LibraryPath, StringComparison.OrdinalIgnoreCase);
+            _cacheNeedsRefresh = cache.Version < CurrentLibraryCacheVersion || !cache.IsComplete;
+            _loadingCache = true;
+            var total = cache.Albums.Count;
+            var restored = 0;
+            foreach (var album in cache.Albums)
+            {
+                var exists = album.Tracks.FirstOrDefault()?.IsArchiveEntry == true
+                    ? File.Exists(album.Path) : Directory.Exists(album.Path);
+                if (exists && album.Tracks.Count > 0) InsertAlbumSorted(new AlbumListItem(album));
+                restored++;
+                if (restored % 12 != 0 && restored != total) continue;
+                UpdateLibraryLoading(LocalizationService.Select(
+                    $"保存済みライブラリを復元中 {restored}/{total}",
+                    $"Restoring saved library {restored}/{total}"));
+                // Batch UI insertion so the progress indicator and window keep
+                // repainting even with a very large cached music library.
+                await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
+            }
+            _loadingCache = false;
+            if (_albums.Count > 0)
+            {
+                AlbumTitleText.Text = "音楽ライブラリ";
+                AlbumInfoText.Text = _libraryCacheComplete
+                    ? $"保存済みアルバム {_albums.Count}件  •  再スキャンで更新"
+                    : $"解析途中のアルバム {_albums.Count}件  •  設定から再スキャンで更新";
+                StatusText.Text = _libraryCacheComplete
+                    ? "前回のライブラリを復元しました"
+                    : "前回終了時までに解析できたライブラリを復元しました";
+            }
+        }
+        catch
+        {
+            _loadingCache = false;
+            StatusText.Text = "保存済みライブラリを読み込めませんでした";
+        }
     }
 
     private void LoadLibraryCache()
@@ -4126,7 +4285,7 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    private void Window_Drop(object sender, DragEventArgs e)
+    private async void Window_Drop(object sender, DragEventArgs e)
     {
         if (e.Data.GetData(DataFormats.FileDrop) is not string[] files || files.Length == 0) return;
         if (Directory.Exists(files[0]))
@@ -4137,7 +4296,7 @@ public partial class MainWindow : Window
             SaveSettings();
             _ = ScanFoldersAsync();
         }
-        else OpenAlbum(files[0]);
+        else await OpenAlbumAsync(files[0]);
     }
 
     private void Window_KeyDown(object sender, KeyEventArgs e)
