@@ -30,7 +30,7 @@ CDの音楽だけでなく、ジャケット、Spine Card（帯）、ブック�
 
 ## ダウンロードと起動
 
-[GitHub Releases](https://github.com/kksszz/zip-mp3-player-and-manager-plus/releases) の
+[GitHub Releases](https://github.com/kksszz/virtual-cd-collection-studio/releases) の
 Windows x64用ZIPを展開し、`Virtual CD Collection Studio.exe` を起動してください。
 配布版には.NET実行環境を同梱しています。更新前に起動中の旧版を終了してください。
 設定・履歴は既存のデータ保存先を引き続き使用します。
