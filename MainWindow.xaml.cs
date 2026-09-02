@@ -12,6 +12,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using MessageBox = ZipMp3Player.LocalizedMessageBox;
@@ -45,6 +46,7 @@ public partial class MainWindow : Window
     private bool _shuffle;
     private RepeatMode _repeat;
     private readonly Random _random = new();
+    private Func<bool>? _tryAdvanceAttractMode;
     private readonly double[] _eqGains = new double[10];
     private bool _applyingEqPreset;
     private double _playbackSpeed = 1.0;
@@ -109,7 +111,7 @@ public partial class MainWindow : Window
     private double _activeUsageSessionSeconds;
     private bool _activeUsagePlayCommitted;
     private PlayerSettings _settings = new();
-    private string _applicationTitle = "zip.mp3 Player and Manager Plus";
+    private string _applicationTitle = "Virtual CD Collection Studio";
     private bool _loadingCache;
     private bool _dataRestorePendingRestart;
     private bool _forceClose;
@@ -122,6 +124,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _coverFlowHighResolutionCancellation;
     private AlbumSortMode _albumSortMode = AlbumSortMode.Artist;
     private ImagePanelLayout _imagePanelLayout = ImagePanelLayout.Bottom;
+    private bool _lyricsPanelExpanded = true;
     private const int CurrentLibraryCacheVersion = 14;
     private static readonly string DataDirectory = Environment.GetEnvironmentVariable("ZIPMP3PLAYER_DATA_DIR")
         ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZipMp3Player");
@@ -140,12 +143,18 @@ public partial class MainWindow : Window
         LocalizationService.InitializeFromSettings(SettingsPath);
         InitializeComponent();
         LocalizationService.Apply(this);
+        AlbumCoverFlow.PlaybackActiveProvider = IsAlbumActivelyPlaying;
+        AlbumCoverFlow.PlaybackStateProvider = GetJewelCasePlaybackState;
+        AlbumCoverFlow.PreviousTrackRequested += (_, _) => Previous_Click(AlbumCoverFlow, new RoutedEventArgs());
+        AlbumCoverFlow.PlayPauseRequested += (_, _) => PlayPause_Click(AlbumCoverFlow, new RoutedEventArgs());
+        AlbumCoverFlow.NextTrackRequested += (_, _) => Next_Click(AlbumCoverFlow, new RoutedEventArgs());
+        AlbumCoverFlow.VolumeChangedRequested += (_, args) => VolumeSlider.Value = args.Volume;
         _usageStore = new PlaybackUsageStore(UsagePath);
         _usageStore.Load();
         _favoritesStore = new FavoritesStore(FavoritesPath);
         _favoritesStore.Load();
         var appVersion = typeof(MainWindow).Assembly.GetName().Version;
-        _applicationTitle = appVersion is null ? "zip.mp3 Player and Manager Plus" : $"zip.mp3 Player and Manager Plus v{appVersion.Major}.{appVersion.Minor}";
+        _applicationTitle = appVersion is null ? "Virtual CD Collection Studio" : $"Virtual CD Collection Studio v{appVersion.Major}.{appVersion.Minor}";
         Title = _applicationTitle;
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
         _timer.Tick += (_, _) => UpdatePosition();
@@ -673,7 +682,8 @@ public partial class MainWindow : Window
                 album.SourceBadge, album.TrayColorMode, album.CaseFrontThumbnail, album.InsideFrontThumbnail,
                 album.BackCoverThumbnail, album.SpineThumbnail,
                 album.RightSpineThumbnail, album.InlayThumbnail, album.DiscThumbnail, album.IsPlaying)
-                { LoadBooklet = album.HasFrontSpread ? album.LoadBooklet : null, SpineCard = album.SpineCardThumbnail })
+                { LoadBooklet = album.HasFrontSpread ? album.LoadBooklet : null, SpineCard = album.SpineCardThumbnail,
+                    SecondDiscImage = album.SecondDiscThumbnail })
             .ToList();
         AlbumCoverFlow.SetItems(items, selectedPath);
     }
@@ -831,15 +841,31 @@ public partial class MainWindow : Window
         PlayTrack(0);
     }
 
+    private void AlbumCoverFlow_DiscActivated(object? sender, JewelCaseCoverFlowSelectionChangedEventArgs e)
+    {
+        if (IsAlbumActivelyPlaying(e.Item.Key))
+        {
+            StopPlayback(resetPosition: true);
+            return;
+        }
+        AlbumCoverFlow_ItemActivated(sender, e);
+    }
+
     private void OpenAlbumBrowser_Click(object sender, RoutedEventArgs e)
     {
+        var allAlbums = _albums.ToList();
+        if (allAlbums.Count == 0) return;
         var visibleAlbums = _albumView.Cast<object>().OfType<AlbumListItem>().ToList();
-        if (visibleAlbums.Count == 0) return;
         var selectedPath = (AlbumList.SelectedItem as AlbumListItem)?.Album.Path ?? _album?.Path;
         var selected = visibleAlbums.FirstOrDefault(album =>
-            string.Equals(album.Album.Path, selectedPath, StringComparison.OrdinalIgnoreCase)) ?? visibleAlbums[0];
+            string.Equals(album.Album.Path, selectedPath, StringComparison.OrdinalIgnoreCase))
+            ?? allAlbums.FirstOrDefault(album =>
+                string.Equals(album.Album.Path, selectedPath, StringComparison.OrdinalIgnoreCase))
+            ?? visibleAlbums.FirstOrDefault() ?? allAlbums[0];
         selected.EnsureCaseArtworkLoaded(640);
-        var items = visibleAlbums.Select(CreateAlbumBrowserItem).ToList();
+        // Give the browser the complete library. Its own search box receives
+        // the main-window query, so clearing it can reveal every album again.
+        var items = allAlbums.Select(CreateAlbumBrowserItem).ToList();
         AlbumBrowserPlaybackState BrowserPlaybackState()
         {
             ZipTrack? track = _playingAlbum is not null && _currentIndex >= 0 && _currentIndex < _playingAlbum.Tracks.Count
@@ -852,7 +878,11 @@ public partial class MainWindow : Window
                 track is not null,
                 VolumeSlider.Value);
         }
-        var browser = new AlbumLibraryBrowserWindow(items, selected.Album.Path, BrowserPlaybackState) { Owner = this };
+        var browserSort = _albumSortMode == AlbumSortMode.Album
+            ? AlbumBrowserSortMode.Album : AlbumBrowserSortMode.Artist;
+        var browser = new AlbumLibraryBrowserWindow(items, selected.Album.Path, BrowserPlaybackState, browserSort,
+            AlbumFilterTextBox.Text)
+        { Owner = this };
 
         void SelectAlbum(string key)
         {
@@ -871,11 +901,32 @@ public partial class MainWindow : Window
             TrackGrid.SelectedIndex = 0;
             PlayTrack(0);
         };
+        browser.DiscActivated += (_, args) =>
+        {
+            if (IsAlbumActivelyPlaying(args.Item.Key))
+            {
+                StopPlayback(resetPosition: true);
+                return;
+            }
+            SelectAlbum(args.Item.Key);
+            if (_album is null || _album.Tracks.Count == 0) return;
+            TrackGrid.SelectedIndex = 0;
+            PlayTrack(0);
+        };
         browser.PreviousTrackRequested += (_, _) => Previous_Click(browser, new RoutedEventArgs());
         browser.PlayPauseRequested += (_, _) => PlayPause_Click(browser, new RoutedEventArgs());
         browser.NextTrackRequested += (_, _) => Next_Click(browser, new RoutedEventArgs());
         browser.VolumeChangedRequested += (_, args) => VolumeSlider.Value = args.Volume;
-        browser.ShowDialog();
+        browser.AttractTrackRequested += (_, args) =>
+        {
+            SelectAlbum(args.AlbumKey);
+            if (_album is null || args.TrackIndex < 0 || args.TrackIndex >= _album.Tracks.Count) return;
+            TrackGrid.SelectedIndex = args.TrackIndex;
+            PlayTrack(_album, args.TrackIndex, forceStandardPlayback: true);
+        };
+        _tryAdvanceAttractMode = browser.AdvanceAttractMode;
+        try { browser.ShowDialog(); }
+        finally { _tryAdvanceAttractMode = null; }
         if (browser.SelectedKey is { } key) SelectAlbum(key);
         Focus();
     }
@@ -887,12 +938,13 @@ public partial class MainWindow : Window
             album.SourceBadge, album.TrayColorMode, album.CaseFrontThumbnail ?? album.CoverThumbnail,
             album.InsideFrontThumbnail, album.BackCoverThumbnail, album.SpineThumbnail,
             album.RightSpineThumbnail, album.InlayThumbnail, album.DiscThumbnail, album.IsPlaying)
-        { LoadBooklet = album.HasFrontSpread ? album.LoadBooklet : null, SpineCard = album.SpineCardThumbnail };
+        { LoadBooklet = album.HasFrontSpread ? album.LoadBooklet : null, SpineCard = album.SpineCardThumbnail,
+            SecondDiscImage = album.SecondDiscThumbnail };
         return new AlbumLibraryBrowserItem(CreateCaseItem(), album.CoverThumbnail, async (width, cancellationToken) =>
         {
             await album.EnsureCaseArtworkLoadedAsync(width, cancellationToken);
             return CreateCaseItem();
-        });
+        }, album.IsFavorite, album.Album.Tracks.Count);
     }
 
     private void AlbumList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -1120,7 +1172,8 @@ public partial class MainWindow : Window
                 item.RightSpineThumbnail,
                 item.InlayThumbnail,
                 item.DiscThumbnail,
-                item.IsPlaying) { LoadBooklet = item.HasFrontSpread ? item.LoadBooklet : null, SpineCard = item.SpineCardThumbnail };
+                item.IsPlaying) { LoadBooklet = item.HasFrontSpread ? item.LoadBooklet : null, SpineCard = item.SpineCardThumbnail,
+                    SecondDiscImage = item.SecondDiscThumbnail };
 
             StatusText.Text = LocalizationService.Select(
                 $"3Dケースを表示しています: {item.Title}",
@@ -1129,7 +1182,17 @@ public partial class MainWindow : Window
             // wait cursor before entering the modal full-screen viewer; otherwise
             // it remains a spinning busy cursor until that viewer is closed.
             Mouse.OverrideCursor = null;
-            JewelCaseCoverFlow.ShowItemFullScreen(flowItem, this);
+            JewelCaseCoverFlow.ShowItemFullScreen(flowItem, this,
+                activated => AlbumCoverFlow_ItemActivated(this,
+                    new JewelCaseCoverFlowSelectionChangedEventArgs(activated)),
+                IsAlbumActivelyPlaying,
+                activated => AlbumCoverFlow_DiscActivated(this,
+                    new JewelCaseCoverFlowSelectionChangedEventArgs(activated)),
+                playbackStateProvider: GetJewelCasePlaybackState,
+                previousTrackRequested: () => Previous_Click(this, new RoutedEventArgs()),
+                playPauseRequested: () => PlayPause_Click(this, new RoutedEventArgs()),
+                nextTrackRequested: () => Next_Click(this, new RoutedEventArgs()),
+                volumeChangedRequested: value => VolumeSlider.Value = value);
         }
         catch (Exception ex)
         {
@@ -1204,8 +1267,12 @@ public partial class MainWindow : Window
                 var imagePanelTotal = TrackContentRow.ActualHeight + ImageBottomRow.ActualHeight;
                 _settings.ImageBottomRatio = Math.Clamp(ImageBottomRow.ActualHeight / imagePanelTotal, 0.30, 0.75);
             }
-            var imageLyricsWidth = ArtworkColumn.ActualWidth + LyricsColumn.ActualWidth;
-            if (imageLyricsWidth > 0) _settings.ImageLyricsRatio = Math.Clamp(ArtworkColumn.ActualWidth / imageLyricsWidth, 0.15, 0.85);
+            if (_lyricsPanelExpanded)
+            {
+                var imageLyricsWidth = ArtworkColumn.ActualWidth + LyricsColumn.ActualWidth;
+                if (imageLyricsWidth > 0) _settings.ImageLyricsRatio = Math.Clamp(ArtworkColumn.ActualWidth / imageLyricsWidth, 0.15, 0.85);
+            }
+            _settings.LyricsPanelExpanded = _lyricsPanelExpanded;
             _settings.LyricsAutoScroll = LyricsAutoScrollCheck.IsChecked == true;
             _settings.ExtensionPanelExpanded = ExtensionPanel.Visibility == Visibility.Visible;
             if (_settings.ExtensionPanelExpanded && ExtensionColumn.ActualWidth >= 240)
@@ -1264,6 +1331,7 @@ public partial class MainWindow : Window
         _imagePanelLayout = ImagePanelLayout.Bottom;
         _settings.ImagePanelLayout = ImagePanelLayout.Bottom.ToString();
         ApplyImagePanelLayout();
+        _lyricsPanelExpanded = _settings.LyricsPanelExpanded;
         ApplyImageLyricsRatio();
         LyricsAutoScrollCheck.IsChecked = _settings.LyricsAutoScroll;
         VisualizerModeCombo.SelectedItem = VisualizerModeCombo.Items.OfType<System.Windows.Controls.ComboBoxItem>()
@@ -1610,6 +1678,13 @@ public partial class MainWindow : Window
                 }
                 return;
             }
+            if (_tryAdvanceAttractMode?.Invoke() == true)
+            {
+                StopPlayback(resetPosition: true);
+                PlaybackStatusText.Text = LocalizationService.Select(
+                    "Attractモード：次のCDを選んでいます…", "Attract: choosing the next CD…");
+                return;
+            }
             PlayFollowingTrack(naturalEnd: true);
         });
     }
@@ -1870,6 +1945,30 @@ public partial class MainWindow : Window
         }
         TrackGrid.Items.Refresh();
         QueueCoverFlowRefresh();
+    }
+
+    private bool IsAlbumActivelyPlaying(string albumPath) =>
+        _output?.PlaybackState == PlaybackState.Playing
+        && _playingAlbum is not null
+        && string.Equals(_playingAlbum.Path, albumPath, StringComparison.OrdinalIgnoreCase);
+
+    private JewelCasePlaybackState GetJewelCasePlaybackState()
+    {
+        ZipTrack? track = _playingAlbum is not null
+            && _currentIndex >= 0
+            && _currentIndex < _playingAlbum.Tracks.Count
+            ? _playingAlbum.Tracks[_currentIndex]
+            : null;
+        var title = track is null
+            ? LocalizationService.Select("停止中", "Stopped")
+            : string.IsNullOrWhiteSpace(track.Artist)
+                ? track.Title
+                : $"{track.Title}  •  {track.Artist}";
+        return new JewelCasePlaybackState(
+            title,
+            _output?.PlaybackState == PlaybackState.Playing,
+            track is not null && _output is not null,
+            VolumeSlider.Value);
     }
 
     private void Shuffle_Click(object sender, RoutedEventArgs e)
@@ -3414,6 +3513,9 @@ public partial class MainWindow : Window
     private static string GetArtworkRotationsPath(string albumPath) =>
         Path.Combine(GetDownloadedArtworkDirectory(albumPath), "artwork-rotations.json");
 
+    private static string GetSpineCardFoldsPath(string albumPath) =>
+        Path.Combine(GetDownloadedArtworkDirectory(albumPath), "spine-card-folds.json");
+
     private static string GetCaseAppearancePath(string albumPath) =>
         Path.Combine(GetDownloadedArtworkDirectory(albumPath), "case-appearance.json");
 
@@ -3488,6 +3590,35 @@ public partial class MainWindow : Window
         File.WriteAllText(path, JsonSerializer.Serialize(rotations, new JsonSerializerOptions { WriteIndented = true }));
     }
 
+    private static Dictionary<string, SpineCardFoldSetting> LoadSpineCardFolds(string albumPath)
+    {
+        try
+        {
+            var path = GetSpineCardFoldsPath(albumPath);
+            if (!File.Exists(path)) return new Dictionary<string, SpineCardFoldSetting>(StringComparer.OrdinalIgnoreCase);
+            var stored = JsonSerializer.Deserialize<Dictionary<string, SpineCardFoldSetting>>(File.ReadAllText(path)) ?? [];
+            return new Dictionary<string, SpineCardFoldSetting>(stored.Where(pair => pair.Value.Left is > 0 and < 1
+                    && pair.Value.Right > pair.Value.Left && pair.Value.Right < 1)
+                .ToDictionary(pair => pair.Key, pair => pair.Value), StringComparer.OrdinalIgnoreCase);
+        }
+        catch { return new Dictionary<string, SpineCardFoldSetting>(StringComparer.OrdinalIgnoreCase); }
+    }
+
+    private static void SaveSpineCardFolds(string albumPath, Dictionary<string, SpineCardFoldSetting> folds)
+    {
+        var path = GetSpineCardFoldsPath(albumPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, JsonSerializer.Serialize(folds, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private static BitmapSource ApplySpineCardFoldOverride(string albumPath, AlbumImageSource source, BitmapSource bitmap)
+    {
+        var folds = LoadSpineCardFolds(albumPath);
+        if (folds.TryGetValue(source.RoleKey, out var fold))
+            SpineCardArtwork.SetManualFolds(bitmap, fold.Left, fold.Right);
+        return bitmap;
+    }
+
     private sealed class CaseAppearanceSettings
     {
         public string TrayColor { get; set; } = "Auto";
@@ -3523,9 +3654,15 @@ public partial class MainWindow : Window
         if (Regex.IsMatch(name, @"liner[\s_-]*notes?")
             || name.Contains("ライナーノー", StringComparison.Ordinal)) return "LinerNotes";
         if (Regex.IsMatch(name, @"(?:^|[\s_\-])pages?(?:$|[\s_\-\d])") || name.Contains("冊子ページ", StringComparison.Ordinal)) return "Page";
+        if (Regex.IsMatch(name, @"(?:^|[\s_-])flyers?(?:$|[\s_\d-])")
+            || name.Contains("フライヤー", StringComparison.Ordinal) || name.Contains("チラシ", StringComparison.Ordinal)) return "Flyer";
+        if (Regex.IsMatch(name, @"(?:^|[\s_-])posters?(?:$|[\s_\d-])")
+            || name.Contains("ポスター", StringComparison.Ordinal)) return "Poster";
         if (name.Contains("spine", StringComparison.Ordinal) || name.Contains("背表紙", StringComparison.Ordinal)) return "Spine";
         if (name.Contains("inlay", StringComparison.Ordinal) || name.Contains("inray", StringComparison.Ordinal)
             || name.Contains("tray", StringComparison.Ordinal) || name.Contains("インレイ", StringComparison.Ordinal)) return "Inlay";
+        if (Regex.IsMatch(name, @"(?:2[\s_-]*discs?|discs?[\s_-]*2|two[\s_-]*discs?)")
+            || name.Contains("2枚", StringComparison.Ordinal)) return "Disc2";
         if (name.Contains("disc", StringComparison.Ordinal) || name.Contains("disk", StringComparison.Ordinal)
             || name.Contains("cd_label", StringComparison.Ordinal) || name.Contains("レーベル", StringComparison.Ordinal)) return "Disc";
         if (name.Contains("cover_back", StringComparison.Ordinal) || name.Contains("cover-back", StringComparison.Ordinal)
@@ -3550,6 +3687,16 @@ public partial class MainWindow : Window
                 .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), selectedRole, StringComparison.OrdinalIgnoreCase))
                 ?? ArtworkRoleCombo.Items[0];
             ArtworkRoleCombo.IsEnabled = _selectedAlbumImageIndex >= 0 && _selectedAlbumImageIndex < _albumImages.Count;
+            if (AdjustSpineCardFoldsButton is not null)
+            {
+                var showSpineAdjustment = _album is not null
+                    && _selectedAlbumImageIndex >= 0 && _selectedAlbumImageIndex < _albumImages.Count
+                    && string.Equals(GetEffectiveArtworkRole(_albumImages[_selectedAlbumImageIndex], _currentArtworkRoles),
+                        "SpineCard", StringComparison.OrdinalIgnoreCase);
+                AdjustSpineCardFoldsButton.Visibility = showSpineAdjustment
+                    ? Visibility.Visible : Visibility.Collapsed;
+                AdjustSpineCardFoldsButton.IsEnabled = showSpineAdjustment;
+            }
         }
         finally { _updatingArtworkRoleCombo = false; }
     }
@@ -3566,6 +3713,7 @@ public partial class MainWindow : Window
         try
         {
             SaveArtworkRoles(_album.Path, _currentArtworkRoles);
+            UpdateArtworkRoleCombo();
             UpdateTrayColorCombo();
             var item = _albums.FirstOrDefault(candidate =>
                 string.Equals(candidate.Album.Path, _album.Path, StringComparison.OrdinalIgnoreCase));
@@ -3578,6 +3726,40 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             MessageBox.Show(this, ex.Message, "画像の用途を保存できません", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void AdjustSpineCardFolds_Click(object sender, RoutedEventArgs e)
+    {
+        if (_album is null || _selectedAlbumImageIndex < 0 || _selectedAlbumImageIndex >= _albumImages.Count) return;
+        var source = _albumImages[_selectedAlbumImageIndex];
+        if (!string.Equals(GetEffectiveArtworkRole(source, _currentArtworkRoles), "SpineCard", StringComparison.OrdinalIgnoreCase)) return;
+        try
+        {
+            var bitmap = LoadBitmap(source, 3000);
+            var folds = LoadSpineCardFolds(_album.Path);
+            var hasManual = folds.TryGetValue(source.RoleKey, out var manual);
+            var automatic = SpineCardArtwork.GetRegions(bitmap);
+            var left = hasManual ? manual!.Left : automatic.Spine.X / (double)bitmap.PixelWidth;
+            var right = hasManual ? manual!.Right : automatic.Front.X / (double)bitmap.PixelWidth;
+            var dialog = new SpineCardFoldEditorWindow(bitmap, left, right, hasManual) { Owner = this };
+            if (dialog.ShowDialog() != true) return;
+            if (dialog.UseAutomatic) folds.Remove(source.RoleKey);
+            else folds[source.RoleKey] = new SpineCardFoldSetting { Left = dialog.LeftFold, Right = dialog.RightFold };
+            SaveSpineCardFolds(_album.Path, folds);
+            var item = _albums.FirstOrDefault(candidate =>
+                string.Equals(candidate.Album.Path, _album.Path, StringComparison.OrdinalIgnoreCase));
+            item?.RefreshImageCount();
+            item?.EnsureCaseArtworkLoaded(1200);
+            QueueCoverFlowRefresh();
+            StatusText.Text = dialog.UseAutomatic
+                ? LocalizationService.Select("Spine Cardの折り目を自動検出へ戻しました", "Spine Card folds returned to automatic detection")
+                : LocalizationService.Select("Spine Cardの折り目を保存しました", "Spine Card folds saved");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, LocalizationService.Select("折り目を保存できません", "Could Not Save Folds"),
+                MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 
@@ -3780,10 +3962,46 @@ public partial class MainWindow : Window
 
     private void ApplyImageLyricsRatio()
     {
-        if (ArtworkColumn is null || LyricsColumn is null) return;
+        if (ArtworkColumn is null || LyricsColumn is null || ImageLyricsSplitterColumn is null
+            || ImageLyricsSplitter is null || LyricsContent is null || LyricsPanelToggleButton is null) return;
+        if (!_lyricsPanelExpanded)
+        {
+            ArtworkColumn.Width = new GridLength(1, GridUnitType.Star);
+            LyricsColumn.MinWidth = 0;
+            LyricsColumn.Width = new GridLength(0);
+            // Keep only a narrow claw in the former divider, matching the
+            // collapsible equalizer panel at the right edge of the window.
+            ImageLyricsSplitterColumn.Width = new GridLength(24);
+            ImageLyricsSplitter.Visibility = Visibility.Collapsed;
+            LyricsContent.Visibility = Visibility.Collapsed;
+            LyricsPanelToggleButton.Content = "◀";
+            LyricsPanelToggleButton.ToolTip = LocalizationService.Select(
+                "歌詞欄を表示して画像との分割表示に戻す", "Show lyrics and restore the split view");
+            return;
+        }
         var ratio = Math.Clamp(_settings.ImageLyricsRatio, 0.15, 0.85);
+        LyricsColumn.MinWidth = 180;
         ArtworkColumn.Width = new GridLength(ratio, GridUnitType.Star);
         LyricsColumn.Width = new GridLength(1 - ratio, GridUnitType.Star);
+        ImageLyricsSplitterColumn.Width = new GridLength(8);
+        ImageLyricsSplitter.Visibility = Visibility.Visible;
+        LyricsContent.Visibility = Visibility.Visible;
+        LyricsPanelToggleButton.Content = "▶";
+        LyricsPanelToggleButton.ToolTip = LocalizationService.Select(
+            "歌詞欄を折りたたんでアルバム画像を拡大", "Hide lyrics and enlarge the album artwork");
+    }
+
+    private void LyricsPanelToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (_lyricsPanelExpanded)
+        {
+            var total = ArtworkColumn.ActualWidth + LyricsColumn.ActualWidth;
+            if (total > 0) _settings.ImageLyricsRatio = Math.Clamp(ArtworkColumn.ActualWidth / total, 0.15, 0.85);
+        }
+        _lyricsPanelExpanded = !_lyricsPanelExpanded;
+        _settings.LyricsPanelExpanded = _lyricsPanelExpanded;
+        ApplyImageLyricsRatio();
+        if (IsLoaded) SaveSettings();
     }
 
     private void ImageLyricsSplitter_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e)
@@ -4074,6 +4292,8 @@ public partial class MainWindow : Window
         if (degrees == 0) _currentArtworkRotations.Remove(source.RoleKey);
         else _currentArtworkRotations[source.RoleKey] = degrees;
         SaveArtworkRotations(_album.Path, _currentArtworkRotations);
+        var folds = LoadSpineCardFolds(_album.Path);
+        if (folds.Remove(source.RoleKey)) SaveSpineCardFolds(_album.Path, folds);
         var updated = source with { RotationDegrees = degrees };
         for (var index = 0; index < _albumImages.Count; index++)
             if (string.Equals(_albumImages[index].RoleKey, source.RoleKey, StringComparison.OrdinalIgnoreCase))
@@ -4153,6 +4373,8 @@ public partial class MainWindow : Window
                 Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
             if (_currentArtworkRoles.Remove(source.RoleKey)) SaveArtworkRoles(_album.Path, _currentArtworkRoles);
             if (_currentArtworkRotations.Remove(source.RoleKey)) SaveArtworkRotations(_album.Path, _currentArtworkRotations);
+            var folds = LoadSpineCardFolds(_album.Path);
+            if (folds.Remove(source.RoleKey)) SaveSpineCardFolds(_album.Path, folds);
             var item = _albums.FirstOrDefault(candidate =>
                 string.Equals(candidate.Album.Path, _album.Path, StringComparison.OrdinalIgnoreCase));
             item?.RefreshImageCount();
@@ -4210,6 +4432,8 @@ public partial class MainWindow : Window
         RotateAlbumImageLeftButton.IsEnabled = false;
         RotateAlbumImageRightButton.IsEnabled = false;
         ResetAlbumImageRotationButton.IsEnabled = false;
+        AdjustSpineCardFoldsButton.IsEnabled = false;
+        AdjustSpineCardFoldsButton.Visibility = Visibility.Collapsed;
         ArtworkRoleCombo.IsEnabled = false;
         TrayColorCombo.IsEnabled = _album is not null;
     }
@@ -4376,6 +4600,7 @@ public partial class MainWindow : Window
         public string ImagePanelLayout { get; set; } = "Bottom";
         public double ImageBottomRatio { get; set; } = 0.56;
         public double ImageLyricsRatio { get; set; } = 0.6;
+        public bool LyricsPanelExpanded { get; set; } = true;
         public bool LyricsAutoScroll { get; set; } = true;
         public bool ExtensionPanelExpanded { get; set; } = true;
         public double ExtensionPanelWidth { get; set; } = 300;
@@ -4431,6 +4656,7 @@ public partial class MainWindow : Window
         private BitmapSource? _rightSpineThumbnail;
         private BitmapSource? _inlayThumbnail;
         private BitmapSource? _discThumbnail;
+        private BitmapSource? _secondDiscThumbnail;
         private BitmapSource? _spineCardThumbnail;
         private BitmapSource? _mediumCaseFrontThumbnail;
         private BitmapSource? _mediumInsideFrontThumbnail;
@@ -4439,6 +4665,7 @@ public partial class MainWindow : Window
         private BitmapSource? _mediumRightSpineThumbnail;
         private BitmapSource? _mediumInlayThumbnail;
         private BitmapSource? _mediumDiscThumbnail;
+        private BitmapSource? _mediumSecondDiscThumbnail;
         private BitmapSource? _mediumSpineCardThumbnail;
         private bool _caseArtworkLoaded;
         private int _caseArtworkDecodeWidth;
@@ -4459,6 +4686,7 @@ public partial class MainWindow : Window
         public BitmapSource? RightSpineThumbnail => _rightSpineThumbnail;
         public BitmapSource? InlayThumbnail => _inlayThumbnail;
         public BitmapSource? DiscThumbnail => _discThumbnail;
+        public BitmapSource? SecondDiscThumbnail => _secondDiscThumbnail;
         public BitmapSource? SpineCardThumbnail => _spineCardThumbnail;
         public int CaseArtworkDecodeWidth => _caseArtworkDecodeWidth;
         public bool HasCoverThumbnail => _coverThumbnail is not null;
@@ -4470,7 +4698,11 @@ public partial class MainWindow : Window
         {
             var roles = LoadArtworkRoles(Album.Path);
             var sources = GetCaseArtworkSources(Album, GetDownloadedArtworkDirectory(Album.Path));
-            var spread = sources.FirstOrDefault(source => GetEffectiveArtworkRole(source, roles) == "FrontSpread");
+            var spread = sources.FirstOrDefault(source => GetEffectiveArtworkRole(source, roles)
+                is "FrontSpread" or "FrontSpreadReversed" or "FrontSpreadVertical");
+            var spreadRole = spread is null ? null : GetEffectiveArtworkRole(spread, roles);
+            var verticalSpread = spreadRole == "FrontSpreadVertical";
+            var reversedSpread = spreadRole == "FrontSpreadReversed";
             var front = sources.FirstOrDefault(source => GetEffectiveArtworkRole(source, roles) == "Front");
             var frontInside = sources.FirstOrDefault(source => GetEffectiveArtworkRole(source, roles) == "FrontInside");
             if (spread is null && (front is null || frontInside is null))
@@ -4482,10 +4714,16 @@ public partial class MainWindow : Window
                 front is not null
                     ? new BookletPage(front.DisplayName, "Front", () => LoadBitmap(front, 3000))
                     : new BookletPage(LocalizationService.Select("Front（表紙）", "Front cover"), "Front",
-                        () => CropArtwork(LoadBitmap(spread!, 6000), "RightHalf"))
+                        () => CropArtwork(LoadBitmap(spread!, verticalSpread ? 3000 : 6000),
+                            verticalSpread ? "TopHalf" : reversedSpread ? "LeftHalf" : "RightHalf"))
             };
-            pages.AddRange(sources.Where(source => GetEffectiveArtworkRole(source, roles) is "Page" or "LinerNotes")
-                .OrderBy(source => GetEffectiveArtworkRole(source, roles) == "Page" ? 0 : 1)
+            pages.AddRange(sources.Where(source => GetEffectiveArtworkRole(source, roles) is "Page" or "LinerNotes" or "Flyer")
+                .OrderBy(source => GetEffectiveArtworkRole(source, roles) switch
+                {
+                    "Page" => 0,
+                    "LinerNotes" => 1,
+                    _ => 2
+                })
                 .ThenBy(source => GetAlbumImageSequence(source.DisplayName))
                 .ThenBy(source => source.DisplayName, StringComparer.CurrentCultureIgnoreCase)
                 .Select(source => new BookletPage(source.DisplayName, GetEffectiveArtworkRole(source, roles), () => LoadBitmap(source, 3000)))
@@ -4493,11 +4731,21 @@ public partial class MainWindow : Window
             pages.Add(frontInside is not null
                 ? new BookletPage(frontInside.DisplayName, "FrontInside", () => LoadBitmap(frontInside, 3000))
                 : new BookletPage(LocalizationService.Select("Front背面", "Inside front cover"), "FrontInside",
-                    () => CropArtwork(LoadBitmap(spread!, 6000), "LeftHalf")));
+                    () => CropArtwork(LoadBitmap(spread!, verticalSpread ? 3000 : 6000),
+                        verticalSpread ? "BottomHalfRotated" : reversedSpread ? "RightHalf" : "LeftHalf")));
             // When both individual sides exist, the spread scan is redundant
             // and is not even used for the opening frame.
             var openingArtwork = front is not null && frontInside is not null
-                ? LoadBitmap(front, 2400) : LoadBitmap(spread!, 2400);
+                ? LoadBitmap(front, 2400)
+                : verticalSpread
+                    ? CreateHorizontalFrontSpread(
+                        CropArtwork(LoadBitmap(spread!, 2400), "BottomHalfRotated"),
+                        CropArtwork(LoadBitmap(spread!, 2400), "TopHalf"))
+                    : reversedSpread
+                        ? CreateHorizontalFrontSpread(
+                            CropArtwork(LoadBitmap(spread!, 4800), "RightHalf"),
+                            CropArtwork(LoadBitmap(spread!, 4800), "LeftHalf"))
+                    : LoadBitmap(spread!, 2400);
             return new BookletContent(openingArtwork, pages);
         }
         public bool IsFavorite => _isFavorite;
@@ -4544,16 +4792,18 @@ public partial class MainWindow : Window
             var sources = GetCaseArtworkSources(Album, directory);
             var roles = LoadArtworkRoles(Album.Path);
             var roleSet = sources.Select(source => GetEffectiveArtworkRole(source, roles)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            HasFrontSpread = roleSet.Contains("FrontSpread") || (roleSet.Contains("Front") && roleSet.Contains("FrontInside"));
+            HasFrontSpread = roleSet.Contains("FrontSpread") || roleSet.Contains("FrontSpreadReversed")
+                || roleSet.Contains("FrontSpreadVertical")
+                || (roleSet.Contains("Front") && roleSet.Contains("FrontInside"));
             _trayColorMode = HasInlayArtwork(sources, roles)
                 ? "Clear" : LoadTrayColor(Album.Path);
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(TrayColorMode)));
             _downloadedImageCount = Directory.Exists(directory)
                 ? Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly).Count(IsAlbumImage) : 0;
             (_coverThumbnail, _coverDescription) = LoadCoverThumbnail(directory);
-            _caseFrontThumbnail = _insideFrontThumbnail = _backCoverThumbnail = _spineThumbnail = _rightSpineThumbnail = _inlayThumbnail = _discThumbnail = _spineCardThumbnail = null;
+            _caseFrontThumbnail = _insideFrontThumbnail = _backCoverThumbnail = _spineThumbnail = _rightSpineThumbnail = _inlayThumbnail = _discThumbnail = _secondDiscThumbnail = _spineCardThumbnail = null;
             _mediumCaseFrontThumbnail = _mediumInsideFrontThumbnail = _mediumBackCoverThumbnail = _mediumSpineThumbnail = _mediumRightSpineThumbnail = null;
-            _mediumInlayThumbnail = _mediumDiscThumbnail = _mediumSpineCardThumbnail = null;
+            _mediumInlayThumbnail = _mediumDiscThumbnail = _mediumSecondDiscThumbnail = _mediumSpineCardThumbnail = null;
             _caseArtworkLoaded = false;
             _caseArtworkDecodeWidth = 0;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ImageCount)));
@@ -4566,6 +4816,7 @@ public partial class MainWindow : Window
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(RightSpineThumbnail)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(InlayThumbnail)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DiscThumbnail)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SecondDiscThumbnail)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasCoverThumbnail)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CoverDescription)));
         }
@@ -4578,7 +4829,7 @@ public partial class MainWindow : Window
             _caseArtworkDecodeWidth = decodePixelWidth;
             var directory = GetDownloadedArtworkDirectory(Album.Path);
             (_caseFrontThumbnail, _insideFrontThumbnail, _backCoverThumbnail, _spineThumbnail,
-                _rightSpineThumbnail, _inlayThumbnail, _discThumbnail, _spineCardThumbnail, _)
+                _rightSpineThumbnail, _inlayThumbnail, _discThumbnail, _secondDiscThumbnail, _spineCardThumbnail, _)
                 = LoadCaseArtwork(directory, decodePixelWidth);
             if (decodePixelWidth <= 640)
             {
@@ -4589,6 +4840,7 @@ public partial class MainWindow : Window
                 _mediumRightSpineThumbnail = _rightSpineThumbnail;
                 _mediumInlayThumbnail = _inlayThumbnail;
                 _mediumDiscThumbnail = _discThumbnail;
+                _mediumSecondDiscThumbnail = _secondDiscThumbnail;
                 _mediumSpineCardThumbnail = _spineCardThumbnail;
             }
         }
@@ -4608,6 +4860,7 @@ public partial class MainWindow : Window
             _rightSpineThumbnail = artwork.RightSpine;
             _inlayThumbnail = artwork.Inlay;
             _discThumbnail = artwork.Disc;
+            _secondDiscThumbnail = artwork.SecondDisc;
             _spineCardThumbnail = artwork.SpineCard;
             _caseArtworkLoaded = true;
             _caseArtworkDecodeWidth = decodePixelWidth;
@@ -4625,13 +4878,14 @@ public partial class MainWindow : Window
                 _rightSpineThumbnail = _mediumRightSpineThumbnail;
                 _inlayThumbnail = _mediumInlayThumbnail;
                 _discThumbnail = _mediumDiscThumbnail;
+                _secondDiscThumbnail = _mediumSecondDiscThumbnail;
                 _spineCardThumbnail = _mediumSpineCardThumbnail;
                 _caseArtworkLoaded = true;
                 _caseArtworkDecodeWidth = decodePixelWidth;
             }
             else
             {
-                _caseFrontThumbnail = _insideFrontThumbnail = _backCoverThumbnail = _spineThumbnail = _rightSpineThumbnail = _inlayThumbnail = _discThumbnail = _spineCardThumbnail = null;
+                _caseFrontThumbnail = _insideFrontThumbnail = _backCoverThumbnail = _spineThumbnail = _rightSpineThumbnail = _inlayThumbnail = _discThumbnail = _secondDiscThumbnail = _spineCardThumbnail = null;
                 _caseArtworkLoaded = false;
                 _caseArtworkDecodeWidth = 0;
             }
@@ -4643,12 +4897,13 @@ public partial class MainWindow : Window
             var sources = GetCaseArtworkSources(Album, downloadedDirectory);
             var roles = LoadArtworkRoles(Album.Path);
             var frontSpread = sources.FirstOrDefault(source =>
-                string.Equals(GetEffectiveArtworkRole(source, roles), "FrontSpread", StringComparison.OrdinalIgnoreCase));
+                GetEffectiveArtworkRole(source, roles) is "FrontSpread" or "FrontSpreadReversed" or "FrontSpreadVertical");
             if (frontSpread is not null)
             {
                 try
                 {
-                    return (LoadFrontSpreadThumbnail(Album.Path, frontSpread),
+                    return (LoadFrontSpreadThumbnail(Album.Path, frontSpread,
+                            GetEffectiveArtworkRole(frontSpread, roles)),
                         $"{frontSpread.DisplayName}\n{frontSpread.Description}");
                 }
                 catch { }
@@ -4671,11 +4926,11 @@ public partial class MainWindow : Window
             return (null, "画像はありません");
         }
 
-        private static BitmapSource LoadFrontSpreadThumbnail(string albumPath, AlbumImageSource source)
+        private static BitmapSource LoadFrontSpreadThumbnail(string albumPath, AlbumImageSource source, string role)
         {
             var sourcePath = source.FilePath ?? source.ZipEntry?.SourcePath;
             var file = !string.IsNullOrWhiteSpace(sourcePath) && File.Exists(sourcePath) ? new FileInfo(sourcePath) : null;
-            var identity = string.Join('|', source.RoleKey, source.RotationDegrees,
+            var identity = string.Join('|', source.RoleKey, role, source.RotationDegrees,
                 file?.Length ?? 0, file?.LastWriteTimeUtc.Ticks ?? 0,
                 source.ZipEntry?.DataOffset ?? 0, source.ZipEntry?.CompressedSize ?? 0);
             static string Key(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..20];
@@ -4688,7 +4943,10 @@ public partial class MainWindow : Window
                 catch { }
             }
 
-            var front = CropArtwork(LoadBitmap(source, 240), "RightHalf");
+            var vertical = role == "FrontSpreadVertical";
+            var reversed = role == "FrontSpreadReversed";
+            var front = CropArtwork(LoadBitmap(source, vertical ? 120 : 240),
+                vertical ? "TopHalf" : reversed ? "LeftHalf" : "RightHalf");
             try
             {
                 Directory.CreateDirectory(cacheDirectory);
@@ -4706,11 +4964,11 @@ public partial class MainWindow : Window
 
         private (BitmapSource? Front, BitmapSource? InsideFront, BitmapSource? Back,
             BitmapSource? Spine, BitmapSource? RightSpine, BitmapSource? Inlay,
-            BitmapSource? Disc, BitmapSource? SpineCard, string Description) LoadCaseArtwork(
+            BitmapSource? Disc, BitmapSource? SecondDisc, BitmapSource? SpineCard, string Description) LoadCaseArtwork(
                 string downloadedDirectory, int targetWidth)
         {
             var sources = GetCaseArtworkSources(Album, downloadedDirectory);
-            if (sources.Count == 0) return (null, null, null, null, null, null, null, null, "画像はありません");
+            if (sources.Count == 0) return (null, null, null, null, null, null, null, null, null, "画像はありません");
 
             var roles = LoadArtworkRoles(Album.Path);
             var candidates = new List<(AlbumImageSource Source, string Role, double Aspect, bool IsManual)>();
@@ -4726,25 +4984,27 @@ public partial class MainWindow : Window
                 }
                 catch { }
             }
-            if (candidates.Count == 0) return (null, null, null, null, null, null, null, null, "画像を開けません");
+            if (candidates.Count == 0) return (null, null, null, null, null, null, null, null, null, "画像を開けません");
             var spineCardCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "SpineCard");
             // Supplementary scans remain in the gallery, but must not become
             // case textures through Front/Back/Disc aspect-ratio fallbacks.
-            candidates.RemoveAll(candidate => candidate.Role is "LinerNotes" or "SpineCard" or "Page");
+            candidates.RemoveAll(candidate => candidate.Role is "LinerNotes" or "SpineCard" or "Page" or "Flyer" or "Poster");
             if (candidates.Count == 0)
             {
                 if (spineCardCandidate.Source is null)
-                    return (null, null, null, null, null, null, null, null, "3Dケース用の画像はありません");
+                    return (null, null, null, null, null, null, null, null, null, "3Dケース用の画像はありません");
                 try
                 {
-                    return (null, null, null, null, null, null, null,
-                        LoadBitmap(spineCardCandidate.Source, targetWidth), spineCardCandidate.Source.Description);
+                    return (null, null, null, null, null, null, null, null,
+                        ApplySpineCardFoldOverride(Album.Path, spineCardCandidate.Source,
+                            LoadBitmap(spineCardCandidate.Source, targetWidth)), spineCardCandidate.Source.Description);
                 }
-                catch { return (null, null, null, null, null, null, null, null, "画像を開けません"); }
+                catch { return (null, null, null, null, null, null, null, null, null, "画像を開けません"); }
             }
 
             var insideFrontCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "FrontInside");
-            var frontSpreadCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "FrontSpread");
+            var frontSpreadCandidate = candidates.FirstOrDefault(candidate =>
+                candidate.Role is "FrontSpread" or "FrontSpreadReversed" or "FrontSpreadVertical");
             if (frontSpreadCandidate.Source is null)
                 frontSpreadCandidate = candidates.FirstOrDefault(candidate => !candidate.IsManual && candidate.Aspect >= 1.62);
             var standaloneFrontCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "Front");
@@ -4762,6 +5022,7 @@ public partial class MainWindow : Window
             var rightSpineCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "RightSpine");
             var inlayCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "Inlay");
             var discCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "Disc");
+            var twoDiscCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "Disc2");
             if (discCandidate.Source is null)
                 discCandidate = candidates.LastOrDefault(candidate => !Equals(candidate.Source, standaloneFrontCandidate.Source)
                     && !Equals(candidate.Source, frontSpreadCandidate.Source)
@@ -4775,17 +5036,23 @@ public partial class MainWindow : Window
                 {
                     // A front scan often contains the full booklet spread. Decode it at twice the
                     // requested output width so that the right-half crop retains full resolution.
-                    var isFrontSpread = candidate.Role == "FrontSpread"
+                    var isFrontSpread = candidate.Role is "FrontSpread" or "FrontSpreadReversed" or "FrontSpreadVertical"
                         || (!candidate.IsManual && candidate.Aspect >= 1.62);
-                    var decodeWidth = (role == "Front" && isFrontSpread)
-                        || role == "InsideFrontFromSpread"
+                    var isVerticalFrontSpread = candidate.Role == "FrontSpreadVertical";
+                    var isReversedFrontSpread = candidate.Role == "FrontSpreadReversed";
+                    var decodeWidth = !isVerticalFrontSpread && ((role == "Front" && isFrontSpread)
+                        || role == "InsideFrontFromSpread")
                         ? checked(targetWidth * 2)
                         : targetWidth;
                     var bitmap = LoadBitmap(candidate.Source, decodeWidth);
+                    if (role == "SpineCard")
+                        return ApplySpineCardFoldOverride(Album.Path, candidate.Source, bitmap);
                     if (role == "Front" && isFrontSpread)
-                        return CropArtwork(bitmap, "RightHalf");
+                        return CropArtwork(bitmap, isVerticalFrontSpread ? "TopHalf"
+                            : isReversedFrontSpread ? "LeftHalf" : "RightHalf");
                     if (role == "InsideFrontFromSpread")
-                        return CropArtwork(bitmap, "LeftHalf");
+                        return CropArtwork(bitmap, isVerticalFrontSpread ? "BottomHalfRotated"
+                            : isReversedFrontSpread ? "RightHalf" : "LeftHalf");
                     if (role == "Back" && (candidate.Role == "BackWithSpines"
                         || (!candidate.IsManual && candidate.Aspect > 1.08)))
                         return CropArtwork(bitmap, "BackPanel");
@@ -4830,10 +5097,43 @@ public partial class MainWindow : Window
                 : spineCandidate.Source is not null
                     ? LoadRole(spineCandidate, "Spine")
                     : backContainsSpines ? LoadRole(splitSpineCandidate, "RightSpine") : null;
+            BitmapSource? disc = null;
+            BitmapSource? secondDisc = null;
+            if (twoDiscCandidate.Source is not null)
+            {
+                try
+                {
+                    // Horizontal scans need twice the decode width so each
+                    // extracted half retains the requested 3D texture detail.
+                    var decodeWidth = twoDiscCandidate.Aspect >= 1
+                        ? checked(targetWidth * 2) : targetWidth;
+                    (disc, secondDisc) = DiscArtwork.SplitTwoDiscs(
+                        LoadBitmap(twoDiscCandidate.Source, decodeWidth));
+                }
+                catch { }
+            }
+            disc ??= LoadRole(discCandidate, "Disc");
             return (front, insideFront, back, leftSpine, rightSpine,
-                LoadRole(inlayCandidate, "Inlay"), LoadRole(discCandidate, "Disc"),
+                LoadRole(inlayCandidate, "Inlay"), disc, secondDisc,
                 LoadRole(spineCardCandidate, "SpineCard"),
                 selectedFrontCandidate.Source?.Description ?? "画像はありません");
+        }
+
+        private static BitmapSource CreateHorizontalFrontSpread(BitmapSource insideFront, BitmapSource front)
+        {
+            var side = Math.Max(1, Math.Max(
+                Math.Max(insideFront.PixelWidth, insideFront.PixelHeight),
+                Math.Max(front.PixelWidth, front.PixelHeight)));
+            var visual = new DrawingVisual();
+            using (var drawing = visual.RenderOpen())
+            {
+                drawing.DrawImage(insideFront, new Rect(0, 0, side, side));
+                drawing.DrawImage(front, new Rect(side, 0, side, side));
+            }
+            var spread = new RenderTargetBitmap(side * 2, side, 96, 96, PixelFormats.Pbgra32);
+            spread.Render(visual);
+            spread.Freeze();
+            return spread;
         }
 
         private static BitmapSource CropArtwork(BitmapSource source, string mode)
@@ -4855,6 +5155,12 @@ public partial class MainWindow : Window
                 var side = Math.Min(source.PixelWidth / 2, source.PixelHeight);
                 rectangle = new Int32Rect(0, Math.Max(0, (source.PixelHeight - side) / 2), side, side);
             }
+            else if (mode is "TopHalf" or "BottomHalfRotated")
+            {
+                var side = Math.Min(source.PixelWidth, source.PixelHeight / 2);
+                rectangle = new Int32Rect(Math.Max(0, (source.PixelWidth - side) / 2),
+                    mode == "TopHalf" ? 0 : source.PixelHeight - side, side, side);
+            }
             else if (mode == "CenterSquare")
             {
                 var side = Math.Min(source.PixelWidth, source.PixelHeight);
@@ -4867,7 +5173,10 @@ public partial class MainWindow : Window
             }
             var cropped = new CroppedBitmap(source, rectangle);
             cropped.Freeze();
-            return cropped;
+            if (mode != "BottomHalfRotated") return cropped;
+            var rotated = new TransformedBitmap(cropped, new RotateTransform(180));
+            rotated.Freeze();
+            return rotated;
         }
     }
 }

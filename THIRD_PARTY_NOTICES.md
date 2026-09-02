@@ -10,7 +10,7 @@ The jewel-case geometry includes modified versions of the following model:
 - License: Creative Commons Attribution 4.0 International (CC BY 4.0)
 - License text: https://creativecommons.org/licenses/by/4.0/
 
-Changes made for zip.mp3 Player and Manager Plus include coordinate normalization,
+Changes made for Virtual CD Collection Studio include coordinate normalization,
 non-uniform depth scaling, separation into lid/perimeter/tray rendering groups,
 material replacement, and adaptation for real-time textured rendering.
 

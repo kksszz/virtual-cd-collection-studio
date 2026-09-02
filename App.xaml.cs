@@ -21,8 +21,8 @@ public partial class App : Application
         if (!firstInstance)
         {
             MessageBox.Show(LocalizationService.IsEnglish
-                    ? "zip.mp3 Player and Manager Plus is already running. Please use the existing window."
-                    : "zip.mp3 Player and Manager Plusはすでに起動しています。先に開いている画面をご利用ください。",
+                    ? "Virtual CD Collection Studio is already running. Please use the existing window."
+                    : "Virtual CD Collection Studioはすでに起動しています。先に開いている画面をご利用ください。",
                 LocalizationService.IsEnglish ? "Already Running" : "すでに起動しています",
                 MessageBoxButton.OK, MessageBoxImage.Information);
             Shutdown();

@@ -6,30 +6,72 @@
         Background="#0B0F15" Foreground="White" KeyDown="Window_KeyDown">
   <Grid>
     <Grid.RowDefinitions>
-      <RowDefinition Height="64"/>
+      <RowDefinition Height="136"/>
       <RowDefinition Height="*"/>
       <RowDefinition Height="72"/>
       <RowDefinition Height="38"/>
     </Grid.RowDefinitions>
 
     <Border Grid.Row="0" Background="#171C24" BorderBrush="#343D49" BorderThickness="0,0,0,1">
-      <Grid Margin="22,10">
+      <Grid>
+        <Grid.RowDefinitions><RowDefinition Height="64"/><RowDefinition Height="72"/></Grid.RowDefinitions>
+      <Grid Margin="22,10" Grid.Row="0">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="Auto"/>
           <ColumnDefinition Width="Auto"/>
           <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
           <ColumnDefinition Width="320"/>
           <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
-        <TextBlock Text="ALBUM BROWSER" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,24,0"/>
+        <TextBlock Text="ALBUM BROWSER" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,16,0"/>
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-          <Button x:Name="TileModeButton" Content="▦  タイル" Padding="16,7" Margin="0,0,6,0" Click="TileMode_Click"/>
-          <Button x:Name="CoverFlowModeButton" Content="◫  3D CoverFlow" Padding="16,7" Click="CoverFlowMode_Click"/>
+          <Button x:Name="TileModeButton" Content="▦  タイル" Padding="11,7" Margin="0,0,5,0" Click="TileMode_Click"/>
+          <Button x:Name="CoverFlowModeButton" Content="◫  3D CoverFlow" Padding="11,7" Margin="0,0,5,0" Click="CoverFlowMode_Click"/>
+          <Button x:Name="RackModeButton" Content="▥  CDラック" Padding="11,7" Click="RackMode_Click"/>
         </StackPanel>
-        <TextBox x:Name="FilterBox" Grid.Column="3" Height="32" Padding="10,5" Margin="18,0,12,0"
-                 Background="#F3F4F6" Foreground="#18202A" BorderBrush="#566170"
-                 TextChanged="FilterBox_TextChanged" ToolTip="アルバム名・アーティスト名で検索"/>
-        <Button Grid.Column="4" Content="✕  閉じる" Padding="15,7" Click="Close_Click"/>
+        <StackPanel x:Name="TileSizePanel" Grid.Column="2" Orientation="Horizontal"
+                    HorizontalAlignment="Right" VerticalAlignment="Center" Margin="12,0,0,0">
+          <TextBlock Text="タイル" Foreground="#B8C2CE" VerticalAlignment="Center" Margin="0,0,7,0"/>
+          <Slider x:Name="TileSizeSlider" Width="92" Minimum="165" Maximum="320" Value="246"
+                  IsSnapToTickEnabled="False" ValueChanged="TileSizeSlider_ValueChanged"
+                  ToolTip="タイルの大きさと一画面の配置数を変更"/>
+          <TextBlock x:Name="TileSizeText" Text="246" Width="34" Margin="7,0,0,0"
+                     Foreground="#8F9BA8" TextAlignment="Right" VerticalAlignment="Center"/>
+        </StackPanel>
+        <ComboBox x:Name="BrowserSortCombo" Grid.Column="3" Width="138" Height="32" Margin="18,0,0,0"
+                  SelectedIndex="0" SelectionChanged="BrowserSort_SelectionChanged"
+                  Background="#F3F4F6" Foreground="#18202A" ToolTip="アルバムの並び順">
+          <ComboBoxItem Content="アーティスト順" Tag="Artist"/>
+          <ComboBoxItem Content="アルバム名順" Tag="Album"/>
+        </ComboBox>
+        <Grid Grid.Column="4" Height="32" Margin="10,0,12,0">
+          <TextBox x:Name="FilterBox" Padding="10,5,32,5"
+                   Background="#F3F4F6" Foreground="#18202A" BorderBrush="#566170"
+                   TextChanged="FilterBox_TextChanged" ToolTip="アルバム名・アーティスト名で検索"/>
+          <Button x:Name="FilterClearButton" Content="×" Width="28" Height="28" Padding="0"
+                  HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,2,0"
+                  Background="Transparent" Foreground="#53606D" BorderThickness="0"
+                  Visibility="Collapsed" Click="FilterClear_Click" ToolTip="検索文字をクリア"/>
+        </Grid>
+        <Button Grid.Column="5" Content="✕  閉じる" Padding="15,7" Click="Close_Click"/>
+      </Grid>
+        <Border Grid.Row="1" Background="#121821" BorderBrush="#303946" BorderThickness="0,1,0,0">
+          <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Disabled"
+                        CanContentScroll="False" Padding="18,5">
+            <ItemsControl x:Name="InitialFilterList">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Button Content="{Binding Label}" Tag="{Binding Key}" MinWidth="31" Height="27"
+                          Padding="6,2" Margin="2" Click="InitialFilter_Click"/>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </Border>
       </Grid>
     </Border>
 
@@ -37,6 +79,11 @@
       <ListBox x:Name="TileList" Background="#292E35" BorderThickness="0" Padding="18"
                Foreground="White" SelectionChanged="TileList_SelectionChanged"
                MouseDoubleClick="TileList_MouseDoubleClick"
+               PreviewMouseWheel="TileList_PreviewMouseWheel"
+               ScrollViewer.ScrollChanged="TileList_ScrollChanged"
+               ScrollViewer.CanContentScroll="False"
+               ScrollViewer.IsDeferredScrollingEnabled="False"
+               ScrollViewer.PanningMode="VerticalOnly"
                ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                ScrollViewer.VerticalScrollBarVisibility="Auto">
         <ListBox.ItemsPanel>
@@ -44,6 +91,9 @@
         </ListBox.ItemsPanel>
         <ListBox.ItemContainerStyle>
           <Style TargetType="ListBoxItem">
+            <Style.Resources>
+              <QuarticEase x:Key="TileEaseOut" EasingMode="EaseOut"/>
+            </Style.Resources>
             <Setter Property="Width" Value="246"/>
             <Setter Property="Height" Value="292"/>
             <Setter Property="Margin" Value="5"/>
@@ -53,13 +103,43 @@
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="2"/>
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+            <Setter Property="RenderTransform">
+              <Setter.Value><ScaleTransform ScaleX="1" ScaleY="1"/></Setter.Value>
+            </Setter>
             <Style.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Panel.ZIndex" Value="2"/>
+                <Setter Property="Background" Value="#263746"/>
+              </Trigger>
               <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Panel.ZIndex" Value="3"/>
                 <Setter Property="BorderBrush" Value="#72B7EE"/>
+                <Setter Property="Background" Value="#243B4D"/>
               </Trigger>
               <DataTrigger Binding="{Binding IsPlaying}" Value="True">
                 <Setter Property="BorderBrush" Value="#59D28A"/>
               </DataTrigger>
+              <EventTrigger RoutedEvent="Mouse.MouseEnter">
+                <BeginStoryboard>
+                  <Storyboard>
+                    <DoubleAnimation Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)"
+                                     To="1.035" Duration="0:0:0.16" EasingFunction="{StaticResource TileEaseOut}"/>
+                    <DoubleAnimation Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)"
+                                     To="1.035" Duration="0:0:0.16" EasingFunction="{StaticResource TileEaseOut}"/>
+                  </Storyboard>
+                </BeginStoryboard>
+              </EventTrigger>
+              <EventTrigger RoutedEvent="Mouse.MouseLeave">
+                <BeginStoryboard>
+                  <Storyboard>
+                    <DoubleAnimation Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)"
+                                     To="1" Duration="0:0:0.22" EasingFunction="{StaticResource TileEaseOut}"/>
+                    <DoubleAnimation Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)"
+                                     To="1" Duration="0:0:0.22" EasingFunction="{StaticResource TileEaseOut}"/>
+                  </Storyboard>
+                </BeginStoryboard>
+              </EventTrigger>
             </Style.Triggers>
           </Style>
         </ListBox.ItemContainerStyle>
@@ -67,15 +147,25 @@
           <DataTemplate>
             <Grid Margin="4">
               <Grid.RowDefinitions>
-                <RowDefinition Height="230"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
               </Grid.RowDefinitions>
-              <Border Background="#11161C" BorderBrush="#46515F" BorderThickness="1" CornerRadius="2" ClipToBounds="True">
+              <Border Background="#11161C" BorderBrush="#526171" BorderThickness="1" CornerRadius="8" ClipToBounds="True">
                 <Border.Effect>
-                  <DropShadowEffect Color="#000000" BlurRadius="10" ShadowDepth="3" Opacity="0.42"/>
+                  <DropShadowEffect Color="#000000" BlurRadius="16" ShadowDepth="4" Opacity="0.52"/>
                 </Border.Effect>
                 <Grid>
                   <TextBlock Text="♪" FontSize="50" Foreground="#687482" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                   <Image Source="{Binding TileCover}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
+                  <Border IsHitTestVisible="False">
+                    <Border.Background>
+                      <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                        <GradientStop Color="#3AFFFFFF" Offset="0"/>
+                        <GradientStop Color="#08FFFFFF" Offset="0.34"/>
+                        <GradientStop Color="#00000000" Offset="0.58"/>
+                        <GradientStop Color="#26000000" Offset="1"/>
+                      </LinearGradientBrush>
+                    </Border.Background>
+                  </Border>
                   <Border VerticalAlignment="Bottom" Background="#D91A6948" Padding="5,3">
                     <Border.Style>
                       <Style TargetType="Border">
@@ -99,6 +189,7 @@
       <local:JewelCaseCoverFlow x:Name="CoverFlow" Visibility="Collapsed" CollectionPresentation="True"
                                 SelectionChanged="CoverFlow_SelectionChanged"
                                 ItemActivated="CoverFlow_ItemActivated"
+                                DiscActivated="CoverFlow_DiscActivated"
                                 ToolTip="マウスホイールまたは左右キーで選択、ダブルクリックまたはEnterで再生"/>
     </Grid>
 
@@ -121,6 +212,9 @@
                   Margin="3" FontWeight="SemiBold" Click="PlayPause_Click"/>
           <Button x:Name="NextTrackButton" Content="次の曲 ▶" Width="92" Height="38"
                   Margin="3" Click="NextTrack_Click"/>
+          <Button x:Name="AttractModeButton" Content="✦ Attract開始" Width="126" Height="42"
+                  Margin="12,3,3,3" FontWeight="SemiBold" Click="AttractMode_Click"
+                  ToolTip="CDライブラリを自動巡回し、アルバムごとにランダムな1曲を再生"/>
         </StackPanel>
         <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
           <TextBlock Text="音量" Foreground="#B6C1CD" Margin="0,0,9,0"/>
@@ -133,7 +227,11 @@
 
     <Border Grid.Row="3" Background="#151A21" BorderBrush="#303844" BorderThickness="0,1,0,0">
       <Grid Margin="18,0">
-        <TextBlock x:Name="ResultText" VerticalAlignment="Center" Foreground="#A8B3C0"/>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBlock x:Name="ResultText" Foreground="#A8B3C0"/>
+          <TextBlock x:Name="AttractStatusText" Margin="18,0,0,0" Foreground="#79D5A1"
+                     FontWeight="SemiBold" Visibility="Collapsed"/>
+        </StackPanel>
         <TextBlock Text="クリック: 選択　ダブルクリック／Enter: 再生　Esc: 閉じる" HorizontalAlignment="Right"
                    VerticalAlignment="Center" Foreground="#7F8B99"/>
       </Grid>

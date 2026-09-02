@@ -42,6 +42,7 @@ internal static class LocalizationService
             ["原音忠実モード"] = "Source-Faithful Mode", ["カバーフロー"] = "Cover Flow",
             ["用途"] = "Role", ["自動"] = "Auto", ["Spine付きBack"] = "Back with Spines",
             ["Front見開き（左＝裏／右＝表）"] = "Front Spread (Left Inside / Right Front)",
+            ["Front縦見開き（上＝表／下＝逆さの裏）"] = "Vertical Front Spread (Top Front / Bottom Rotated Inside)",
             ["Front裏面"] = "Inside Front",
             ["トレイ"] = "Tray", ["白"] = "White", ["黒"] = "Black", ["グレー"] = "Gray", ["透明"] = "Clear",
             ["左Spine"] = "Left Spine", ["右Spine"] = "Right Spine",

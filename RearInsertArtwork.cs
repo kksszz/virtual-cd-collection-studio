@@ -30,7 +30,7 @@ internal static class RearInsertArtwork
         return crop;
     }
 
-    private static Int32Rect FindContent(BitmapSource source)
+    internal static Int32Rect FindContent(BitmapSource source)
     {
         var width = source.PixelWidth;
         var height = source.PixelHeight;
@@ -61,6 +61,7 @@ internal static class RearInsertArtwork
             var cross = horizontal ? h : w;
             var limit = Math.Max(1, (int)Math.Ceiling(axis * 0.06));
             var margins = new List<(double Position, int Margin)>();
+            var eligible = 0;
             const int samples = 51;
             for (var i = 0; i < samples; i++)
             {
@@ -74,9 +75,15 @@ internal static class RearInsertArtwork
                 }
                 // Uniform white artwork / broad white design areas are not a
                 // confident scanner border. Never search deep into the artwork.
-                if (n > 0 && n < limit) margins.Add(((double)other / Math.Max(1, cross - 1), n));
+                if (n >= limit) continue;
+                eligible++;
+                if (n > 0) margins.Add(((double)other / Math.Max(1, cross - 1), n));
             }
-            if (margins.Count < samples * 0.85) return 0;
+            // Ignore sample lines that are white for the full safety depth.
+            // They can be a deliberately white spine or flap. Still require
+            // most of the image to contain measurable artwork, and nearly all
+            // of those measurable lines to share the same white border.
+            if (eligible < samples * 0.55 || margins.Count < eligible * 0.9) return 0;
             // A real scanner edge is straight (possibly tilted), so its white
             // run follows one line. Text printed on white Spine paper produces
             // irregular run lengths from glyph to glyph; do not crop those as

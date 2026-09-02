@@ -6,6 +6,24 @@ namespace ZipMp3Player;
 
 internal static class DiscArtwork
 {
+    public static (BitmapSource First, BitmapSource Second) SplitTwoDiscs(BitmapSource source)
+    {
+        if (source.PixelWidth < 2 || source.PixelHeight < 2)
+            return (source, source);
+
+        // Preserve the source scan. Split along its longer axis, then trim
+        // scanner margins independently for both virtual disc images.
+        var horizontal = source.PixelWidth >= source.PixelHeight;
+        var firstRectangle = horizontal
+            ? new Int32Rect(0, 0, source.PixelWidth / 2, source.PixelHeight)
+            : new Int32Rect(0, 0, source.PixelWidth, source.PixelHeight / 2);
+        var secondRectangle = horizontal
+            ? new Int32Rect(firstRectangle.Width, 0, source.PixelWidth - firstRectangle.Width, source.PixelHeight)
+            : new Int32Rect(0, firstRectangle.Height, source.PixelWidth, source.PixelHeight - firstRectangle.Height);
+        return (CropScannerMargin(RearInsertArtwork.Crop(source, firstRectangle)),
+            CropScannerMargin(RearInsertArtwork.Crop(source, secondRectangle)));
+    }
+
     public static BitmapSource CropScannerMargin(BitmapSource source)
     {
         var width = source.PixelWidth;

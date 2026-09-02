@@ -5,15 +5,17 @@
     <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>zip.mp3 Player and Manager Plus</AssemblyName>
+    <AssemblyName>Virtual CD Collection Studio</AssemblyName>
     <RootNamespace>ZipMp3Player</RootNamespace>
-    <Title>zip.mp3 Player and Manager Plus</Title>
-    <Product>zip.mp3 Player and Manager Plus</Product>
-    <Description>Music player and library manager for ZIP.MP3 and standard audio files</Description>
+    <Title>Virtual CD Collection Studio</Title>
+    <Product>Virtual CD Collection Studio</Product>
+    <Description>Preserve, explore and play complete CD collections in a virtual library</Description>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
-    <Version>0.73.0</Version>
-    <AssemblyVersion>0.73.0.0</AssemblyVersion>
-    <FileVersion>0.73.0.0</FileVersion>
+    <Version>0.74.0</Version>
+    <InformationalVersion>0.74.0</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <AssemblyVersion>0.74.0.0</AssemblyVersion>
+    <FileVersion>0.74.0.0</FileVersion>
   </PropertyGroup>
   <ItemGroup>
     <Resource Include="Assets\AppIcon.ico" />

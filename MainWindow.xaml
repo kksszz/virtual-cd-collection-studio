@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:ZipMp3Player"
-        Title="zip.mp3 Player and Manager Plus" Icon="Assets/AppIcon.ico" Width="1400" Height="760" MinWidth="1050" MinHeight="560"
+        Title="Virtual CD Collection Studio" Icon="Assets/AppIcon.ico" Width="1400" Height="760" MinWidth="1050" MinHeight="560"
         Background="#15171B" Foreground="#F2F3F5" AllowDrop="True"
         Drop="Window_Drop" DragOver="Window_DragOver" KeyDown="Window_KeyDown" Closing="Window_Closing">
   <Window.Resources>
@@ -69,6 +69,8 @@
         <Button Content="ファイルを開く" Click="Open_Click" Padding="13,6"/>
         <Button Content="履歴" Click="Usage_Click" Padding="13,6" ToolTip="再生履歴・Usageを表示"/>
         <Button Content="★ お気に入り" Click="Favorites_Click" Padding="10,6" ToolTip="お気に入りの曲・アルバムを一覧から連続再生"/>
+        <Button x:Name="AlbumBrowserButton" Content="▦ アルバムブラウザー" Click="OpenAlbumBrowser_Click"
+                Padding="11,6" ToolTip="アルバムブラウザー・3D CoverFlow・CDラック・Attractモード"/>
         <Button Content="⚙" Width="40" Padding="0,7" FontSize="16"
                 Click="Settings_Click" ToolTip="設定（フォルダ管理・バックアップ・移行）"/>
       </StackPanel>
@@ -79,7 +81,7 @@
             <ColumnDefinition Width="Auto"/><ColumnDefinition Width="4*"/><ColumnDefinition Width="5*"/>
           </Grid.ColumnDefinitions>
           <StackPanel Visibility="Collapsed">
-            <TextBlock x:Name="AlbumTitleText" FontSize="15" FontWeight="SemiBold" Text="zip.mp3 Player and Manager Plus"
+            <TextBlock x:Name="AlbumTitleText" FontSize="15" FontWeight="SemiBold" Text="Virtual CD Collection Studio"
                        MaxWidth="220" TextTrimming="CharacterEllipsis" ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
             <TextBlock x:Name="AlbumInfoText" Foreground="#C0C9D4" FontSize="13"
                        Text="固定ビットレートMP3を直接再生します"
@@ -219,7 +221,7 @@
           <Grid x:Name="AlbumToolbar" DockPanel.Dock="Top" Margin="12,7">
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
-              <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <TextBlock Text="アルバム" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center"/>
             <TextBox x:Name="AlbumFilterTextBox" Grid.Column="1" Height="27" MinWidth="48" Padding="7,3" Margin="9,0,0,0"
@@ -237,8 +239,6 @@
               <ComboBoxItem Content="アーティストツリー" Tag="ArtistTree"/>
               <ComboBoxItem Content="カバーフロー" Tag="CoverFlow"/>
             </ComboBox>
-            <Button Grid.Column="5" Content="⛶" Width="30" Height="27" Padding="0" Margin="5,0,0,0"
-                    Click="OpenAlbumBrowser_Click" ToolTip="アルバムブラウザーを全画面表示"/>
           </Grid>
           <Grid>
           <ListBox x:Name="AlbumList" Background="Transparent" Foreground="White" BorderThickness="0"
@@ -411,6 +411,7 @@
             <local:JewelCaseCoverFlow x:Name="AlbumCoverFlow" Visibility="Collapsed"
                                       SelectionChanged="AlbumCoverFlow_SelectionChanged"
                                       ItemActivated="AlbumCoverFlow_ItemActivated"
+                                      DiscActivated="AlbumCoverFlow_DiscActivated"
                                       ToolTip="マウスホイールまたは左右キーで選択、ダブルクリックまたはEnterで再生">
               <local:JewelCaseCoverFlow.ContextMenu>
                 <ContextMenu Opened="AlbumPropertiesContextMenu_Opened">
@@ -496,7 +497,7 @@
         <Grid Grid.IsSharedSizeScope="True">
           <Grid.ColumnDefinitions>
             <ColumnDefinition x:Name="ArtworkColumn" Width="6*" MinWidth="180"/>
-            <ColumnDefinition Width="8"/>
+            <ColumnDefinition x:Name="ImageLyricsSplitterColumn" Width="8"/>
             <ColumnDefinition x:Name="LyricsColumn" Width="4*" MinWidth="180"/>
           </Grid.ColumnDefinitions>
           <Grid Grid.Column="0">
@@ -537,6 +538,8 @@
                 <ComboBoxItem Content="自動" Tag="Auto"/>
                 <ComboBoxItem Content="Front" Tag="Front"/>
                 <ComboBoxItem Content="Front見開き（左＝裏／右＝表）" Tag="FrontSpread"/>
+                <ComboBoxItem Content="Front見開き（左＝表／右＝裏）" Tag="FrontSpreadReversed"/>
+                <ComboBoxItem Content="Front縦見開き（上＝表／下＝逆さの裏）" Tag="FrontSpreadVertical"/>
                 <ComboBoxItem Content="Front裏面" Tag="FrontInside"/>
                 <ComboBoxItem Content="Spine付きBack" Tag="BackWithSpines"/>
                 <ComboBoxItem Content="Back" Tag="Back"/>
@@ -545,11 +548,17 @@
                 <ComboBoxItem Content="右Spine" Tag="RightSpine"/>
                 <ComboBoxItem Content="Inlay" Tag="Inlay"/>
                 <ComboBoxItem Content="Disc" Tag="Disc"/>
+                <ComboBoxItem Content="Disc（2 Disc）" Tag="Disc2"/>
                 <ComboBoxItem Content="ライナーノーツ" Tag="LinerNotes"/>
                 <ComboBoxItem Content="PAGE（冊子ページ）" Tag="Page"/>
+                <ComboBoxItem Content="Flyer" Tag="Flyer"/>
+                <ComboBoxItem Content="Poster" Tag="Poster"/>
                 <ComboBoxItem Content="Spine Card（帯）" Tag="SpineCard"/>
                 <ComboBoxItem Content="Other" Tag="Other"/>
               </ComboBox>
+              <Button x:Name="AdjustSpineCardFoldsButton" Content="帯のBack／Spine範囲" Padding="8,4" Margin="4,0,0,0"
+                      Click="AdjustSpineCardFolds_Click" IsEnabled="False" Visibility="Collapsed"
+                      ToolTip="Back・Spine・Frontの境界をガイドで非破壊指定"/>
               <TextBlock Text="トレイ" Margin="9,0,3,0" VerticalAlignment="Center" Foreground="#A6AFBB"/>
               <ComboBox x:Name="TrayColorCombo" Width="78" Height="27" SelectedIndex="0"
                         SelectionChanged="TrayColor_Changed" ToolTip="3D CDケースのインナートレイ色">
@@ -566,10 +575,14 @@
             <TextBlock x:Name="AlbumImageNameText" Grid.Row="3" Foreground="#A6AFBB" FontSize="11"
                        TextAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
           </Grid>
-          <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Stretch" Background="#252A31"
+          <GridSplitter x:Name="ImageLyricsSplitter" Grid.Column="1" Width="8" HorizontalAlignment="Stretch" Background="#252A31"
                         ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" ShowsPreview="True"
                         DragCompleted="ImageLyricsSplitter_DragCompleted"
                         ToolTip="ドラッグしてアルバム画像と歌詞の幅を変更"/>
+          <Button x:Name="LyricsPanelToggleButton" Grid.Column="1" Panel.ZIndex="10"
+                  Width="24" Height="46" Padding="0" Margin="0"
+                  HorizontalAlignment="Center" VerticalAlignment="Center" Content="▶"
+                  Click="LyricsPanelToggle_Click" ToolTip="歌詞欄を折りたたむ"/>
           <Grid x:Name="LyricsContent" Grid.Column="2" Margin="4,0,0,0">
             <Grid.RowDefinitions><RowDefinition x:Name="LyricsToolbarRow" Height="Auto" SharedSizeGroup="ImageLyricsToolbar"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
             <DockPanel Margin="2,0,0,8">

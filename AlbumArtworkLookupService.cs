@@ -108,7 +108,7 @@ internal sealed class AlbumArtworkLookupService
         {
             Timeout = TimeSpan.FromSeconds(25)
         };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("zip.mp3-Player-and-Manager-Plus/0.45 (Windows album artwork lookup)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("Virtual-CD-Collection-Studio/0.74 (Windows album artwork lookup)");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/json, image/*;q=0.9");
         return client;
     }

@@ -108,8 +108,8 @@ public partial class SettingsWindow : Window
         var dialog = new SaveFileDialog
         {
             Title = LocalizationService.Select("アプリデータのバックアップ先を選択", "Choose where to save the app-data backup"),
-            Filter = "zip.mp3 Player and Manager Plus バックアップ (*.zipmp3backup)|*.zipmp3backup",
-            FileName = $"zip.mp3-Player-and-Manager-Plus-Backup-{DateTime.Now:yyyyMMdd-HHmm}.zipmp3backup",
+            Filter = "Virtual CD Collection Studio バックアップ (*.zipmp3backup)|*.zipmp3backup",
+            FileName = $"Virtual-CD-Collection-Studio-Backup-{DateTime.Now:yyyyMMdd-HHmm}.zipmp3backup",
             AddExtension = true
         };
         if (dialog.ShowDialog(this) != true) return;
@@ -127,7 +127,7 @@ public partial class SettingsWindow : Window
         var dialog = new OpenFileDialog
         {
             Title = LocalizationService.Select("復元するバックアップを選択", "Select a backup to restore"),
-            Filter = "zip.mp3 Player and Manager Plus バックアップ (*.zipmp3backup)|*.zipmp3backup"
+            Filter = "Virtual CD Collection Studio バックアップ (*.zipmp3backup)|*.zipmp3backup"
         };
         if (dialog.ShowDialog(this) != true) return;
         if (MessageBox.Show(this, LocalizationService.Select(

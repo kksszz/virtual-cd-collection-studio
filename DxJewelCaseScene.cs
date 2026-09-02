@@ -22,6 +22,14 @@ namespace ZipMp3Player;
 /// </summary>
 internal sealed class DxJewelCaseScene : IDisposable
 {
+    // Standard single jewel case: approximately 142 x 125 x 10.4 mm.
+    // Width and height are expressed in scene units, so keeping depth at the
+    // same physical scale is important for both the printed spine and obi.
+    internal const float StandardCaseDepth = 0.177f;
+    internal const float WrappingSideClearance = 0.016f;
+    internal const float WrappingFaceClearance = 0.010f;
+    internal const float WrappingEdgeClearance = 0.010f;
+    internal const float SpineCardFlapClearance = 0.006f;
     // The printable parts are exported in their open, print-bed orientation:
     // the bottom hinge is on the left while the top hinge is on the right.
     // After mirroring the top into its assembled orientation, both hinge
@@ -47,6 +55,36 @@ internal sealed class DxJewelCaseScene : IDisposable
     private const double SpineCardOpenClearanceX = -2.35;
     private Point3D? _spineCardDragPoint;
     private Vector3D _spineCardDragNormal;
+    private readonly GroupModel3D _wrappingRoot = new();
+    private readonly GroupModel3D _wrappingUpperRoot = new();
+    private readonly GroupModel3D _wrappingLowerRoot = new();
+    private readonly GroupModel3D _tearTapeRoot = new();
+    private readonly GroupModel3D _tearTapeFrontRoot = new();
+    private readonly GroupModel3D _tearTapeBackRoot = new();
+    private readonly GroupModel3D _tearTapeSideRoot = new();
+    private readonly GroupModel3D _tearTapeRibbonRoot = new();
+    private readonly TranslateTransform3D _wrappingUpperTranslation = new();
+    private readonly TranslateTransform3D _wrappingLowerTranslation = new();
+    private readonly TranslateTransform3D _tearTapeTranslation = new();
+    private readonly ScaleTransform3D _tearTapeScale = new(1, 1, 1);
+    private readonly ScaleTransform3D _tearTapeBackScale = new(1, 1, 1);
+    private MeshGeometryModel3D? _tearTapeTabModel;
+    private MeshGeometryModel3D? _tearTapeRibbonModel;
+    private float _wrappingCaseWidth;
+    private float _wrappingCaseDepth;
+    private float _wrappingTapeY;
+    private float _wrappingUpperClearanceY;
+    private float _wrappingLowerClearanceY;
+    private readonly AxisAngleRotation3D _wrappingUpperPeel = new(new Vector3D(1, 0, 0), 0);
+    private readonly AxisAngleRotation3D _wrappingLowerPeel = new(new Vector3D(1, 0, 0), 0);
+    private readonly RotateTransform3D _wrappingUpperRotation;
+    private readonly RotateTransform3D _wrappingLowerRotation;
+    private readonly DispatcherTimer _wrappingMotionTimer = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
+    private TaskCompletionSource<bool>? _wrappingMotionCompletion;
+    private EventHandler? _wrappingMotionTick;
+    private double _wrappingProgress;
+    private System.Windows.Point? _wrappingDragPoint;
+    private bool _draggingWrappingFilm;
     private readonly GroupModel3D _bookletRoot = new();
     private readonly TranslateTransform3D _bookletTranslation = new();
     private readonly AxisAngleRotation3D _bookletTilt = new(new Vector3D(0, 1, 0), 0);
@@ -55,6 +93,13 @@ internal sealed class DxJewelCaseScene : IDisposable
     private TaskCompletionSource<bool>? _bookletMotionCompletion;
     private double _bookletProgress;
     private readonly GroupModel3D _discRoot = new();
+    private readonly GroupModel3D _secondDiscRoot = new();
+    private readonly AxisAngleRotation3D _discSpinRotation = new(new Vector3D(0, 0, 1), 0);
+    private readonly AxisAngleRotation3D _secondDiscSpinRotation = new(new Vector3D(0, 0, 1), 0);
+    private readonly DispatcherTimer _discSpinTimer = new(DispatcherPriority.Render)
+        { Interval = TimeSpan.FromMilliseconds(16) };
+    private readonly System.Diagnostics.Stopwatch _discSpinClock = new();
+    internal const double DiscPlaybackRpm = 240;
     private readonly Dictionary<BitmapSource, TextureModel> _textureCache =
         new(ReferenceEqualityComparer.Instance);
     private readonly AxisAngleRotation3D _pitchRotation = new(new Vector3D(1, 0, 0), -2);
@@ -71,6 +116,7 @@ internal sealed class DxJewelCaseScene : IDisposable
     private const double RemovedDiscMinimumZ = 0.35;
     private readonly Transform3DGroup _caseTransform = new();
     private readonly DispatcherTimer _animationRenderTimer;
+    private bool _disposed;
     private int _caseAnimationGeneration;
     private int _discAnimationGeneration;
     private bool _discRemoved;
@@ -103,17 +149,43 @@ internal sealed class DxJewelCaseScene : IDisposable
         bookletTransform.Children.Add(_bookletTranslation);
         _bookletRoot.Transform = bookletTransform;
         var discTransform = new Transform3DGroup();
+        discTransform.Children.Add(new RotateTransform3D(_discSpinRotation, new Point3D(0.044, 0.004, 0)));
         discTransform.Children.Add(new RotateTransform3D(_discTiltRotation));
         discTransform.Children.Add(_discTranslation);
         _discRoot.Transform = discTransform;
+        _secondDiscRoot.Transform = new RotateTransform3D(
+            _secondDiscSpinRotation, new Point3D(0.044, 0.004, 0));
         var spineCardTransform = new Transform3DGroup();
         spineCardTransform.Children.Add(_spineCardTranslation);
         spineCardTransform.Children.Add(_spineCardOpenTranslation);
         spineCardTransform.Children.Add(_spineCardDragTranslation);
         _spineCardRoot.Transform = spineCardTransform;
+        _wrappingUpperRotation = new RotateTransform3D(_wrappingUpperPeel);
+        _wrappingLowerRotation = new RotateTransform3D(_wrappingLowerPeel);
+        var wrappingUpperTransform = new Transform3DGroup();
+        wrappingUpperTransform.Children.Add(_wrappingUpperRotation);
+        wrappingUpperTransform.Children.Add(_wrappingUpperTranslation);
+        _wrappingUpperRoot.Transform = wrappingUpperTransform;
+        var wrappingLowerTransform = new Transform3DGroup();
+        wrappingLowerTransform.Children.Add(_wrappingLowerRotation);
+        wrappingLowerTransform.Children.Add(_wrappingLowerTranslation);
+        _wrappingLowerRoot.Transform = wrappingLowerTransform;
+        _tearTapeFrontRoot.Transform = _tearTapeScale;
+        _tearTapeBackRoot.Transform = _tearTapeBackScale;
+        _tearTapeRibbonRoot.Transform = _tearTapeTranslation;
+        _tearTapeRoot.Children.Add(_tearTapeFrontRoot);
+        _tearTapeRoot.Children.Add(_tearTapeBackRoot);
+        _tearTapeRoot.Children.Add(_tearTapeSideRoot);
+        _tearTapeRoot.Children.Add(_tearTapeRibbonRoot);
+        _wrappingRoot.Children.Add(_wrappingUpperRoot);
+        _wrappingRoot.Children.Add(_wrappingLowerRoot);
+        _wrappingRoot.Children.Add(_tearTapeRoot);
         _caseRoot.Children.Add(_baseRoot);
         _caseRoot.Children.Add(_lidRoot);
         _caseRoot.Children.Add(_spineCardRoot);
+        _caseRoot.Children.Add(_wrappingRoot);
+
+        _discSpinTimer.Tick += (_, _) => AdvanceDiscSpin();
 
         Viewport = new Viewport3DX
         {
@@ -198,21 +270,31 @@ internal sealed class DxJewelCaseScene : IDisposable
 
     public void SetItem(JewelCaseCoverFlowItem item, double yaw, double pitch)
     {
+        CancelWrappingMotion();
+        EndWrappingDrag();
         EndDiscDrag();
         EndSpineCardDrag();
         ResetSpineCardDragOffset();
         _baseRoot.Children.Clear();
         _lidRoot.Children.Clear();
         _spineCardRoot.Children.Clear();
+        _wrappingUpperRoot.Children.Clear();
+        _wrappingLowerRoot.Children.Clear();
+        _tearTapeFrontRoot.Children.Clear();
+        _tearTapeBackRoot.Children.Clear();
+        _tearTapeSideRoot.Children.Clear();
+        _tearTapeRibbonRoot.Children.Clear();
+        _tearTapeTabModel = null;
+        _tearTapeRibbonModel = null;
         _bookletRoot.Children.Clear();
         _lidRoot.Children.Add(_bookletRoot);
         _discRoot.Children.Clear();
+        _secondDiscRoot.Children.Clear();
+        _baseRoot.Children.Add(_secondDiscRoot);
         _baseRoot.Children.Add(_discRoot);
         const float width = 2.42f;
         const float height = 2.12f;
-        // Keep the slim central body and printed spine at the established
-        // depth. Only the narrow top/bottom rails project farther outward.
-        const float depth = 0.125f;
+        const float depth = StandardCaseDepth;
         const float discCenterX = 0.044f;
         const float discOuterRadius = 1.018f;
 
@@ -426,9 +508,17 @@ internal sealed class DxJewelCaseScene : IDisposable
         AddSpine(item.SpineCover,
             width / 2 + 0.001f, backArtworkHeight, depth, false, _baseRoot, inlay.Right);
         AddSpineCard(item.SpineCard, width, height, depth);
+        // Japanese caramel wrapping is represented only together with an obi.
+        // Albums without a Spine Card remain ordinary, directly openable cases.
+        if (item.SpineCard is not null) AddCaramelWrapping(width, height, depth);
         // 120 mm disc in a roughly 125 mm-high jewel case.
-        AddDisc(item.DiscImage, new Vector3(discCenterX, 0.004f, -0.017f),
+        AddDisc(item.DiscImage, new Vector3(discCenterX, 0.004f, -depth * 0.136f),
             discOuterRadius, 0.128f, 0.020f, _discRoot);
+        if (item.SecondDiscImage is not null)
+            AddDisc(item.SecondDiscImage, new Vector3(discCenterX, 0.004f, -depth * 0.32f),
+                discOuterRadius, 0.128f, 0.018f, _secondDiscRoot, "Disc 2 artwork");
+
+        SetWrappingProgress(_wrappingProgress);
 
         ApplyRotation(yaw, pitch);
         Viewport.InvalidateRender();
@@ -452,6 +542,263 @@ internal sealed class DxJewelCaseScene : IDisposable
         zoom = Math.Clamp(zoom, 0.55, 2.40);
         _viewZoom.ScaleX = _viewZoom.ScaleY = _viewZoom.ScaleZ = zoom;
         Viewport.InvalidateRender();
+    }
+
+    public double WrappingProgress => _wrappingProgress;
+    public const double TearCompleteProgress = 0.5;
+
+    public void SetWrappingOpened(bool opened, bool animate = true)
+    {
+        EndWrappingDrag();
+        if (animate) { _ = AnimateWrappingAsync(opened); return; }
+        CancelWrappingMotion();
+        SetWrappingProgress(opened ? 1 : 0);
+    }
+
+    public void SetWrappingCut(bool cut, bool animate = true)
+    {
+        EndWrappingDrag();
+        if (animate) { _ = AnimateWrappingCutAsync(cut); return; }
+        CancelWrappingMotion();
+        SetWrappingProgress(cut ? TearCompleteProgress : 0);
+    }
+
+    public Task<bool> AnimateWrappingAsync(bool opened) =>
+        AnimateWrappingToAsync(opened ? 1 : 0);
+
+    public Task<bool> AnimateWrappingCutAsync(bool cut) =>
+        AnimateWrappingToAsync(cut ? TearCompleteProgress : 0);
+
+    private Task<bool> AnimateWrappingToAsync(double target)
+    {
+        EndWrappingDrag();
+        CancelWrappingMotion();
+        var from = _wrappingProgress;
+        if (Math.Abs(from - target) < .001)
+        {
+            SetWrappingProgress(target);
+            return Task.FromResult(true);
+        }
+        var completion = new TaskCompletionSource<bool>();
+        _wrappingMotionCompletion = completion;
+        var started = DateTime.UtcNow;
+        // Each physical step gets its own deliberate motion: the tear tape is
+        // pulled first, then the loosened film is lifted in a separate action.
+        var duration = TimeSpan.FromMilliseconds(1500 * Math.Abs(target - from));
+        _wrappingMotionTick = (_, _) =>
+        {
+            var linear = Math.Clamp((DateTime.UtcNow - started).TotalMilliseconds
+                / Math.Max(1, duration.TotalMilliseconds), 0, 1);
+            var eased = linear < .5 ? 4 * linear * linear * linear
+                : 1 - Math.Pow(-2 * linear + 2, 3) / 2;
+            SetWrappingProgress(from + (target - from) * eased);
+            if (linear < 1) return;
+            CancelWrappingMotion(true);
+        };
+        _wrappingMotionTimer.Tick += _wrappingMotionTick;
+        _wrappingMotionTimer.Start();
+        return completion.Task;
+    }
+
+    private void SetWrappingProgress(double progress)
+    {
+        _wrappingProgress = Math.Clamp(progress, 0, 1);
+        // Stage 1: pull only the narrow tape. The broad film deliberately
+        // remains tight around the case, matching the supplied reference.
+        var tape = Math.Clamp(_wrappingProgress / TearCompleteProgress, 0, 1);
+        UpdateTearTapeGeometry(tape);
+
+        // Stage 2: lift the film from the new slit. Both sections travel in
+        // the same hand-pull direction instead of flying apart left/right.
+        var peelLinear = Math.Clamp((_wrappingProgress - TearCompleteProgress)
+            / (1 - TearCompleteProgress), 0, 1);
+        var lift = Math.Sin(Math.Clamp(peelLinear / .68, 0, 1) * Math.PI / 2);
+        // Do not begin the rightward removal until both film sections have
+        // cleared the case vertically. This preserves physical separation.
+        var releaseLinear = Math.Clamp((peelLinear - .70) / .30, 0, 1);
+        var release = 1 - Math.Pow(1 - releaseLinear, 3);
+        _wrappingUpperPeel.Angle = -24 * lift + 18 * release;
+        _wrappingUpperTranslation.OffsetX = 3.10 * release;
+        _wrappingUpperTranslation.OffsetY = _wrappingUpperClearanceY * lift + 0.08 * release;
+        _wrappingUpperTranslation.OffsetZ = 0.64 * lift - 0.16 * release;
+        _wrappingLowerPeel.Angle = 18 * lift - 12 * release;
+        _wrappingLowerTranslation.OffsetX = 3.10 * release;
+        _wrappingLowerTranslation.OffsetY = -_wrappingLowerClearanceY * lift - 0.05 * release;
+        _wrappingLowerTranslation.OffsetZ = 0.52 * lift - 0.12 * release;
+        Viewport.InvalidateRender();
+    }
+
+    private void UpdateTearTapeGeometry(double progress)
+    {
+        progress = Math.Clamp(progress, 0, 1);
+        var frontRemoved = Math.Clamp(progress / .48, 0, 1);
+        var backRemoved = Math.Clamp((progress - .52) / .48, 0, 1);
+        _tearTapeScale.ScaleX = Math.Max(.002, 1 - frontRemoved);
+        _tearTapeBackScale.ScaleX = Math.Max(.002, 1 - backRemoved);
+        _tearTapeSideRoot.Visibility = progress < .42 ? System.Windows.Visibility.Visible : System.Windows.Visibility.Hidden;
+        if (_tearTapeTabModel is not null)
+            _tearTapeTabModel.Visibility = progress <= .004
+                ? System.Windows.Visibility.Visible : System.Windows.Visibility.Hidden;
+        _tearTapeTranslation.OffsetX = _tearTapeTranslation.OffsetY = _tearTapeTranslation.OffsetZ = 0;
+        if (_tearTapeRibbonModel is null) return;
+        if (progress <= .004 || progress >= .996)
+        {
+            _tearTapeRibbonModel.Visibility = System.Windows.Visibility.Hidden;
+            return;
+        }
+
+        var left = -_wrappingCaseWidth / 2;
+        var right = _wrappingCaseWidth / 2;
+        var frontZ = _wrappingCaseDepth / 2 + 0.014f;
+        Vector3 start;
+        if (progress <= .48)
+        {
+            var local = (float)(progress / .48);
+            start = new Vector3(right - _wrappingCaseWidth * local, _wrappingTapeY, frontZ);
+        }
+        else
+        {
+            var local = (float)((progress - .48) / .52);
+            if (local < .16f)
+                start = new Vector3(left, _wrappingTapeY,
+                    frontZ - _wrappingCaseDepth * local / .16f);
+            else
+                start = new Vector3(left + _wrappingCaseWidth * (local - .16f) / .84f,
+                    _wrappingTapeY, -frontZ);
+        }
+
+        // While the attachment point passes around the left edge there is no
+        // single flat ribbon surface that can be drawn without cutting through
+        // the case. Hide that very short turn; recreate it wholly behind the
+        // case as soon as the attachment point reaches the rear face.
+        var backStage = progress >= .48 + .52 * .16;
+        if (progress > .48 && !backStage)
+        {
+            _tearTapeRibbonModel.Visibility = System.Windows.Visibility.Hidden;
+            return;
+        }
+
+        // The free end rises toward the user's hand while the section between
+        // it and the case sags and twists. Rebuilding this small ribbon mesh is
+        // inexpensive and avoids the rigid sliding-strip appearance.
+        var p = (float)progress;
+        var ribbonFaceZ = backStage
+            ? -frontZ - 0.12f
+            : frontZ + 0.018f + 0.10f * p + 0.04f * MathF.Sin(p * MathF.PI);
+        var end = new Vector3(right + 0.032f - _wrappingCaseWidth * 0.82f * p,
+            _wrappingTapeY - 0.012f + 0.82f * p, ribbonFaceZ);
+        var control1 = start + new Vector3(-0.18f - 0.14f * p,
+            0.12f + 0.18f * p, backStage ? -0.055f : 0.08f + 0.05f * p);
+        var control2 = end + new Vector3(0.22f * MathF.Sin(p * MathF.PI * 2.4f),
+            -0.20f - 0.08f * MathF.Cos(p * MathF.PI * 1.7f),
+            backStage ? -0.035f : 0.10f * MathF.Sin(p * MathF.PI * 3.1f));
+
+        static Vector3 Bezier(Vector3 a, Vector3 b, Vector3 c, Vector3 d, float t)
+        {
+            var u = 1 - t;
+            return u * u * u * a + 3 * u * u * t * b + 3 * u * t * t * c + t * t * t * d;
+        }
+        var ribbon = new MeshBuilder(true, false, false);
+        const int segments = 28;
+        const float halfWidth = 0.027f;
+        Vector3 EdgeOffset(float t)
+        {
+            var before = Bezier(start, control1, control2, end, Math.Max(0, t - .002f));
+            var after = Bezier(start, control1, control2, end, Math.Min(1, t + .002f));
+            var tangent = after - before;
+            var side = new Vector3(-tangent.Y, tangent.X,
+                (backStage ? -0.16f : 0.42f) * MathF.Sin(t * MathF.PI * 3 + p * 7));
+            return side.LengthSquared() < 0.000001f
+                ? new Vector3(0, halfWidth, 0)
+                : Vector3.Normalize(side) * halfWidth;
+        }
+        var previousPoint = start;
+        var previousOffset = EdgeOffset(0);
+        for (var index = 1; index <= segments; index++)
+        {
+            var t = index / (float)segments;
+            var point = Bezier(start, control1, control2, end, t);
+            var offset = EdgeOffset(t);
+            ribbon.AddQuad(previousPoint + previousOffset, previousPoint - previousOffset,
+                point - offset, point + offset);
+            previousPoint = point;
+            previousOffset = offset;
+        }
+        _tearTapeRibbonModel.Geometry = ribbon.ToMeshGeometry3D();
+        _tearTapeRibbonModel.Visibility = System.Windows.Visibility.Visible;
+    }
+
+    private void CancelWrappingMotion(bool completed = false)
+    {
+        _wrappingMotionTimer.Stop();
+        if (_wrappingMotionTick is not null)
+            _wrappingMotionTimer.Tick -= _wrappingMotionTick;
+        _wrappingMotionTick = null;
+        var completion = _wrappingMotionCompletion;
+        _wrappingMotionCompletion = null;
+        if (completed) InvalidateFinalFrame();
+        if (completed) completion?.TrySetResult(true);
+        else completion?.TrySetResult(false);
+    }
+
+    // Helix renders on demand. A transform changed from a Render-priority
+    // timer can request its last redraw in the same dispatcher pass in which
+    // that timer is stopped; on some systems that redraw is then not presented
+    // until the next mouse/keyboard event. Queue two redraws after the current
+    // callback has unwound so the committed end pose is always presented.
+    private void InvalidateFinalFrame()
+    {
+        if (_disposed) return;
+        Viewport.InvalidateRender();
+        _ = Viewport.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() =>
+        {
+            if (_disposed) return;
+            Viewport.InvalidateRender();
+            _ = Viewport.Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
+            {
+                if (!_disposed) Viewport.InvalidateRender();
+            }));
+        }));
+    }
+
+    public bool BeginWrappingDrag(System.Windows.Point position)
+    {
+        if (_wrappingProgress >= .999) return false;
+        var hit = Viewport.FindHits(position)?.OrderBy(result => result.Distance).FirstOrDefault();
+        if (hit is null) return false;
+        static bool HitMatches(HelixToolkit.SharpDX.HitTestResult hitResult, MeshGeometryModel3D? mesh) =>
+            mesh is not null && (ReferenceEquals(hitResult.ModelHit, mesh)
+                || ReferenceEquals(hitResult.ModelHit, mesh.SceneNode));
+        var tapeHit = _wrappingProgress <= .01
+            ? HitMatches(hit, _tearTapeTabModel)
+            : HitMatches(hit, _tearTapeRibbonModel);
+        var filmHit = _wrappingUpperRoot.Children.OfType<MeshGeometryModel3D>()
+            .Concat(_wrappingLowerRoot.Children.OfType<MeshGeometryModel3D>()).Any(mesh =>
+                ReferenceEquals(hit.ModelHit, mesh) || ReferenceEquals(hit.ModelHit, mesh.SceneNode));
+        _draggingWrappingFilm = _wrappingProgress >= TearCompleteProgress - .001;
+        if (_draggingWrappingFilm ? !filmHit : !tapeHit) return false;
+        CancelWrappingMotion();
+        _wrappingDragPoint = position;
+        return true;
+    }
+
+    public void DragWrappingTo(System.Windows.Point position)
+    {
+        if (_wrappingDragPoint is not { } previous) return;
+        var distance = Math.Max(180, Viewport.ActualWidth * .58);
+        var delta = _draggingWrappingFilm
+            ? ((previous.X - position.X) + (previous.Y - position.Y)) / (distance * 1.15)
+            : (previous.X - position.X) / distance;
+        SetWrappingProgress(_draggingWrappingFilm
+            ? Math.Clamp(_wrappingProgress + delta, TearCompleteProgress, 1)
+            : Math.Clamp(_wrappingProgress + delta, 0, TearCompleteProgress));
+        _wrappingDragPoint = position;
+    }
+
+    public void EndWrappingDrag()
+    {
+        _wrappingDragPoint = null;
+        _draggingWrappingFilm = false;
     }
 
     public void SetCaseOpen(bool open, bool animate = true)
@@ -478,7 +825,7 @@ internal sealed class DxJewelCaseScene : IDisposable
             _openScale.ScaleX = _openScale.ScaleY = _openScale.ScaleZ = targetScale;
             _openCenterTranslation.OffsetX = targetOffsetX;
             _spineCardOpenTranslation.OffsetX = targetSpineCardOffsetX;
-            Viewport.InvalidateRender();
+            InvalidateFinalFrame();
             return;
         }
 
@@ -532,7 +879,7 @@ internal sealed class DxJewelCaseScene : IDisposable
             _openScale.ScaleX = _openScale.ScaleY = _openScale.ScaleZ = targetScale;
             _openCenterTranslation.OffsetX = targetOffsetX;
             _spineCardOpenTranslation.OffsetX = targetSpineCardOffsetX;
-            Viewport.InvalidateRender();
+            InvalidateFinalFrame();
         };
         _lidHingeRotation.BeginAnimation(AxisAngleRotation3D.AngleProperty,
             angleAnimation,
@@ -602,7 +949,7 @@ internal sealed class DxJewelCaseScene : IDisposable
             if (generation != _discAnimationGeneration) return;
             _animationRenderTimer.Stop();
             Commit();
-            Viewport.InvalidateRender();
+            InvalidateFinalFrame();
         };
         _discTranslation.BeginAnimation(TranslateTransform3D.OffsetXProperty,
             Animation(fromX, targetX));
@@ -611,6 +958,44 @@ internal sealed class DxJewelCaseScene : IDisposable
         _discTranslation.BeginAnimation(TranslateTransform3D.OffsetZProperty, lift);
         _discTiltRotation.BeginAnimation(AxisAngleRotation3D.AngleProperty,
             Animation(fromAngle, targetAngle));
+    }
+
+    public bool IsDiscHit(System.Windows.Point position)
+    {
+        var hits = Viewport.FindHits(position)?.OrderBy(result => result.Distance);
+        if (hits is null) return false;
+        var discMeshes = _discRoot.Children.OfType<MeshGeometryModel3D>()
+            .Concat(_secondDiscRoot.Children.OfType<MeshGeometryModel3D>()).ToList();
+        return hits.Any(hit => discMeshes.Any(mesh => ReferenceEquals(hit.ModelHit, mesh)
+            || ReferenceEquals(hit.ModelHit, mesh.SceneNode)));
+    }
+
+    public void SetDiscPlaying(bool playing)
+    {
+        if (_disposed) return;
+        if (playing)
+        {
+            if (_discSpinTimer.IsEnabled) return;
+            _discSpinClock.Restart();
+            _discSpinTimer.Start();
+            return;
+        }
+        if (!_discSpinTimer.IsEnabled) return;
+        AdvanceDiscSpin();
+        _discSpinTimer.Stop();
+        _discSpinClock.Reset();
+        InvalidateFinalFrame();
+    }
+
+    private void AdvanceDiscSpin()
+    {
+        var elapsed = _discSpinClock.Elapsed.TotalSeconds;
+        _discSpinClock.Restart();
+        if (elapsed <= 0 || elapsed > .25) return;
+        var degrees = DiscPlaybackRpm * 6 * elapsed;
+        _discSpinRotation.Angle = (_discSpinRotation.Angle - degrees) % 360;
+        _secondDiscSpinRotation.Angle = _discSpinRotation.Angle;
+        Viewport.InvalidateRender();
     }
 
     public void SetSpineCardRemoved(bool removed, bool animate = true)
@@ -671,6 +1056,7 @@ internal sealed class DxJewelCaseScene : IDisposable
             _spineCardMotionTimer.Tick -= _spineCardMotionTick;
             _spineCardMotionTick = null;
             _spineCardMotionCompletion = null;
+            InvalidateFinalFrame();
             completion.TrySetResult(true);
         };
         _spineCardMotionTimer.Tick += _spineCardMotionTick;
@@ -750,6 +1136,7 @@ internal sealed class DxJewelCaseScene : IDisposable
             _bookletMotionTimer.Stop();
             _bookletMotionTimer.Tick -= _bookletMotionTick;
             _bookletMotionTick = null; _bookletMotionCompletion = null;
+            InvalidateFinalFrame();
             completion.TrySetResult(true);
         };
         _bookletMotionTimer.Tick += _bookletMotionTick;
@@ -855,11 +1242,11 @@ internal sealed class DxJewelCaseScene : IDisposable
     }
 
     private void AddBox(Vector3 center, float x, float y, float z, DxMaterial material,
-        bool transparent = false, GroupModel3D? target = null)
+        bool transparent = false, GroupModel3D? target = null, bool castsShadow = true)
     {
         var builder = new MeshBuilder(true, true, true);
         builder.AddBox(center, x, y, z);
-        AddMesh(builder.ToMeshGeometry3D(), material, transparent, false, target);
+        AddMesh(builder.ToMeshGeometry3D(), material, transparent, false, target, castsShadow);
     }
 
     private void AddTraySpineRibs(float width, float height, float frontSurfaceZ,
@@ -1040,7 +1427,7 @@ internal sealed class DxJewelCaseScene : IDisposable
     {
         const float width = 2.42f;
         const float height = 2.12f;
-        const float depth = 0.125f;
+        const float depth = StandardCaseDepth;
         var bottom = LoadStlTriangles("ZipMp3Player.Assets.CdCaseBottom.stl");
         var top = LoadStlTriangles("ZipMp3Player.Assets.CdCaseTop.stl");
         var trayBuilder = new MeshBuilder(true, true, true);
@@ -1425,6 +1812,199 @@ internal sealed class DxJewelCaseScene : IDisposable
         }, false, false, target);
     }
 
+    private void AddCaramelWrapping(float caseWidth, float caseHeight, float caseDepth)
+    {
+        const float tapeHeight = 0.035f;
+        // Fit tightly like commercial caramel wrap while retaining a small,
+        // deliberate depth separation from both acrylic and the obi. Using
+        // one large clearance in every direction made the film look baggy;
+        // making it coplanar causes depth-buffer flicker over Back artwork.
+        var outerWidth = caseWidth + WrappingSideClearance * 2;
+        var outerDepth = caseDepth + WrappingFaceClearance * 2;
+        var top = caseHeight / 2 + WrappingEdgeClearance;
+        var bottom = -caseHeight / 2 - WrappingEdgeClearance;
+        // The tear tape sits roughly halfway between the previous position
+        // and the lower sealed edge, as on the supplied Japanese package.
+        var tapeY = bottom + (top - bottom) * 0.09f;
+        var upperHeight = top - tapeY;
+        var lowerHeight = tapeY - bottom;
+        _wrappingCaseWidth = outerWidth;
+        _wrappingCaseDepth = outerDepth;
+        _wrappingTapeY = tapeY;
+        _wrappingUpperClearanceY = top - tapeY + 0.10f;
+        _wrappingLowerClearanceY = tapeY - bottom + 0.10f;
+
+        _wrappingUpperRotation.CenterX = 0;
+        _wrappingUpperRotation.CenterY = tapeY;
+        _wrappingUpperRotation.CenterZ = outerDepth / 2;
+        _wrappingLowerRotation.CenterX = 0;
+        _wrappingLowerRotation.CenterY = tapeY;
+        _wrappingLowerRotation.CenterZ = outerDepth / 2;
+        _tearTapeScale.CenterX = -outerWidth / 2;
+        _tearTapeScale.CenterY = tapeY;
+        _tearTapeScale.CenterZ = 0;
+        _tearTapeBackScale.CenterX = outerWidth / 2;
+        _tearTapeBackScale.CenterY = tapeY;
+        _tearTapeBackScale.CenterZ = 0;
+
+        var film = new PBRMaterial
+        {
+            Name = "Caramel wrapping film",
+            AlbedoColor = new Color4(0.97f, 0.985f, 1f, 0.115f),
+            MetallicFactor = 0,
+            RoughnessFactor = 0.050,
+            ReflectanceFactor = 0.64,
+            ClearCoatStrength = 1.0,
+            ClearCoatRoughness = 0.012,
+            RenderEnvironmentMap = true,
+            EnableAutoTangent = true
+        };
+        var fold = new PhongMaterial
+        {
+            Name = "Caramel wrapping fold",
+            DiffuseColor = new Color4(0.82f, 0.89f, 0.96f, 0.13f),
+            SpecularColor = new Color4(0.55f, 0.60f, 0.66f, 0.22f),
+            SpecularShininess = 70
+        };
+        var foldedFacet = new PhongMaterial
+        {
+            Name = "Caramel wrapping folded facet",
+            DiffuseColor = new Color4(0.84f, 0.90f, 0.97f, 0.085f),
+            SpecularColor = new Color4(0.78f, 0.84f, 0.92f, 0.34f),
+            SpecularShininess = 92
+        };
+        var sealRib = new PhongMaterial
+        {
+            Name = "Caramel wrapping seal ribs",
+            DiffuseColor = new Color4(0.88f, 0.93f, 0.98f, 0.16f),
+            SpecularColor = new Color4(0.86f, 0.91f, 0.98f, 0.48f),
+            SpecularShininess = 108
+        };
+        var tape = new PhongMaterial
+        {
+            Name = "Caramel tear tape",
+            DiffuseColor = new Color4(0.91f, 0.94f, 0.98f, 0.24f),
+            SpecularColor = new Color4(0.82f, 0.88f, 0.94f, 0.52f),
+            SpecularShininess = 95
+        };
+        var pulledTape = new PBRMaterial
+        {
+            Name = "Caramel tear tape ribbon",
+            AlbedoColor = new Color4(0.90f, 0.95f, 1f, 0.62f),
+            MetallicFactor = 0.04,
+            RoughnessFactor = 0.07,
+            ReflectanceFactor = 0.78,
+            ClearCoatStrength = 0.96,
+            ClearCoatRoughness = 0.035,
+            RenderEnvironmentMap = true,
+            EnableAutoTangent = true
+        };
+
+        AddBox(new Vector3(0, (top + tapeY) / 2, 0), outerWidth, upperHeight,
+            outerDepth, film, true, _wrappingUpperRoot, false);
+        AddBox(new Vector3(0, (bottom + tapeY) / 2, 0), outerWidth, lowerHeight,
+            outerDepth, film, true, _wrappingLowerRoot, false);
+        // Heat-sealed folds are slightly denser than the broad film and make
+        // the package readable even over pale cover artwork.
+        AddBox(new Vector3(0, top - 0.012f, 0), outerWidth - 0.04f, 0.018f,
+            outerDepth + 0.005f, fold, true, _wrappingUpperRoot, false);
+        AddBox(new Vector3(0, bottom + 0.012f, 0), outerWidth - 0.04f, 0.018f,
+            outerDepth + 0.005f, fold, true, _wrappingLowerRoot, false);
+        void AddFrontCrease(Vector2 start, Vector2 end, GroupModel3D target)
+        {
+            var direction = Vector2.Normalize(end - start);
+            var perpendicular = new Vector2(-direction.Y, direction.X) * 0.006f;
+            var z = outerDepth / 2 + 0.007f;
+            var crease = new MeshBuilder(true, false, false);
+            crease.AddQuad(new Vector3(start + perpendicular, z), new Vector3(start - perpendicular, z),
+                new Vector3(end - perpendicular, z), new Vector3(end + perpendicular, z));
+            AddMesh(crease.ToMeshGeometry3D(), fold, true, true, target, false);
+        }
+        var left = -outerWidth / 2 + 0.025f;
+        var right = outerWidth / 2 - 0.025f;
+        AddFrontCrease(new Vector2(left, top - 0.02f), new Vector2(left + 0.23f, top - 0.16f), _wrappingUpperRoot);
+        AddFrontCrease(new Vector2(right, top - 0.02f), new Vector2(right - 0.23f, top - 0.16f), _wrappingUpperRoot);
+
+        // Real caramel packs overlap at each sealed end. The triangular
+        // facets gather excess film into the corners rather than leaving a
+        // perfectly rectangular transparent box.
+        void AddCornerFacet(Vector3 a, Vector3 b, Vector3 c, GroupModel3D target)
+        {
+            var facet = new MeshBuilder(true, false, false);
+            facet.AddTriangle(a, b, c);
+            AddMesh(facet.ToMeshGeometry3D(), foldedFacet, true, true, target, false);
+        }
+        var frontFaceZ = outerDepth / 2 + 0.009f;
+        var backFaceZ = -outerDepth / 2 - 0.009f;
+        foreach (var z in new[] { frontFaceZ, backFaceZ })
+        {
+            AddCornerFacet(new Vector3(left, top, z), new Vector3(left + 0.24f, top, z),
+                new Vector3(left + 0.14f, top - 0.17f, z + (z > 0 ? 0.004f : -0.004f)), _wrappingUpperRoot);
+            AddCornerFacet(new Vector3(right, top, z), new Vector3(right - 0.24f, top, z),
+                new Vector3(right - 0.14f, top - 0.17f, z + (z > 0 ? 0.004f : -0.004f)), _wrappingUpperRoot);
+        }
+
+        // Fine heat-seal ribs run across the narrow top and bottom faces.
+        // One mesh per edge keeps the detail inexpensive while allowing the
+        // specular highlight to break into the characteristic pressed pattern.
+        void AddSealRibs(float y, GroupModel3D target)
+        {
+            var ribs = new MeshBuilder(true, false, false);
+            const int count = 31;
+            for (var index = 1; index < count; index++)
+            {
+                var x = left + (right - left) * index / count;
+                const float halfRib = 0.0022f;
+                ribs.AddQuad(new Vector3(x - halfRib, y, -outerDepth / 2 + 0.012f),
+                    new Vector3(x - halfRib, y, outerDepth / 2 - 0.012f),
+                    new Vector3(x + halfRib, y, outerDepth / 2 - 0.012f),
+                    new Vector3(x + halfRib, y, -outerDepth / 2 + 0.012f));
+            }
+            AddMesh(ribs.ToMeshGeometry3D(), sealRib, true, true, target, false);
+        }
+        AddSealRibs(top + 0.006f, _wrappingUpperRoot);
+        AddSealRibs(bottom - 0.006f, _wrappingLowerRoot);
+
+
+        // The Japanese-style tear tape circles the package. Its small tab is
+        // exposed at the lower part of the right spine and can be dragged.
+        AddBox(new Vector3(0, tapeY, outerDepth / 2 + 0.004f), outerWidth, tapeHeight,
+            0.009f, tape, true, _tearTapeFrontRoot, false);
+        AddBox(new Vector3(0, tapeY, -outerDepth / 2 - 0.004f), outerWidth, tapeHeight,
+            0.009f, tape, true, _tearTapeBackRoot, false);
+        AddBox(new Vector3(caseWidth / 2 + WrappingSideClearance + 0.005f, tapeY, 0), 0.010f,
+            tapeHeight, outerDepth, tape, true, _tearTapeSideRoot, false);
+        AddBox(new Vector3(-caseWidth / 2 - WrappingSideClearance - 0.005f, tapeY, 0), 0.010f,
+            tapeHeight, outerDepth, tape, true, _tearTapeSideRoot, false);
+        // A short two-plane tab: the inner section stays against the film,
+        // while the tip bends forward and slightly downward. This gives it a
+        // changing highlight and avoids the appearance of a rigid rectangle.
+        var tabAnchorX = caseWidth / 2 + WrappingSideClearance + 0.002f;
+        var tabZ = outerDepth / 2 + 0.010f;
+        const float tabHalfHeight = 0.022f;
+        var tab = new MeshBuilder(true, false, false);
+        var tabMidTop = new Vector3(tabAnchorX + 0.012f, tapeY + tabHalfHeight - 0.003f, tabZ + 0.006f);
+        var tabMidBottom = new Vector3(tabAnchorX + 0.012f, tapeY - tabHalfHeight - 0.004f, tabZ + 0.006f);
+        var tabTipTop = new Vector3(tabAnchorX + 0.032f, tapeY + tabHalfHeight - 0.010f, tabZ + 0.020f);
+        var tabTipBottom = new Vector3(tabAnchorX + 0.032f, tapeY - tabHalfHeight - 0.014f, tabZ + 0.020f);
+        tab.AddQuad(new Vector3(tabAnchorX, tapeY + tabHalfHeight, tabZ),
+            new Vector3(tabAnchorX, tapeY - tabHalfHeight, tabZ), tabMidBottom, tabMidTop);
+        tab.AddQuad(tabMidTop, tabMidBottom, tabTipBottom, tabTipTop);
+        AddMesh(tab.ToMeshGeometry3D(), pulledTape, true, true, _tearTapeSideRoot, false);
+        _tearTapeTabModel = _tearTapeSideRoot.Children.OfType<MeshGeometryModel3D>().Last();
+        _tearTapeRibbonModel = new MeshGeometryModel3D
+        {
+            Geometry = new MeshBuilder(true, false, false).ToMeshGeometry3D(),
+            Material = pulledTape,
+            IsTransparent = true,
+            IsThrowingShadow = false,
+            IsHitTestVisible = true,
+            CullMode = DxCullMode.None,
+            Visibility = System.Windows.Visibility.Hidden
+        };
+        _tearTapeRibbonRoot.Children.Add(_tearTapeRibbonModel);
+    }
+
     private void AddSpineCard(BitmapSource? bitmap, float caseWidth, float caseHeight, float caseDepth)
     {
         if (bitmap is null) return;
@@ -1433,7 +2013,10 @@ internal sealed class DxJewelCaseScene : IDisposable
         // physical spine, and use that horizontal scale for both flaps. Height
         // is independent: scanner proportions and fold detection must not make
         // a tall obi extend behind the case frame and lose its top/bottom edge.
-        var wrappedSpineWidth = caseDepth + 0.030f;
+        // The printed side panel is exactly as deep as the physical case.
+        // Front/back flaps receive their own small Z offset below; including
+        // that render clearance in this scale made the side look too wide.
+        var wrappedSpineWidth = caseDepth;
         var horizontalScale = wrappedSpineWidth / Math.Max(1, spine.PixelWidth);
         var backWidth = horizontalScale * back.PixelWidth;
         var frontWidth = horizontalScale * front.PixelWidth;
@@ -1449,8 +2032,8 @@ internal sealed class DxJewelCaseScene : IDisposable
         // the flap origin from the side plane leaves a visible crack at steep
         // viewing angles.
         var foldX = outsideX;
-        var frontZ = caseDepth / 2 + 0.015f;
-        var backZ = -caseDepth / 2 - 0.015f;
+        var frontZ = caseDepth / 2 + SpineCardFlapClearance;
+        var backZ = -caseDepth / 2 - SpineCardFlapClearance;
 
         // The source is laid flat as Back flap | Spine | Front flap. Each flap
         // stays with the physical case face it covers when the lid is opened.
@@ -1460,10 +2043,10 @@ internal sealed class DxJewelCaseScene : IDisposable
             frontZ, false, _spineCardRoot, "Spine Card front flap");
 
         var side = new MeshBuilder(true, true, true);
-        side.AddQuad(new Vector3(outsideX, cardHeight / 2, frontZ),
-            new Vector3(outsideX, cardHeight / 2, backZ),
-            new Vector3(outsideX, -cardHeight / 2, backZ),
-            new Vector3(outsideX, -cardHeight / 2, frontZ),
+        side.AddQuad(new Vector3(outsideX, cardHeight / 2, caseDepth / 2),
+            new Vector3(outsideX, cardHeight / 2, -caseDepth / 2),
+            new Vector3(outsideX, -cardHeight / 2, -caseDepth / 2),
+            new Vector3(outsideX, -cardHeight / 2, caseDepth / 2),
             new Vector2(1, 0), new Vector2(0, 0), new Vector2(0, 1), new Vector2(1, 1));
         AddMesh(side.ToMeshGeometry3D(), new PhongMaterial
         {
@@ -1478,7 +2061,7 @@ internal sealed class DxJewelCaseScene : IDisposable
     }
 
     private void AddDisc(BitmapSource? bitmap, Vector3 center, float outerRadius, float innerRadius,
-        float thickness, GroupModel3D target)
+        float thickness, GroupModel3D target, string artworkName = "Disc artwork")
     {
         const int segments = 96;
         var top = new MeshBuilder(true, true, true);
@@ -1536,7 +2119,7 @@ internal sealed class DxJewelCaseScene : IDisposable
         {
             topMaterial = new PhongMaterial
             {
-                Name = "Disc artwork",
+                Name = artworkName,
                 DiffuseColor = new Color4(1, 1, 1, 1),
                 DiffuseMap = CreateTexture(bitmap),
                 RenderDiffuseMap = true,
@@ -1678,6 +2261,10 @@ internal sealed class DxJewelCaseScene : IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
+        _discSpinTimer.Stop();
+        _discSpinClock.Stop();
+        CancelWrappingMotion();
         CancelSpineCardMotion();
         CancelBookletMotion();
         _animationRenderTimer.Stop();

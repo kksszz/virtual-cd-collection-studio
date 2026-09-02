@@ -113,15 +113,25 @@ internal sealed class BookletViewerWindow : Window
         {
             _previous.IsEnabled = _next.IsEnabled = false;
             _status.Text = LocalizationService.Select("ジャケットを開いています…", "Opening booklet…");
-            PresentImage(booklet.FrontSpread, animateTurn: false); ResizeImage();
-            var unfold = new ScaleTransform(1, 1);
-            _image.RenderTransformOrigin = new Point(.5, .5); _image.RenderTransform = unfold;
-            unfold.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(.82, 1, TimeSpan.FromMilliseconds(360))
-                { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
-            await Task.Delay(450);
-            if (_closed) return;
-            _image.RenderTransform = Transform.Identity;
-            if (booklet.Pages.Count > 0) await ShowPageAsync(0);
+            // Enter directly on the Front page. Previously the full spread was
+            // shown first and then used as the old page of a polygon turn,
+            // which briefly produced several differently sized overlapping
+            // copies during the opening transition.
+            if (booklet.Pages.Count > 0)
+            {
+                _image.Opacity = 0;
+                await ShowPageAsync(0, animateTurn: false);
+                if (_closed) return;
+                var reveal = new ScaleTransform(.965, .965);
+                _image.RenderTransformOrigin = new Point(.5, .5);
+                _image.RenderTransform = reveal;
+                _image.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1,
+                    TimeSpan.FromMilliseconds(240)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+                reveal.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(.965, 1,
+                    TimeSpan.FromMilliseconds(240)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+                reveal.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(.965, 1,
+                    TimeSpan.FromMilliseconds(240)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+            }
             else { _image.Source = null; _status.Text = LocalizationService.Select("PAGE・ライナーノーツ画像がありません。画像の用途を設定してください。", "No PAGE or Liner Notes images. Assign artwork roles first."); }
         };
     }
@@ -135,7 +145,7 @@ internal sealed class BookletViewerWindow : Window
         }
     }
 
-    private async Task ShowPageAsync(int index)
+    private async Task ShowPageAsync(int index, bool animateTurn = true)
     {
         var generation = ++_loadGeneration;
         _index = index; EndDrag();
@@ -146,7 +156,7 @@ internal sealed class BookletViewerWindow : Window
         {
             var bitmap = await Task.Run(page.LoadImage);
             if (_closed || generation != _loadGeneration) return;
-            PresentImage(bitmap, animateTurn: true, direction: _navigationDirection); SetZoom(1);
+            PresentImage(bitmap, animateTurn, direction: _navigationDirection); SetZoom(1);
             _scroll.ScrollToHorizontalOffset(0); _scroll.ScrollToVerticalOffset(0);
         }
         catch
@@ -159,12 +169,27 @@ internal sealed class BookletViewerWindow : Window
     private void SetZoom(double zoom) { _zoom = Math.Clamp(zoom, .25, 8); ResizeImage(); }
     private void PresentImage(BitmapSource bitmap, bool animateTurn, int direction = 1)
     {
-        var oldPage = _image.Source as BitmapSource;
+        // Resize the page frame for the destination before animating. The old
+        // polygon page-turn kept its original portrait/landscape dimensions,
+        // so a tall page could briefly protrude beside a wide next page.
+        _pageTurn.Stop();
+        _pageTurn.Visibility = Visibility.Collapsed;
         _image.Source = bitmap;
         _gutter.Visibility = (double)bitmap.PixelWidth / Math.Max(1, bitmap.PixelHeight) >= 1.28
             ? Visibility.Visible : Visibility.Collapsed;
-        if (!animateTurn) return;
-        if (oldPage is not null) _pageTurn.Start(oldPage, direction >= 0);
+        ResizeImage();
+        if (!animateTurn)
+        {
+            _image.Opacity = 1;
+            _image.RenderTransform = Transform.Identity;
+            return;
+        }
+        var slide = new TranslateTransform(direction >= 0 ? 24 : -24, 0);
+        _image.RenderTransform = slide;
+        _image.BeginAnimation(OpacityProperty, new DoubleAnimation(.30, 1,
+            TimeSpan.FromMilliseconds(190)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+        slide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(slide.X, 0,
+            TimeSpan.FromMilliseconds(190)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
     }
 
     private void ResizeImage()

@@ -16,7 +16,7 @@ internal static class AppDataBackupService
         using var archive = new ZipArchive(output, ZipArchiveMode.Create);
         var manifest = archive.CreateEntry("backup-info.json", CompressionLevel.Optimal);
         using (var writer = new StreamWriter(manifest.Open()))
-            writer.Write(JsonSerializer.Serialize(new { Version = 1, CreatedLocal = DateTimeOffset.Now, App = "zip.mp3 Player and Manager Plus" }));
+            writer.Write(JsonSerializer.Serialize(new { Version = 1, CreatedLocal = DateTimeOffset.Now, App = "Virtual CD Collection Studio" }));
 
         foreach (var name in CoreFiles)
         {
@@ -50,7 +50,7 @@ internal static class AppDataBackupService
             using (var archive = new ZipArchive(input, ZipArchiveMode.Read))
             {
                 if (archive.GetEntry("backup-info.json") is null)
-                    throw new InvalidDataException("zip.mp3 Player and Manager Plus のバックアップファイルではありません。");
+                    throw new InvalidDataException("Virtual CD Collection Studio のバックアップファイルではありません。");
                 long totalSize = 0;
                 foreach (var entry in archive.Entries)
                 {
