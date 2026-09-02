@@ -114,4 +114,6 @@ AIモデルやその実行環境は同梱していません。
 
 ## ライセンス
 
-現時点ではライセンスを指定していません。
+本ソフトウェアの独自コードは **GNU General Public License v3.0 only（GPL-3.0-only）** で公開しています。詳細は [LICENSE](LICENSE) を参照してください。
+
+配布物に含まれる第三者ライブラリと3D素材には、それぞれのライセンスが適用されます。著作権表示、出典、改変内容は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)、各ライセンス全文は `THIRD_PARTY_LICENSES` フォルダーに収録しています。

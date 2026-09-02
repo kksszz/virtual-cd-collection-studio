@@ -10,6 +10,8 @@
     <Title>Virtual CD Collection Studio</Title>
     <Product>Virtual CD Collection Studio</Product>
     <Description>Preserve, explore and play complete CD collections in a virtual library</Description>
+    <Copyright>Copyright (C) 2026 kksszz</Copyright>
+    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <Version>0.74.0</Version>
     <InformationalVersion>0.74.0</InformationalVersion>
@@ -25,6 +27,11 @@
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
     <PackageReference Include="HelixToolkit.Wpf.SharpDX" Version="3.1.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="THIRD_PARTY_LICENSES\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <Compile Remove="AiDevHarness\**\*.cs" />
