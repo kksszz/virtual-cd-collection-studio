@@ -22,10 +22,23 @@ namespace ZipMp3Player;
 /// </summary>
 internal sealed class DxJewelCaseScene : IDisposable
 {
-    // Standard single jewel case: approximately 142 x 125 x 10.4 mm.
-    // Width and height are expressed in scene units, so keeping depth at the
-    // same physical scale is important for both the printed spine and obi.
+    // Dimensions fixed from the supplied scans: 142 x 125 x 10.0 mm closed.
+    // Treat this as the outer-envelope constraint. Moulded rails must remain
+    // inside it and may never be added on top of the front or rear surface.
+    internal const float StandardCaseDepthMm = 10.0f;
     internal const float StandardCaseDepth = 0.177f;
+    // A tray card is 150 mm wide: a 138 mm rear panel plus two 6 mm folds.
+    // Keep that physical print width, centred between the case's clear lips.
+    internal const float StandardVisibleSpineWidthMm = 6f;
+    internal const float StandardVisibleSpineDepth =
+        StandardCaseDepth * StandardVisibleSpineWidthMm / StandardCaseDepthMm;
+    private const float OpeningSideRearLipMm = 0.8f;
+    private const float OpeningSideTrayBandMm = 2.0f;
+    // The paper is below the clear outer wall, between acrylic and tray.
+    internal const float StandardSpinePaperInset = 0.010f;
+    // The opening-side parametric lid has a 2 mm perimeter wall. Keep that
+    // spine behind the wall's inner face instead of intersecting its volume.
+    internal const float OpeningSideSpinePaperInset = 0.036f;
     internal const float WrappingSideClearance = 0.016f;
     internal const float WrappingFaceClearance = 0.010f;
     internal const float WrappingEdgeClearance = 0.010f;
@@ -34,13 +47,18 @@ internal sealed class DxJewelCaseScene : IDisposable
     // the bottom hinge is on the left while the top hinge is on the right.
     // After mirroring the top into its assembled orientation, both hinge
     // barrels meet slightly inboard of the outer left edge.
-    private const double AssembledHingeX = -1.085;
+    // Circle centres measured from both normalized STL hinge bores are
+    // -1.12576 (base) and -1.12743 (lid). Use their common centre and build
+    // the replacement lid's hinge rail around this exact axis.
+    private const double AssembledHingeX = -1.12660;
     private static readonly Lazy<StlCaseGeometry> CaseGeometry = new(LoadStlCaseGeometry);
     private static readonly Lazy<CoverFlowShellGeometry> CoverFlowGeometry = new(CreateCoverFlowShellGeometry);
     private readonly DefaultEffectsManager _effects = new();
     private readonly GroupModel3D _caseRoot = new();
     private readonly GroupModel3D _baseRoot = new();
     private readonly GroupModel3D _lidRoot = new();
+    private readonly GroupModel3D _frontPanelRoot = new();
+    private readonly TranslateTransform3D _frontPanelSeatTranslation = new();
     private readonly GroupModel3D _spineCardRoot = new();
     private readonly TranslateTransform3D _spineCardTranslation = new();
     private readonly TranslateTransform3D _spineCardOpenTranslation = new();
@@ -96,9 +114,9 @@ internal sealed class DxJewelCaseScene : IDisposable
     private readonly GroupModel3D _secondDiscRoot = new();
     private readonly AxisAngleRotation3D _discSpinRotation = new(new Vector3D(0, 0, 1), 0);
     private readonly AxisAngleRotation3D _secondDiscSpinRotation = new(new Vector3D(0, 0, 1), 0);
-    private readonly DispatcherTimer _discSpinTimer = new(DispatcherPriority.Render)
-        { Interval = TimeSpan.FromMilliseconds(16) };
     private readonly System.Diagnostics.Stopwatch _discSpinClock = new();
+    private bool _discPlaying;
+    private double _discSpinStartAngle;
     internal const double DiscPlaybackRpm = 240;
     private readonly Dictionary<BitmapSource, TextureModel> _textureCache =
         new(ReferenceEqualityComparer.Instance);
@@ -142,7 +160,9 @@ internal sealed class DxJewelCaseScene : IDisposable
         _caseTransform.Children.Add(new TranslateTransform3D(0, 0.12, 0.46));
         _caseTransform.Children.Add(_viewPan);
         _caseRoot.Transform = _caseTransform;
-        _lidRoot.Transform = new RotateTransform3D(_lidHingeRotation, new Point3D(AssembledHingeX, 0, 0));
+        _lidRoot.Transform = new RotateTransform3D(
+            _lidHingeRotation, new Point3D(AssembledHingeX, 0, 0));
+        _frontPanelRoot.Transform = _frontPanelSeatTranslation;
         _bookletLift = new RotateTransform3D(_bookletTilt);
         var bookletTransform = new Transform3DGroup();
         bookletTransform.Children.Add(_bookletLift);
@@ -184,8 +204,6 @@ internal sealed class DxJewelCaseScene : IDisposable
         _caseRoot.Children.Add(_lidRoot);
         _caseRoot.Children.Add(_spineCardRoot);
         _caseRoot.Children.Add(_wrappingRoot);
-
-        _discSpinTimer.Tick += (_, _) => AdvanceDiscSpin();
 
         Viewport = new Viewport3DX
         {
@@ -248,20 +266,21 @@ internal sealed class DxJewelCaseScene : IDisposable
             Range = 8
         });
 
-        // Product-photography light cards are outside the camera frustum but
-        // visible to the reflection probe. They give clear acrylic its
-        // characteristic long white edge highlights.
+        // Product-photography light cards sit behind the fixed camera but stay
+        // visible to the reflection probe. Keeping them merely beside the
+        // normal frustum allowed their grey faces to enter the extreme edges
+        // on wide/full-screen viewports.
         AddStudioCard(
-            new Vector3(-3.5f, 2.7f, 2.4f), new Vector3(3.5f, 2.7f, 2.4f),
-            new Vector3(3.5f, 2.7f, -2.2f), new Vector3(-3.5f, 2.7f, -2.2f),
+            new Vector3(-3.5f, 2.7f, 9.0f), new Vector3(3.5f, 2.7f, 9.0f),
+            new Vector3(3.5f, 2.7f, 6.1f), new Vector3(-3.5f, 2.7f, 6.1f),
             new Color4(0.18f, 0.18f, 0.17f, 1));
         AddStudioCard(
-            new Vector3(-3.3f, 2.3f, -1.5f), new Vector3(-3.3f, 2.3f, 3.4f),
-            new Vector3(-3.3f, -2.3f, 3.4f), new Vector3(-3.3f, -2.3f, -1.5f),
+            new Vector3(-3.8f, 2.3f, 6.1f), new Vector3(-3.8f, 2.3f, 9.2f),
+            new Vector3(-3.8f, -2.3f, 9.2f), new Vector3(-3.8f, -2.3f, 6.1f),
             new Color4(0.09f, 0.09f, 0.085f, 1));
         AddStudioCard(
-            new Vector3(3.5f, 2.0f, 3.0f), new Vector3(3.5f, 2.0f, -1.8f),
-            new Vector3(3.5f, -2.0f, -1.8f), new Vector3(3.5f, -2.0f, 3.0f),
+            new Vector3(3.8f, 2.0f, 9.2f), new Vector3(3.8f, 2.0f, 6.1f),
+            new Vector3(3.8f, -2.0f, 6.1f), new Vector3(3.8f, -2.0f, 9.2f),
             new Color4(0.055f, 0.055f, 0.052f, 1));
 
         _reflection.Children.Add(_caseRoot);
@@ -277,6 +296,7 @@ internal sealed class DxJewelCaseScene : IDisposable
         ResetSpineCardDragOffset();
         _baseRoot.Children.Clear();
         _lidRoot.Children.Clear();
+        _frontPanelRoot.Children.Clear();
         _spineCardRoot.Children.Clear();
         _wrappingUpperRoot.Children.Clear();
         _wrappingLowerRoot.Children.Clear();
@@ -287,7 +307,8 @@ internal sealed class DxJewelCaseScene : IDisposable
         _tearTapeTabModel = null;
         _tearTapeRibbonModel = null;
         _bookletRoot.Children.Clear();
-        _lidRoot.Children.Add(_bookletRoot);
+        _frontPanelRoot.Children.Add(_bookletRoot);
+        _lidRoot.Children.Add(_frontPanelRoot);
         _discRoot.Children.Clear();
         _secondDiscRoot.Children.Clear();
         _baseRoot.Children.Add(_secondDiscRoot);
@@ -297,7 +318,6 @@ internal sealed class DxJewelCaseScene : IDisposable
         const float depth = StandardCaseDepth;
         const float discCenterX = 0.044f;
         const float discOuterRadius = 1.018f;
-
         var acrylic = new PBRMaterial
         {
             Name = "Clear acrylic",
@@ -318,26 +338,45 @@ internal sealed class DxJewelCaseScene : IDisposable
             // solid forms rather than almost invisible panes.
             // Neutral dense acrylic. A near-white albedo over a white tray
             // turns the whole perimeter into a paper-like white frame.
-            AlbedoColor = new Color4(0.57f, 0.59f, 0.59f, 0.34f),
+            // Keep the rail readable through highlights, but do not let its
+            // body become a broad grey strip in a near-spine view.
+            AlbedoColor = new Color4(0.52f, 0.54f, 0.55f, 0.23f),
             MetallicFactor = 0,
             RoughnessFactor = 0.16,
-            ReflectanceFactor = 0.43,
-            ClearCoatStrength = 0.30,
+            ReflectanceFactor = 0.46,
+            ClearCoatStrength = 0.34,
             ClearCoatRoughness = 0.09,
             RenderEnvironmentMap = true,
             EnableAutoTangent = true
         };
-        var manualStopAcrylic = new PBRMaterial
+        var frontSideWallAcrylic = new PBRMaterial
         {
-            Name = "Clear manual retaining lip",
-            // A narrow but relatively thick clear moulding: less transparent
-            // than the broad lid window so its boundary remains readable.
-            AlbedoColor = new Color4(0.61f, 0.63f, 0.62f, 0.34f),
+            Name = "Clear front-lid side walls",
+            // Seen square-on from a spine view, a 2 mm acrylic wall must read
+            // as a continuous solid between the front plate and mating seam.
+            // Using the very pale broad-panel material made this volume vanish
+            // into the background and the lid looked suspended above the tray.
+            AlbedoColor = new Color4(0.68f, 0.70f, 0.71f, 0.38f),
             MetallicFactor = 0,
-            RoughnessFactor = 0.19,
-            ReflectanceFactor = 0.40,
-            ClearCoatStrength = 0.24,
-            ClearCoatRoughness = 0.10,
+            RoughnessFactor = 0.13,
+            ReflectanceFactor = 0.48,
+            ClearCoatStrength = 0.38,
+            ClearCoatRoughness = 0.07,
+            RenderEnvironmentMap = true,
+            EnableAutoTangent = true
+        };
+        var spineWindowAcrylic = new PBRMaterial
+        {
+            Name = "Clear opening-side Spine window",
+            // Only the long face over the printed Spine uses this clearer
+            // resin. Keep the denser material on the surrounding end frame,
+            // catches and top/bottom rails so their moulded shape is retained.
+            AlbedoColor = new Color4(0.88f, 0.90f, 0.91f, 0.11f),
+            MetallicFactor = 0,
+            RoughnessFactor = 0.10,
+            ReflectanceFactor = 0.44,
+            ClearCoatStrength = 0.32,
+            ClearCoatRoughness = 0.06,
             RenderEnvironmentMap = true,
             EnableAutoTangent = true
         };
@@ -383,25 +422,13 @@ internal sealed class DxJewelCaseScene : IDisposable
             ClearCoatStrength = trayIsClear ? 0.30 : 0,
             RenderEnvironmentMap = trayIsClear
         };
-        var trayGrooveColor = item.TrayColorMode switch
-        {
-            "White" => new Color4(0.61f, 0.59f, 0.53f, 1),
-            "Black" => new Color4(0.012f, 0.014f, 0.017f, 1),
-            "Gray" => new Color4(0.20f, 0.215f, 0.23f, 1),
-            _ => new Color4(0.026f, 0.031f, 0.039f, 1)
-        };
-        var trayGroove = new PBRMaterial
-        {
-            Name = "Tray moulding grooves",
-            AlbedoColor = trayGrooveColor,
-            MetallicFactor = 0,
-            RoughnessFactor = 0.58,
-            ReflectanceFactor = 0.10
-        };
         var bookletPageEdge = new PBRMaterial
         {
             Name = "Booklet page edges",
-            AlbedoColor = new Color4(0.72f, 0.71f, 0.68f, 1),
+            // Keep the unprinted 1.5 mm page block visibly distinct from the
+            // image-wrapped covers and fold.  The former warm near-white read
+            // as an untextured gap under the scene lighting.
+            AlbedoColor = new Color4(0.43f, 0.43f, 0.43f, 1),
             MetallicFactor = 0,
             RoughnessFactor = 0.94,
             ReflectanceFactor = 0.02
@@ -415,24 +442,27 @@ internal sealed class DxJewelCaseScene : IDisposable
         AddMesh(shell.BottomTray, tray, trayIsClear, true, _baseRoot, false);
         AddMesh(shell.BottomPerimeter, acrylic, true, true, _baseRoot);
         AddMesh(shell.BottomMouldedEdges, mouldedEdgeAcrylic, true, true, _baseRoot);
-        AddMesh(shell.TopLid, acrylic, true, true, _lidRoot);
-        AddMesh(shell.TopMouldedEdges, mouldedEdgeAcrylic, true, true, _lidRoot);
+        // Rebuild from the two source shells instead of layering corrective
+        // boxes over them. The top STL is the complete rotating front lid;
+        // its panel, rails, catches and hinge knuckles must remain one rigid
+        // part. The lower STL is split only by material into the fixed clear
+        // rear shell and its removable tray.
+        AddMesh(shell.TopLid, acrylic, true, true, _frontPanelRoot);
+        AddMesh(shell.TopMouldedEdges, frontSideWallAcrylic,
+            true, true, _frontPanelRoot);
+        AddTopBottomSideRibs(width, height, depth, mouldedEdgeAcrylic);
 
-        // The removable tray wraps up around the outer spine side. Without
-        // this wall the reverse of the printed spine is visible from inside the
-        // opened case, unlike the moulded right-rear corner of a real tray.
+        // Once the printable STL's false tray wall is removed, the opening
+        // edge must still be closed by the two transparent shell rails. Extend
+        // the rear and front rails to the common Z=0 mating plane. They remain
+        // separate rigid parts, but meet without an empty band when closed.
+        AddOpeningSideMatingRails(width, height, depth,
+            spineWindowAcrylic);
+
+        // Continue the tray strip up to the inner edges of the two 2 mm clear
+        // shell rails. It must not stop 4.5 mm early as before, nor pass through
+        // the rails as a full 125 mm strip.
         AddTraySpineCover(width, height, depth, tray, trayIsClear);
-        AddTrayRecessBacking(width, height, depth, tray, trayIsClear);
-
-        // Opaque replacement trays have a finely ribbed hinge-side band.  The
-        // ribs are real shallow geometry, not painted lines, so their contrast
-        // follows the light as the case rotates.  A clear tray already exposes
-        // the STL surface and does not need this opaque moulding overlay.
-        if (!trayIsClear)
-            AddTraySpineRibs(width, height,
-                shell.FrontArtworkArea.Z + 0.001f, tray, trayGroove);
-        AddManualRetainingLip(width, height, shell.FrontArtworkArea.Z + 0.001f,
-            manualStopAcrylic);
 
         // Use the inset plane actually modelled into the upper STL. Its source
         // dimensions are about 120.6 x 124.8 mm; using a generic 120 x 120
@@ -452,8 +482,8 @@ internal sealed class DxJewelCaseScene : IDisposable
         // Keep the right case inset fixed and extend only the left artwork edge;
         // otherwise a crescent of the disc remains visible beside the manual.
         // The booklet is retained by the raised lip at the right edge of the
-        // ribbed tray band. Its artwork must begin after that lip rather than
-        // running underneath the moulding.
+        // hinge-side retaining lip. Its artwork must begin after that lip
+        // rather than running underneath the clear moulding.
         var bookletLeft = Math.Max(discCenterX - discOuterRadius,
             TrayManualStopRight(width) + 0.002f);
         var bookletRight = frontPlaneCenterX + bookletWidthMm / 2;
@@ -461,24 +491,47 @@ internal sealed class DxJewelCaseScene : IDisposable
         var bookletTop = frontPlaneCenterY + bookletHeightMm / 2;
         var bookletWidth = bookletRight - bookletLeft;
         var bookletHeight = bookletTop - bookletBottom;
+        // A real jewel case has a 1 mm clear panel whose perimeter frame sits
+        // another 0.5 mm outward. The booklet rests immediately behind that
+        // panel, not at the frame's outer surface.
         _bookletLift.CenterX = (bookletLeft + bookletRight) / 2;
         _bookletLift.CenterY = (bookletBottom + bookletTop) / 2;
         _bookletLift.CenterZ = shell.FrontArtworkArea.Z;
-        // Only the actual page edges have thickness.  The artwork itself is a
-        // surface nested in the upper STL, so the clear hinge strip remains
-        // genuinely empty instead of looking like a continuation of the page.
-        for (var page = 0; page < 4; page++)
+        // A multi-page manual is about 1.5 mm thick. Keep its printed front at
+        // the acrylic contact plane and grow the page block inward, far enough
+        // to sit visibly beneath the lid's retaining claws.
+        var bookletThickness = 1.5f * depth / StandardCaseDepthMm;
+        var bookletFrontZ = shell.FrontArtworkArea.Z - 0.0005f;
+        var bookletRearZ = bookletFrontZ - bookletThickness;
+        AddOpenBookletPageBlock(bookletLeft, bookletRight,
+            bookletBottom, bookletTop, bookletRearZ, bookletFrontZ,
+            bookletPageEdge, leaveFoldOpen: item.FrontCover is not null);
+        if (item.FrontCover is not null)
+            AddBookletFoldArtwork(item.FrontCover,
+                item.InsideFrontCover ?? item.FrontCover,
+                bookletLeft, bookletBottom, bookletTop,
+                bookletRearZ, bookletFrontZ);
+
+        // Fine stepped edges keep the block readable as pages rather than a
+        // single plastic slab.
+        const int visiblePageEdges = 8;
+        for (var page = 0; page < visiblePageEdges; page++)
         {
-            var pageZ = shell.FrontArtworkArea.Z - 0.004f + page * 0.0015f;
+            var pageZ = bookletFrontZ
+                - bookletThickness * (page + 0.5f) / visiblePageEdges;
             AddBox(new Vector3(bookletRight + 0.0015f, 0, pageZ),
-                0.0025f, bookletHeight - 0.008f, 0.0012f, bookletPageEdge, false, _bookletRoot);
+                0.0025f, bookletHeight - 0.008f,
+                bookletThickness / visiblePageEdges * 0.55f,
+                bookletPageEdge, false, _bookletRoot, false);
             AddBox(new Vector3((bookletLeft + bookletRight) / 2, bookletBottom - 0.0015f, pageZ),
-                bookletWidth - 0.008f, 0.0025f, 0.0012f, bookletPageEdge, false, _bookletRoot);
+                bookletWidth - 0.008f, 0.0025f,
+                bookletThickness / visiblePageEdges * 0.55f,
+                bookletPageEdge, false, _bookletRoot, false);
         }
         AddArtwork(item.FrontCover, bookletLeft, bookletRight, bookletBottom, bookletTop,
-            shell.FrontArtworkArea.Z + 0.001f, false, _bookletRoot);
+            shell.FrontArtworkArea.Z - 0.0001f, false, _bookletRoot);
         AddArtwork(item.InsideFrontCover, bookletLeft, bookletRight, bookletBottom, bookletTop,
-            shell.FrontArtworkArea.Z - 0.003f, true, _bookletRoot);
+            bookletRearZ - 0.0001f, true, _bookletRoot);
 
         // The rear insert is 150 x 118 mm including two 6 mm spines. The flat
         // back window therefore displays the central 138 x 118 mm panel.
@@ -488,25 +541,29 @@ internal sealed class DxJewelCaseScene : IDisposable
         AddArtwork(item.BackCover,
             -backArtworkWidth / 2, backArtworkWidth / 2,
             -backArtworkHeight / 2, backArtworkHeight / 2,
-            // The STL's central lower tray is opaque. Place the printed rear
-            // inlay immediately under the exterior acrylic surface so it is
-            // not hidden behind that tray when viewed from the back.
-            -depth / 2 - 0.001f, true, _baseRoot);
+            // The lower STL includes an opaque central plate at the rear outer
+            // surface. Keep the zero-thickness print immediately outside that
+            // plate so it remains visible; this does not add structural depth.
+            -depth / 2 - 0.0002f,
+            true, _baseRoot);
         AddBackArtworkFrame(width, height, backArtworkWidth, backArtworkHeight,
-            -depth / 2 - 0.002f, backFrameAcrylic);
+            -depth / 2 - 0.0005f,
+            backFrameAcrylic);
         var inlay = item.SplitInlay();
         // Two independent printed sides of the same sheet. Keep the interior
         // below the tray floor, so opaque resin still hides it naturally.
         AddArtwork(inlay.Panel,
             -backArtworkWidth / 2, backArtworkWidth / 2,
             -backArtworkHeight / 2, backArtworkHeight / 2,
-            -depth / 2 + 0.001f, false, _baseRoot, "Inlay artwork");
+            -depth / 2 + depth * 1.5f / StandardCaseDepthMm + 0.003f,
+            false, _baseRoot, "Inlay artwork");
         // Back is viewed from -Z: its source-right edge is at world -X.
         // Inlay faces +Z, so its left/right strips stay in world order.
         AddSpine(item.RightSpineCover,
-            -width / 2 - 0.001f, backArtworkHeight, depth, true, _baseRoot, inlay.Left);
+            -width / 2 + StandardSpinePaperInset, backArtworkHeight, depth, true, _baseRoot, inlay.Left);
         AddSpine(item.SpineCover,
-            width / 2 + 0.001f, backArtworkHeight, depth, false, _baseRoot, inlay.Right);
+            width / 2 - OpeningSideSpinePaperInset,
+            backArtworkHeight, depth, false, _baseRoot, inlay.Right);
         AddSpineCard(item.SpineCard, width, height, depth);
         // Japanese caramel wrapping is represented only together with an obi.
         // Albums without a Spine Card remain ordinary, directly openable cases.
@@ -812,6 +869,9 @@ internal sealed class DxJewelCaseScene : IDisposable
         // follows the actual hinge rather than the case's outer bounding edge.
         var targetOffsetX = open ? -AssembledHingeX : 0d;
         var targetSpineCardOffsetX = open ? SpineCardOpenClearanceX : 0d;
+        // The dimensioned lid is already seated relative to the hinge axis;
+        // it no longer needs an open-state corrective translation.
+        const double targetFrontPanelSeatZ = 0d;
         if (!animate)
         {
             _animationRenderTimer.Stop();
@@ -821,10 +881,12 @@ internal sealed class DxJewelCaseScene : IDisposable
             _openScale.BeginAnimation(ScaleTransform3D.ScaleZProperty, null);
             _openCenterTranslation.BeginAnimation(TranslateTransform3D.OffsetXProperty, null);
             _spineCardOpenTranslation.BeginAnimation(TranslateTransform3D.OffsetXProperty, null);
+            _frontPanelSeatTranslation.BeginAnimation(TranslateTransform3D.OffsetZProperty, null);
             _lidHingeRotation.Angle = targetAngle;
             _openScale.ScaleX = _openScale.ScaleY = _openScale.ScaleZ = targetScale;
             _openCenterTranslation.OffsetX = targetOffsetX;
             _spineCardOpenTranslation.OffsetX = targetSpineCardOffsetX;
+            _frontPanelSeatTranslation.OffsetZ = targetFrontPanelSeatZ;
             InvalidateFinalFrame();
             return;
         }
@@ -835,16 +897,19 @@ internal sealed class DxJewelCaseScene : IDisposable
         var currentScaleZ = _openScale.ScaleZ;
         var currentOffsetX = _openCenterTranslation.OffsetX;
         var currentSpineCardOffsetX = _spineCardOpenTranslation.OffsetX;
+        var currentFrontPanelSeatZ = _frontPanelSeatTranslation.OffsetZ;
         _lidHingeRotation.BeginAnimation(AxisAngleRotation3D.AngleProperty, null);
         _openScale.BeginAnimation(ScaleTransform3D.ScaleXProperty, null);
         _openScale.BeginAnimation(ScaleTransform3D.ScaleYProperty, null);
         _openScale.BeginAnimation(ScaleTransform3D.ScaleZProperty, null);
         _openCenterTranslation.BeginAnimation(TranslateTransform3D.OffsetXProperty, null);
         _spineCardOpenTranslation.BeginAnimation(TranslateTransform3D.OffsetXProperty, null);
+        _frontPanelSeatTranslation.BeginAnimation(TranslateTransform3D.OffsetZProperty, null);
         _lidHingeRotation.Angle = targetAngle;
         _openScale.ScaleX = _openScale.ScaleY = _openScale.ScaleZ = targetScale;
         _openCenterTranslation.OffsetX = targetOffsetX;
         _spineCardOpenTranslation.OffsetX = targetSpineCardOffsetX;
+        _frontPanelSeatTranslation.OffsetZ = targetFrontPanelSeatZ;
         // Helix renders on demand. WPF transform animations alone do not
         // continuously invalidate its DirectX surface, so drive redraws only
         // for the duration of the lid animation.
@@ -875,10 +940,12 @@ internal sealed class DxJewelCaseScene : IDisposable
             _openScale.BeginAnimation(ScaleTransform3D.ScaleZProperty, null);
             _openCenterTranslation.BeginAnimation(TranslateTransform3D.OffsetXProperty, null);
             _spineCardOpenTranslation.BeginAnimation(TranslateTransform3D.OffsetXProperty, null);
+            _frontPanelSeatTranslation.BeginAnimation(TranslateTransform3D.OffsetZProperty, null);
             _lidHingeRotation.Angle = targetAngle;
             _openScale.ScaleX = _openScale.ScaleY = _openScale.ScaleZ = targetScale;
             _openCenterTranslation.OffsetX = targetOffsetX;
             _spineCardOpenTranslation.OffsetX = targetSpineCardOffsetX;
+            _frontPanelSeatTranslation.OffsetZ = targetFrontPanelSeatZ;
             InvalidateFinalFrame();
         };
         _lidHingeRotation.BeginAnimation(AxisAngleRotation3D.AngleProperty,
@@ -894,6 +961,8 @@ internal sealed class DxJewelCaseScene : IDisposable
             Animation(currentOffsetX, targetOffsetX));
         _spineCardOpenTranslation.BeginAnimation(TranslateTransform3D.OffsetXProperty,
             Animation(currentSpineCardOffsetX, targetSpineCardOffsetX));
+        _frontPanelSeatTranslation.BeginAnimation(TranslateTransform3D.OffsetZProperty,
+            Animation(currentFrontPanelSeatZ, targetFrontPanelSeatZ));
     }
 
     public void SetDiscRemoved(bool removed, bool animate = true)
@@ -975,25 +1044,31 @@ internal sealed class DxJewelCaseScene : IDisposable
         if (_disposed) return;
         if (playing)
         {
-            if (_discSpinTimer.IsEnabled) return;
+            if (_discPlaying) return;
+            _discPlaying = true;
+            _discSpinStartAngle = _discSpinRotation.Angle;
             _discSpinClock.Restart();
-            _discSpinTimer.Start();
+            CompositionTarget.Rendering += OnDiscRenderFrame;
             return;
         }
-        if (!_discSpinTimer.IsEnabled) return;
+        if (!_discPlaying) return;
         AdvanceDiscSpin();
-        _discSpinTimer.Stop();
+        CompositionTarget.Rendering -= OnDiscRenderFrame;
+        _discPlaying = false;
         _discSpinClock.Reset();
         InvalidateFinalFrame();
     }
 
+    private void OnDiscRenderFrame(object? sender, EventArgs e) => AdvanceDiscSpin();
+
     private void AdvanceDiscSpin()
     {
         var elapsed = _discSpinClock.Elapsed.TotalSeconds;
-        _discSpinClock.Restart();
-        if (elapsed <= 0 || elapsed > .25) return;
+        if (elapsed <= 0) return;
         var degrees = DiscPlaybackRpm * 6 * elapsed;
-        _discSpinRotation.Angle = (_discSpinRotation.Angle - degrees) % 360;
+        // Derive every frame from one fixed start time. Dispatcher timer
+        // jitter can no longer accumulate into uneven angular steps.
+        _discSpinRotation.Angle = (_discSpinStartAngle - degrees) % 360;
         _secondDiscSpinRotation.Angle = _discSpinRotation.Angle;
         Viewport.InvalidateRender();
     }
@@ -1249,35 +1324,156 @@ internal sealed class DxJewelCaseScene : IDisposable
         AddMesh(builder.ToMeshGeometry3D(), material, transparent, false, target, castsShadow);
     }
 
-    private void AddTraySpineRibs(float width, float height, float frontSurfaceZ,
-        DxMaterial material, DxMaterial grooveMaterial)
+    private void AddDimensionedFrontLid(float width, float height, float depth,
+        DxMaterial panelMaterial, DxMaterial sideWallMaterial)
     {
+        var millimetreX = width / 142f;
+        var millimetreY = height / 125f;
+        var millimetreZ = depth / StandardCaseDepthMm;
+        var panelThickness = millimetreZ;
+        var frameProjection = millimetreZ * 0.5f;
+        var frameBorderX = millimetreX * 2f;
+        var frameBorderY = millimetreY * 2f;
+        var interlockDepth = millimetreZ * 0.7f;
+        var hingeAxisX = (float)AssembledHingeX;
+        var hingeOuterRadius = millimetreZ * 2.4f;
+        var hingeInnerRadius = millimetreZ * 1.7f;
+        var lidLeft = hingeAxisX + hingeOuterRadius;
+        var lidRight = width / 2;
+        var lidCenterX = (lidLeft + lidRight) / 2;
+        var lidWidth = lidRight - lidLeft;
+        var panelLeft = lidLeft;
+        var panelRight = lidRight - frameBorderX;
+
+        // The clear 1 mm plate is recessed 0.5 mm below the perimeter's outer
+        // face. Its inner face is the exact contact plane used by the booklet.
+        var panelOuterZ = depth / 2 - frameProjection;
+        var panelInnerZ = panelOuterZ - panelThickness;
+        AddBox(new Vector3((panelLeft + panelRight) / 2, 0,
+                (panelOuterZ + panelInnerZ) / 2),
+            panelRight - panelLeft, height - frameBorderY * 2,
+            panelThickness, panelMaterial, true, _frontPanelRoot, false);
+
+        // One continuous perimeter skirt. It reaches the hinge axis and only
+        // crosses it by the 0.7 mm mating tongue, so no fabricated STL plane
+        // can remain floating above the tray.
+        var skirtFrontZ = depth / 2;
+        var skirtRearZ = -interlockDepth;
+        var skirtDepth = skirtFrontZ - skirtRearZ;
+        var skirtCenterZ = (skirtFrontZ + skirtRearZ) / 2;
+        AddBox(new Vector3(lidCenterX, height / 2 - frameBorderY / 2, skirtCenterZ),
+            lidWidth, frameBorderY, skirtDepth,
+            sideWallMaterial, true, _frontPanelRoot, false);
+        AddBox(new Vector3(lidCenterX, -height / 2 + frameBorderY / 2, skirtCenterZ),
+            lidWidth, frameBorderY, skirtDepth,
+            sideWallMaterial, true, _frontPanelRoot, false);
+        // The hinge axis passes through the centre of this rail. Previously
+        // the rail stayed at the case's far outer edge while rotating around
+        // an unrelated inboard point, which lifted the complete front lid.
+        AddBox(new Vector3(hingeAxisX, 0, skirtCenterZ),
+            frameBorderX, height - frameBorderY * 2, skirtDepth,
+            sideWallMaterial, true, _frontPanelRoot, false);
+        AddBox(new Vector3(lidRight - frameBorderX / 2, 0, skirtCenterZ),
+            frameBorderX, height - frameBorderY * 2, skirtDepth,
+            sideWallMaterial, true, _frontPanelRoot, false);
+        // The top and bottom rails terminate at annular hinge knuckles. A
+        // rectangular rail continued through the pivot placed a solid case
+        // edge across the visible hinge bore.
+        AddHingeKnuckleRing(hingeAxisX,
+            height / 2 - frameBorderY / 2, 0,
+            hingeOuterRadius, hingeInnerRadius, frameBorderY,
+            sideWallMaterial);
+        AddHingeKnuckleRing(hingeAxisX,
+            -height / 2 + frameBorderY / 2, 0,
+            hingeOuterRadius, hingeInnerRadius, frameBorderY,
+            sideWallMaterial);
+
+    }
+
+    private void AddHingeKnuckleRing(float centerX, float centerY, float centerZ,
+        float outerRadius, float innerRadius, float length,
+        DxMaterial material)
+    {
+        const int segments = 40;
+        var builder = new MeshBuilder(true, true, true);
+        var y0 = centerY - length / 2;
+        var y1 = centerY + length / 2;
+        for (var segment = 0; segment < segments; segment++)
+        {
+            var angle0 = MathF.Tau * segment / segments;
+            var angle1 = MathF.Tau * (segment + 1) / segments;
+            var outer0 = new Vector2(MathF.Cos(angle0), MathF.Sin(angle0)) * outerRadius;
+            var outer1 = new Vector2(MathF.Cos(angle1), MathF.Sin(angle1)) * outerRadius;
+            var inner0 = new Vector2(MathF.Cos(angle0), MathF.Sin(angle0)) * innerRadius;
+            var inner1 = new Vector2(MathF.Cos(angle1), MathF.Sin(angle1)) * innerRadius;
+
+            Vector3 Point(Vector2 radial, float y) =>
+                new(centerX + radial.X, y, centerZ + radial.Y);
+
+            builder.AddQuad(Point(outer0, y0), Point(outer0, y1),
+                Point(outer1, y1), Point(outer1, y0));
+            builder.AddQuad(Point(inner1, y0), Point(inner1, y1),
+                Point(inner0, y1), Point(inner0, y0));
+            builder.AddQuad(Point(inner0, y0), Point(outer0, y0),
+                Point(outer1, y0), Point(inner1, y0));
+            builder.AddQuad(Point(inner1, y1), Point(outer1, y1),
+                Point(outer0, y1), Point(inner0, y1));
+        }
+        // The lid contributes the axle pin; the lower STL contributes the
+        // receiving bore. Keep this cylindrical and concentric with the ring
+        // instead of letting a rectangular case edge cross the opening.
+        var pinRadius = innerRadius * 0.68f;
+        var inwardExtension = length * 0.65f;
+        var pinStartY = centerY > 0 ? y0 - inwardExtension : y0;
+        var pinEndY = centerY > 0 ? y1 : y1 + inwardExtension;
+        builder.AddCylinder(
+            new Vector3(centerX, pinStartY, centerZ),
+            new Vector3(centerX, pinEndY, centerZ),
+            pinRadius, segments, true, true);
+        AddMesh(builder.ToMeshGeometry3D(), material, true, false,
+            _frontPanelRoot, false);
+    }
+
+    private void AddTraySpineRibs(float width, float height, float frontSurfaceZ,
+        DxMaterial material, DxMaterial grooveMaterial,
+        DxMaterial clearRailMaterial)
+    {
+        var mouldingBase = new MeshBuilder(true, true, true);
         var grooveFloor = new MeshBuilder(true, true, true);
         var ribs = new MeshBuilder(true, true, true);
+        var clearMouldingBase = new MeshBuilder(true, true, true);
+        var clearRibs = new MeshBuilder(true, true, true);
 
         // This is the removable tray's narrow hinge/spine column, rather than
         // the clear case perimeter.  Closely spaced longitudinal ribs reproduce
         // the injection-moulded grip visible on white and coloured jewel trays.
         const int ribCount = 23;
-        // Begin at the tray-side edge.  Leaving an inset here produced a broad
-        // smooth white stripe that does not exist on the reference tray.
+        // Preserve the rail's original full width. Its outer 6 mm lies behind
+        // the Spine and is clear acrylic; only the remaining inboard section
+        // belongs to the removable tray material.
         var bandLeft = -width / 2 + 0.003f;
+        var trayBandLeft = bandLeft
+            + width * StandardVisibleSpineWidthMm / 142f;
         var bandRight = -width / 2 + 0.245f;
         // Continue almost to the upper/lower tray shoulders. Keep only a very
         // small clearance so the ribs do not intersect the clear case rails.
         var ribLength = height - 0.045f;
-        const float grooveDepth = 0.0022f;
-        var recessedSurfaceZ = frontSurfaceZ - grooveDepth;
-
-        // Front-facing surfaces only: a volumetric riser exposes an artificial
-        // white cross-section in the spine view and interferes with the upper
-        // and lower STL halves.  These shallow planes retain the moulded relief
-        // from the front while disappearing naturally when seen edge-on.
+        var mouldingThickness = StandardCaseDepth / StandardCaseDepthMm;
+        const float surfaceBias = 0.00035f;
+        // This rail is part of the removable tray, so its side wall must have
+        // the same resin colour and a physical 1 mm thickness. Previously only
+        // two front-facing quads were drawn, leaving the edge visually detached.
+        clearMouldingBase.AddBox(new Vector3((bandLeft + trayBandLeft) / 2, 0,
+                frontSurfaceZ - mouldingThickness / 2),
+            trayBandLeft - bandLeft, ribLength, mouldingThickness);
+        mouldingBase.AddBox(new Vector3((trayBandLeft + bandRight) / 2, 0,
+                frontSurfaceZ - mouldingThickness / 2),
+            bandRight - trayBandLeft, ribLength, mouldingThickness);
         grooveFloor.AddQuad(
-            new Vector3(bandLeft, ribLength / 2, recessedSurfaceZ),
-            new Vector3(bandLeft, -ribLength / 2, recessedSurfaceZ),
-            new Vector3(bandRight, -ribLength / 2, recessedSurfaceZ),
-            new Vector3(bandRight, ribLength / 2, recessedSurfaceZ));
+            new Vector3(trayBandLeft, ribLength / 2, frontSurfaceZ + surfaceBias),
+            new Vector3(trayBandLeft, -ribLength / 2, frontSurfaceZ + surfaceBias),
+            new Vector3(bandRight, -ribLength / 2, frontSurfaceZ + surfaceBias),
+            new Vector3(bandRight, ribLength / 2, frontSurfaceZ + surfaceBias));
         var spacing = (bandRight - bandLeft) / (ribCount - 1);
         var ribWidth = spacing * 0.72f;
         for (var index = 0; index < ribCount; index++)
@@ -1285,13 +1481,19 @@ internal sealed class DxJewelCaseScene : IDisposable
             var x = bandLeft + (bandRight - bandLeft) * index / (ribCount - 1);
             var left = Math.Max(bandLeft, x - ribWidth / 2);
             var right = Math.Min(bandRight, x + ribWidth / 2);
-            ribs.AddQuad(
-                new Vector3(left, ribLength / 2, frontSurfaceZ),
-                new Vector3(left, -ribLength / 2, frontSurfaceZ),
-                new Vector3(right, -ribLength / 2, frontSurfaceZ),
-                new Vector3(right, ribLength / 2, frontSurfaceZ));
+            var targetRibs = x < trayBandLeft ? clearRibs : ribs;
+            targetRibs.AddQuad(
+                new Vector3(left, ribLength / 2, frontSurfaceZ + surfaceBias * 2),
+                new Vector3(left, -ribLength / 2, frontSurfaceZ + surfaceBias * 2),
+                new Vector3(right, -ribLength / 2, frontSurfaceZ + surfaceBias * 2),
+                new Vector3(right, ribLength / 2, frontSurfaceZ + surfaceBias * 2));
         }
 
+        AddMesh(clearMouldingBase.ToMeshGeometry3D(), clearRailMaterial,
+            true, false, _baseRoot, false);
+        AddMesh(clearRibs.ToMeshGeometry3D(), clearRailMaterial,
+            true, false, _baseRoot, false);
+        AddMesh(mouldingBase.ToMeshGeometry3D(), material, false, false, _baseRoot);
         AddMesh(grooveFloor.ToMeshGeometry3D(), grooveMaterial, false, false, _baseRoot);
         AddMesh(ribs.ToMeshGeometry3D(), material, false, false, _baseRoot);
     }
@@ -1309,21 +1511,214 @@ internal sealed class DxJewelCaseScene : IDisposable
         // This lip belongs to the clear lid, not to the removable coloured
         // tray. It therefore follows the lid when opened and always uses the
         // denser moulded-acrylic material regardless of tray colour.
-        AddMesh(manualStop.ToMeshGeometry3D(), stopMaterial, true, false, _lidRoot);
+        AddMesh(manualStop.ToMeshGeometry3D(), stopMaterial, true, false, _frontPanelRoot);
     }
 
-    // The ribbed band's original right boundary is +0.245 from the case edge.
-    // Centre the 0.014-wide clear lip on that boundary, rather than growing the
-    // entire lip into the booklet side.
+    // Centre the 0.014-wide clear retaining lip at the inner hinge-side
+    // boundary, rather than growing the entire lip into the booklet side.
     private static float TrayManualStopRight(float width) => -width / 2 + 0.252f;
 
-    private void AddTraySpineCover(float width, float height, float depth,
+    private void AddTraySpineCover(float width, float caseHeight, float depth,
         DxMaterial material, bool transparent)
     {
-        const float wallThickness = 0.030f;
-        AddBox(new Vector3(width / 2 - wallThickness / 2, 0, 0),
-            wallThickness, height - 0.060f, depth - 0.016f,
+        var millimetreX = width / 142f;
+        var millimetreY = caseHeight / 125f;
+        var millimetreZ = depth / StandardCaseDepthMm;
+
+        // The removable tray's ribbed spine column is about 13 mm wide in the
+        // supplied face scan. Leave only the clear rear-shell skin outside it.
+        var bandLeft = -width / 2 + 0.5f * millimetreX;
+        var bandRight = -width / 2 + 13.5f * millimetreX;
+
+        // The scan's long ribbed tray section is a thin plate, not a wall that
+        // fills the case depth. Its rear face begins exactly where the 6 mm
+        // printed spine fold ends; the former depth-relative placement crossed
+        // about 0.6 mm into that artwork and left a false gap above the plate.
+        // Build the tray inward from that boundary with exactly 1.5 mm of
+        // physical thickness, so paper and tray meet without overlapping.
+        var bandRearZ = StandardVisibleSpineDepth / 2;
+        var bandFrontZ = bandRearZ + 1.5f * millimetreZ;
+        // The scanned top and bottom clear rails occupy about 2 mm each.
+        // A 121 mm tray strip therefore meets their inner faces without any
+        // overlap while still reaching substantially farther than the old
+        // 116 mm approximation.
+        var spineHeight = caseHeight - 4.0f * millimetreY;
+        AddBox(new Vector3((bandLeft + bandRight) / 2,
+                0, (bandRearZ + bandFrontZ) / 2),
+            bandRight - bandLeft, spineHeight, bandFrontZ - bandRearZ,
             material, transparent, _baseRoot);
+    }
+
+    private void AddOpeningSideMatingRails(float width, float height, float depth,
+        DxMaterial material)
+    {
+        var millimetreX = width / 142f;
+        var millimetreY = height / 125f;
+        var wallThickness = 1.0f * millimetreX;
+        var endInset = 0.6f * millimetreY;
+        var railLength = height - endInset * 2;
+        var railX = width / 2 - wallThickness / 2;
+        var x0 = railX - wallThickness / 2;
+        var x1 = railX + wallThickness / 2;
+        var y0 = -railLength / 2;
+        var y1 = railLength / 2;
+
+        // The two rigid halves meet at Z=0 but have no caps on that mating
+        // plane. The former closed boxes overlapped by 0.16 mm and their two
+        // transparent end faces rendered as a dark line through the Spine.
+        AddOpenEndedRailHalf(x0, x1, y0, y1, -depth / 2, 0,
+            material, _baseRoot, capAtStart: true);
+        AddOpenEndedRailHalf(x0, x1, y0, y1, 0, depth / 2,
+            material, _frontPanelRoot, capAtStart: false);
+    }
+
+    private void AddOpenEndedRailHalf(float x0, float x1, float y0, float y1,
+        float z0, float z1, DxMaterial material, GroupModel3D target,
+        bool capAtStart)
+    {
+        var rail = new MeshBuilder(true, true, true);
+        rail.AddQuad(new Vector3(x0, y1, z0), new Vector3(x0, y0, z0),
+            new Vector3(x0, y0, z1), new Vector3(x0, y1, z1));
+        rail.AddQuad(new Vector3(x1, y1, z1), new Vector3(x1, y0, z1),
+            new Vector3(x1, y0, z0), new Vector3(x1, y1, z0));
+        rail.AddQuad(new Vector3(x0, y1, z1), new Vector3(x1, y1, z1),
+            new Vector3(x1, y1, z0), new Vector3(x0, y1, z0));
+        rail.AddQuad(new Vector3(x0, y0, z0), new Vector3(x1, y0, z0),
+            new Vector3(x1, y0, z1), new Vector3(x0, y0, z1));
+        var capZ = capAtStart ? z0 : z1;
+        rail.AddQuad(new Vector3(x0, y1, capZ), new Vector3(x1, y1, capZ),
+            new Vector3(x1, y0, capZ), new Vector3(x0, y0, capZ));
+        AddMesh(rail.ToMeshGeometry3D(), material, true, true, target, false);
+    }
+
+    private void AddTopBottomSideRibs(float width, float height, float depth,
+        DxMaterial material)
+    {
+        var millimetreX = width / 142f;
+        var millimetreY = height / 125f;
+        var millimetreZ = depth / StandardCaseDepthMm;
+        // The rib field is recessed from all four borders of the narrow side
+        // face: 10 mm at the two short ends and 1 mm at the front/rear edges.
+        // The surrounding perimeter therefore remains a smooth clear frame.
+        var startX = -width / 2 + 10f * millimetreX;
+        var endX = width / 2 - 10f * millimetreX;
+        var rearEdgeZ = -depth / 2 + 1f * millimetreZ;
+        var frontEdgeZ = depth / 2 - 1f * millimetreZ;
+        var ribWidth = 0.16f * millimetreX;
+        var surfaceBias = 0.015f * millimetreY;
+        const int ribCount = 168;
+        var rearRibs = new MeshBuilder(true, true, true);
+        var frontRibs = new MeshBuilder(true, true, true);
+
+        static void AddRibFace(MeshBuilder builder, float left, float right,
+            float y, float z0, float z1)
+        {
+            builder.AddQuad(new Vector3(left, y, z0),
+                new Vector3(right, y, z0),
+                new Vector3(right, y, z1),
+                new Vector3(left, y, z1));
+        }
+
+        for (var index = 0; index < ribCount; index++)
+        {
+            var x = startX + (endX - startX) * index / (ribCount - 1);
+            // The two retaining-catch blocks interrupt the fine rib field in
+            // the scan; leave those short regions clean instead of drawing
+            // lines through the moulded catches.
+            if (Math.Abs(x + 0.30f) < 0.13f || Math.Abs(x - 0.54f) < 0.13f)
+                continue;
+            var left = x - ribWidth / 2;
+            var right = x + ribWidth / 2;
+            AddRibFace(rearRibs, left, right,
+                height / 2 + surfaceBias, rearEdgeZ, 0);
+            AddRibFace(rearRibs, left, right,
+                -height / 2 - surfaceBias, 0, rearEdgeZ);
+            AddRibFace(frontRibs, left, right,
+                height / 2 + surfaceBias, 0, frontEdgeZ);
+            AddRibFace(frontRibs, left, right,
+                -height / 2 - surfaceBias, frontEdgeZ, 0);
+        }
+
+        // Rear ribs remain with the fixed shell; front ribs rotate with the
+        // lid. This preserves the hinge behaviour while the case is opened.
+        AddMesh(rearRibs.ToMeshGeometry3D(), material, true, true,
+            _baseRoot, false);
+        AddMesh(frontRibs.ToMeshGeometry3D(), material, true, true,
+            _frontPanelRoot, false);
+    }
+
+    private void AddOpenBookletPageBlock(float left, float right,
+        float bottom, float top, float rearZ, float frontZ,
+        DxMaterial material, bool leaveFoldOpen)
+    {
+        var pages = new MeshBuilder(true, true, true);
+        // Only the four cut-paper edges are geometry. The Front and Inside
+        // artwork quads close the block visually, avoiding coincident opaque
+        // faces that caused the dense flicker pattern over both images.
+        if (!leaveFoldOpen)
+            pages.AddQuad(new Vector3(left, top, rearZ),
+                new Vector3(left, bottom, rearZ),
+                new Vector3(left, bottom, frontZ),
+                new Vector3(left, top, frontZ));
+        pages.AddQuad(new Vector3(right, top, frontZ),
+            new Vector3(right, bottom, frontZ),
+            new Vector3(right, bottom, rearZ),
+            new Vector3(right, top, rearZ));
+        pages.AddQuad(new Vector3(left, top, frontZ),
+            new Vector3(right, top, frontZ),
+            new Vector3(right, top, rearZ),
+            new Vector3(left, top, rearZ));
+        pages.AddQuad(new Vector3(left, bottom, rearZ),
+            new Vector3(right, bottom, rearZ),
+            new Vector3(right, bottom, frontZ),
+            new Vector3(left, bottom, frontZ));
+        AddMesh(pages.ToMeshGeometry3D(), material, false, true,
+            _bookletRoot, false);
+    }
+
+    private void AddBookletFoldArtwork(BitmapSource frontBitmap,
+        BitmapSource rearBitmap, float x, float bottom, float top,
+        float rearZ, float frontZ)
+    {
+        var middleZ = (rearZ + frontZ) / 2;
+        const float edgeSample = 0.025f;
+
+        DxMaterial Material(BitmapSource bitmap, string name) => new PhongMaterial
+        {
+            Name = name,
+            DiffuseColor = new Color4(1, 1, 1, 1),
+            DiffuseMap = CreateTexture(bitmap),
+            RenderDiffuseMap = true,
+            SpecularColor = new Color4(0.025f, 0.025f, 0.025f, 1),
+            SpecularShininess = 5,
+            EnableAutoTangent = true
+        };
+
+        // Continue the leftmost edge of the front cover around the first half
+        // of the fold instead of exposing a white paper wall.
+        var frontFold = new MeshBuilder(true, true, true);
+        frontFold.AddQuad(new Vector3(x, top, frontZ),
+            new Vector3(x, bottom, frontZ),
+            new Vector3(x, bottom, middleZ),
+            new Vector3(x, top, middleZ),
+            new Vector2(0, 0), new Vector2(0, 1),
+            new Vector2(edgeSample, 1), new Vector2(edgeSample, 0));
+        AddMesh(frontFold.ToMeshGeometry3D(),
+            Material(frontBitmap, "Booklet front fold artwork"),
+            false, true, _bookletRoot, false);
+
+        // The second half continues into the image on the booklet's reverse.
+        // Reverse U at the centre so the two sampled strips meet as a fold.
+        var rearFold = new MeshBuilder(true, true, true);
+        rearFold.AddQuad(new Vector3(x, top, middleZ),
+            new Vector3(x, bottom, middleZ),
+            new Vector3(x, bottom, rearZ),
+            new Vector3(x, top, rearZ),
+            new Vector2(edgeSample, 0), new Vector2(edgeSample, 1),
+            new Vector2(0, 1), new Vector2(0, 0));
+        AddMesh(rearFold.ToMeshGeometry3D(),
+            Material(rearBitmap, "Booklet rear fold artwork"),
+            false, true, _bookletRoot, false);
     }
 
     private void AddTrayRecessBacking(float width, float height, float depth,
@@ -1486,9 +1881,15 @@ internal sealed class DxJewelCaseScene : IDisposable
         float TransformY(float sourceY) => (sourceY - center.Y) * scaleY;
         var x0 = TransformX(plane.MinX);
         var x1 = TransformX(plane.MaxX);
-        var normalizedZ = (plane.Z - minimum.Z) / (maximum.Z - minimum.Z);
-        const float halfShellSpan = 0.64f;
-        var z = targetDepth / 2 - normalizedZ * targetDepth * halfShellSpan;
+        // Use the same dimension-constrained mapping as the lid geometry. The
+        // hinge stays at Z=0 and the outer front surface is exactly +5 mm.
+        const float topHingeBoreZMm = 5.30f;
+        var frontSpan = topHingeBoreZMm - minimum.Z;
+        var rearSpan = maximum.Z - topHingeBoreZMm;
+        var halfDepth = targetDepth / 2;
+        var z = plane.Z <= topHingeBoreZMm
+            ? (topHingeBoreZMm - plane.Z) / frontSpan * halfDepth
+            : -(plane.Z - topHingeBoreZMm) / rearSpan * halfDepth;
         return new StlArtworkArea(Math.Min(x0, x1), Math.Max(x0, x1),
             TransformY(plane.MinY), TransformY(plane.MaxY), z);
     }
@@ -1526,22 +1927,34 @@ internal sealed class DxJewelCaseScene : IDisposable
         var center = (minimum + maximum) / 2;
         var scaleX = targetWidth / (maximum.X - minimum.X);
         var scaleY = targetHeight / (maximum.Y - minimum.Y);
-        var zRange = maximum.Z - minimum.Z;
+        var halfDepth = targetDepth / 2;
 
         Vector3 Transform(Vector3 source)
         {
-            var normalizedZ = (source.Z - minimum.Z) / zRange;
             // The top STL is exported with its hinge on the right so both
             // printable halves can lie open. Mirror it into the closed-case
             // assembly, where its hinge mates with the bottom's left hinge.
             var assembledX = (source.X - center.X) * scaleX * (top ? -1 : 1);
-            // Both STL halves include a moulded mating lip. Let those lips
-            // interlock around Z=0 instead of leaving a visible air gap when
-            // the case is closed. Outer faces remain at the exact case depth.
-            const float halfShellSpan = 0.64f;
+            // Both hinge bores remain at Z=0. Map each side of each bore into
+            // the fixed +/-5 mm closed envelope independently. The printable
+            // STL halves differ slightly in raw depth (10.3 and 10.0 mm); using
+            // those raw heights directly made the front stand 0.3 mm proud.
+            // The scans define the assembled dimensions, so those dimensions
+            // take precedence over small details of the printable source.
+            const float topHingeBoreZMm = 5.30f;
+            const float bottomHingeBoreZMm = 5.05f;
+            var hingeZ = top ? topHingeBoreZMm : bottomHingeBoreZMm;
+            var frontSpan = hingeZ - minimum.Z;
+            var rearSpan = maximum.Z - hingeZ;
+            var assembledZ = top
+                ? source.Z <= hingeZ
+                    ? (hingeZ - source.Z) / frontSpan * halfDepth
+                    : -(source.Z - hingeZ) / rearSpan * halfDepth
+                : source.Z <= hingeZ
+                    ? -(hingeZ - source.Z) / frontSpan * halfDepth
+                    : (source.Z - hingeZ) / rearSpan * halfDepth;
             return new Vector3(assembledX, (source.Y - center.Y) * scaleY,
-                top ? targetDepth / 2 - normalizedZ * targetDepth * halfShellSpan
-                    : -targetDepth / 2 + normalizedZ * targetDepth * halfShellSpan);
+                assembledZ);
         }
 
         foreach (var triangle in triangles)
@@ -1565,33 +1978,10 @@ internal sealed class DxJewelCaseScene : IDisposable
                 // the tray's four triangular support reliefs, not the clear
                 // outer rail. Classifying that whole band as acrylic leaves
                 // four dark tips around an opaque tray.
-                : Math.Abs(centroid.Y) > targetHeight * 0.475f
-                    || (Math.Abs(centroid.X) > targetWidth * 0.455f
-                        && Math.Abs(centroid.Y) > targetHeight * 0.365f);
+                 : Math.Abs(centroid.Y) > targetHeight * 0.475f
+                     || (Math.Abs(centroid.X) > targetWidth * 0.455f
+                         && Math.Abs(centroid.Y) > targetHeight * 0.365f);
             var isTopOrBottomRail = Math.Abs(centroid.Y) > targetHeight * 0.445f;
-            if (isTopOrBottomRail)
-            {
-                // The source rails span the full 0..10 mm depth, but the shell
-                // normalisation intentionally compresses ordinary geometry to
-                // 64%. Restore only these rails to the full case depth. Both
-                // halves then share Z=0 as their centre and as the hinge axis,
-                // while the tray, disc and broad lid surfaces remain unchanged.
-                const float shellSpanRatio = 0.64f;
-                static Vector3 RestoreFullRailDepth(Vector3 vertex, bool lid,
-                    float depth)
-                {
-                    var normalized = lid
-                        ? (depth / 2 - vertex.Z) / (depth * shellSpanRatio)
-                        : (vertex.Z + depth / 2) / (depth * shellSpanRatio);
-                    vertex.Z = lid
-                        ? depth / 2 - normalized * depth
-                        : -depth / 2 + normalized * depth;
-                    return vertex;
-                }
-                a = RestoreFullRailDepth(a, top, targetDepth);
-                b = RestoreFullRailDepth(b, top, targetDepth);
-                c = RestoreFullRailDepth(c, top, targetDepth);
-            }
             if (top)
             {
                 // X and Z are both mirrored for the assembled upper shell, so
@@ -1603,19 +1993,30 @@ internal sealed class DxJewelCaseScene : IDisposable
             // hub, corner supports and the ribbed hinge-side column. The large
             // low rear plate belongs to the clear outer case and must not take
             // the selected tray color.
-            const float bottomShellSpan = 0.64f;
-            var traySurfaceThreshold = -targetDepth / 2 + targetDepth * bottomShellSpan * 0.20f;
             var isOuterClearRim = Math.Abs(centroid.X) > targetWidth * 0.485f
                 || Math.Abs(centroid.Y) > targetHeight * 0.485f;
-            var isRaisedInnerTray = centroid.Z > traySurfaceThreshold && !isOuterClearRim;
-            // The shallow wells and triangular reliefs are moulded into the
-            // same removable tray as the raised disc ring. They previously
-            // fell through to the clear perimeter mesh, exposing the dark
-            // scene background as black "holes". Keep every inner, non-rail
-            // surface in the tray material so White/Black/Gray/Clear settings
-            // all behave like the corresponding physical resin.
-            var isRecessedInnerTray = !isOuterClearRim && !isMouldedEdge;
-            if (isRaisedInnerTray || isRecessedInnerTray)
+            // The printable lower STL closes the opening edge with a tall
+            // vertical wall. The scanned injection-moulded tray has no such
+            // wall: only its thin plate reaches this side and the clear shells
+            // form the exterior. Drop only the side-facing raised triangles;
+            // retain the tray's horizontal disc-support surface.
+            var sourceCentroidZ = (triangle.A.Z + triangle.B.Z + triangle.C.Z) / 3;
+            var faceNormal = Vector3.Cross(b - a, c - a);
+            if (faceNormal.LengthSquared() > 0)
+                faceNormal = Vector3.Normalize(faceNormal);
+            var isOpeningSideTrayWall = centroid.X > targetWidth * 0.40f
+                && !isOuterClearRim
+                && sourceCentroidZ > 1.7f
+                && Math.Abs(faceNormal.X) > 0.55f;
+            if (isOpeningSideTrayWall)
+                continue;
+            // One spatial rule owns every material assignment: everything
+            // inside the clear perimeter is the removable tray, regardless of
+            // triangle height, slope or whether it forms a recess. The former
+            // height/edge heuristics split a single white tray between tray and
+            // transparent meshes, exposing the black scene through random
+            // supports and catches.
+            if (!isOuterClearRim)
                 primary.AddTriangle(a, b, c);
             else if (isMouldedEdge)
                 mouldedEdges.AddTriangle(a, b, c);
@@ -1749,25 +2150,31 @@ internal sealed class DxJewelCaseScene : IDisposable
     private void AddSpine(BitmapSource? bitmap, float x, float height, float depth, bool leftSide,
         GroupModel3D? target = null, BitmapSource? insideBitmap = null)
     {
+        // Both printed spine folds sit centrally between the closed front and
+        // rear rails. The former opening-side rear offset pushed this paper
+        // downward by 1.4 mm and exposed a large false gap above it even after
+        // the transparent rails themselves had been extended to meet.
+        var rearZ = -StandardVisibleSpineDepth / 2;
+        var frontZ = rearZ + StandardVisibleSpineDepth;
         var builder = new MeshBuilder(true, true, true);
         if (leftSide)
         {
             // Source-right strip: U=0 meets the Back and U=1 reaches Front.
             // Winding faces outward (-X).
-            builder.AddQuad(new Vector3(x, height / 2, depth / 2 - 0.01f),
-                new Vector3(x, height / 2, -depth / 2 + 0.01f),
-                new Vector3(x, -height / 2, -depth / 2 + 0.01f),
-                new Vector3(x, -height / 2, depth / 2 - 0.01f),
+            builder.AddQuad(new Vector3(x, height / 2, frontZ),
+                new Vector3(x, height / 2, rearZ),
+                new Vector3(x, -height / 2, rearZ),
+                new Vector3(x, -height / 2, frontZ),
                 new Vector2(1, 0), new Vector2(0, 0), new Vector2(0, 1), new Vector2(1, 1));
         }
         else
         {
             // Source-left strip: U=1 meets the Back and U=0 reaches Front.
             // Winding faces outward (+X).
-            builder.AddQuad(new Vector3(x, height / 2, -depth / 2 + 0.01f),
-                new Vector3(x, height / 2, depth / 2 - 0.01f),
-                new Vector3(x, -height / 2, depth / 2 - 0.01f),
-                new Vector3(x, -height / 2, -depth / 2 + 0.01f),
+            builder.AddQuad(new Vector3(x, height / 2, rearZ),
+                new Vector3(x, height / 2, frontZ),
+                new Vector3(x, -height / 2, frontZ),
+                new Vector3(x, -height / 2, rearZ),
                 new Vector2(1, 0), new Vector2(0, 0), new Vector2(0, 1), new Vector2(1, 1));
         }
         AddMesh(builder.ToMeshGeometry3D(), new PhongMaterial
@@ -1787,18 +2194,18 @@ internal sealed class DxJewelCaseScene : IDisposable
         var innerX = x + (leftSide ? 0.001f : -0.001f);
         if (leftSide)
         {
-            reverse.AddQuad(new Vector3(innerX, height / 2, -depth / 2 + 0.01f),
-                new Vector3(innerX, height / 2, depth / 2 - 0.01f),
-                new Vector3(innerX, -height / 2, depth / 2 - 0.01f),
-                new Vector3(innerX, -height / 2, -depth / 2 + 0.01f),
+            reverse.AddQuad(new Vector3(innerX, height / 2, rearZ),
+                new Vector3(innerX, height / 2, frontZ),
+                new Vector3(innerX, -height / 2, frontZ),
+                new Vector3(innerX, -height / 2, rearZ),
                 new Vector2(1, 0), new Vector2(0, 0), new Vector2(0, 1), new Vector2(1, 1));
         }
         else
         {
-            reverse.AddQuad(new Vector3(innerX, height / 2, depth / 2 - 0.01f),
-                new Vector3(innerX, height / 2, -depth / 2 + 0.01f),
-                new Vector3(innerX, -height / 2, -depth / 2 + 0.01f),
-                new Vector3(innerX, -height / 2, depth / 2 - 0.01f),
+            reverse.AddQuad(new Vector3(innerX, height / 2, frontZ),
+                new Vector3(innerX, height / 2, rearZ),
+                new Vector3(innerX, -height / 2, rearZ),
+                new Vector3(innerX, -height / 2, frontZ),
                 new Vector2(1, 0), new Vector2(0, 0), new Vector2(0, 1), new Vector2(1, 1));
         }
         AddMesh(reverse.ToMeshGeometry3D(), new PhongMaterial
@@ -2173,7 +2580,11 @@ internal sealed class DxJewelCaseScene : IDisposable
             ReflectanceFactor = 0.58,
             RenderEnvironmentMap = true
         };
-        AddMesh(top.ToMeshGeometry3D(), topMaterial, false, false, target);
+        // The label lies immediately over the moulded tray in the closed
+        // assembly. A small rasterizer bias keeps the label deterministically
+        // in front without changing the disc's physical position or thickness.
+        AddMesh(top.ToMeshGeometry3D(), topMaterial, false, false, target,
+            depthBias: -64);
         AddMesh(underside.ToMeshGeometry3D(), undersideMaterial, false, false, target);
         AddMesh(clearHub.ToMeshGeometry3D(), hubMaterial, true, false, target);
         AddMesh(edges.ToMeshGeometry3D(), edgeMaterial, false, true, target);
@@ -2201,7 +2612,7 @@ internal sealed class DxJewelCaseScene : IDisposable
     }
 
     private void AddMesh(DxMesh geometry, DxMaterial material, bool transparent, bool twoSided = false,
-        GroupModel3D? target = null, bool castsShadow = true)
+        GroupModel3D? target = null, bool castsShadow = true, int depthBias = 0)
     {
         (target ?? _caseRoot).Children.Add(new MeshGeometryModel3D
         {
@@ -2210,7 +2621,8 @@ internal sealed class DxJewelCaseScene : IDisposable
             IsTransparent = transparent,
             IsThrowingShadow = castsShadow && !transparent,
             IsHitTestVisible = true,
-            CullMode = twoSided ? DxCullMode.None : DxCullMode.Back
+            CullMode = twoSided ? DxCullMode.None : DxCullMode.Back,
+            DepthBias = depthBias
         });
     }
 
@@ -2262,7 +2674,8 @@ internal sealed class DxJewelCaseScene : IDisposable
     public void Dispose()
     {
         _disposed = true;
-        _discSpinTimer.Stop();
+        CompositionTarget.Rendering -= OnDiscRenderFrame;
+        _discPlaying = false;
         _discSpinClock.Stop();
         CancelWrappingMotion();
         CancelSpineCardMotion();

@@ -1325,7 +1325,9 @@ public sealed class JewelCaseCoverFlow : Grid
         var tray = CreateMaterial(trayColor, 30);
         var acrylic = CreateMaterial(Color.FromArgb(28, 196, 216, 226), 105);
         var mouldedAcrylic = CreateMaterial(
-            Color.FromArgb(selected ? (byte)122 : (byte)104, 155, 174, 186), 125);
+            // Match the lighter DirectX acrylic rails: highlights remain, but
+            // packed rack/edge views no longer read as solid grey case walls.
+            Color.FromArgb(selected ? (byte)88 : (byte)74, 155, 174, 186), 125);
         AddShell(shell.BottomTray, tray);
         AddShell(shell.BottomPerimeter, acrylic);
         AddShell(shell.BottomMouldedEdges, mouldedAcrylic);
@@ -1364,6 +1366,14 @@ public sealed class JewelCaseCoverFlow : Grid
             new Point3D(-backWidth / 2, -backHeight / 2, -depth / 2 - 0.001),
             new Point3D(backWidth / 2, -backHeight / 2, -depth / 2 - 0.001), backMaterial));
 
+        // Match the DirectX model: centre the printed spine between the slim
+        // front and rear acrylic lips instead of collecting all clearance on
+        // the front side as one heavy transparent rail.
+        var spineRearZ = -DxJewelCaseScene.StandardVisibleSpineDepth / 2;
+        var spineFrontZ = DxJewelCaseScene.StandardVisibleSpineDepth / 2;
+        var spineLeftX = -width / 2 + DxJewelCaseScene.StandardSpinePaperInset;
+        var spineRightX = width / 2 - DxJewelCaseScene.OpeningSideSpinePaperInset;
+
         // Back source-right folds around the world-left edge.  Keep both
         // physical spine faces independently textured just like the 3D viewer.
         if (worldLeftSpineArtwork is not null)
@@ -1372,17 +1382,17 @@ public sealed class JewelCaseCoverFlow : Grid
                 // beneath the clear side wall and stops inside the front/back
                 // acrylic lips. Extending beyond those lips makes it read as
                 // an obi wrapped over the outside of the case.
-                new Point3D(-width / 2 - 0.001, backHeight / 2, -depth / 2 + 0.010),
-                new Point3D(-width / 2 - 0.001, backHeight / 2, depth / 2 - 0.010),
-                new Point3D(-width / 2 - 0.001, -backHeight / 2, depth / 2 - 0.010),
-                new Point3D(-width / 2 - 0.001, -backHeight / 2, -depth / 2 + 0.010),
+                new Point3D(spineLeftX, backHeight / 2, spineRearZ),
+                new Point3D(spineLeftX, backHeight / 2, spineFrontZ),
+                new Point3D(spineLeftX, -backHeight / 2, spineFrontZ),
+                new Point3D(spineLeftX, -backHeight / 2, spineRearZ),
                 CreateImageMaterial(worldLeftSpineArtwork, item.Title, 0.99, subdued: true)));
         if (worldRightSpineArtwork is not null)
             group.Children.Add(CreateQuad(
-                new Point3D(width / 2 + 0.001, backHeight / 2, depth / 2 - 0.010),
-                new Point3D(width / 2 + 0.001, backHeight / 2, -depth / 2 + 0.010),
-                new Point3D(width / 2 + 0.001, -backHeight / 2, -depth / 2 + 0.010),
-                new Point3D(width / 2 + 0.001, -backHeight / 2, depth / 2 - 0.010),
+                new Point3D(spineRightX, backHeight / 2, spineFrontZ),
+                new Point3D(spineRightX, backHeight / 2, spineRearZ),
+                new Point3D(spineRightX, -backHeight / 2, spineRearZ),
+                new Point3D(spineRightX, -backHeight / 2, spineFrontZ),
                 CreateImageMaterial(worldRightSpineArtwork, item.Title, 0.99, subdued: true)));
 
         // A rack has no glossy floor beneath every case. These translucent

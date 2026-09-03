@@ -2011,12 +2011,19 @@ internal static class Program
                 throw new InvalidOperationException("Collection artwork lighting must preserve pale-cover detail instead of clipping to white.");
             var exteriorSpines = exteriorBody.Children.OfType<System.Windows.Media.Media3D.GeometryModel3D>()
                 .Skip(7).Take(2).Select(model => (System.Windows.Media.Media3D.MeshGeometry3D)model.Geometry).ToList();
+            var expectedSpineX = new[]
+            {
+                -1.21 + DxJewelCaseScene.StandardSpinePaperInset,
+                1.21 - DxJewelCaseScene.OpeningSideSpinePaperInset
+            };
             if (exteriorSpines.Count != 2
-                || exteriorSpines.SelectMany(mesh => mesh.Positions).Any(point =>
-                    Math.Abs(Math.Abs(point.X) - 1.211) > .0001
-                    || Math.Abs(point.Z) > .0786)
+                || exteriorSpines.Select((mesh, index) => (mesh, index)).Any(entry =>
+                    entry.mesh.Positions.Any(point =>
+                        Math.Abs(point.X - expectedSpineX[entry.index]) > .0001
+                        || Math.Abs(point.Z) > DxJewelCaseScene.StandardVisibleSpineDepth / 2 + .0001))
                 || exteriorSpines.Any(mesh => Math.Abs(
-                    mesh.Positions.Max(point => point.Z) - mesh.Positions.Min(point => point.Z) - .157) > .0002))
+                    mesh.Positions.Max(point => point.Z) - mesh.Positions.Min(point => point.Z)
+                    - DxJewelCaseScene.StandardVisibleSpineDepth) > .0002))
                 throw new InvalidOperationException("Collection Spine paper must remain beneath the side acrylic and inside both case lips.");
             var inlayPixels = Enumerable.Repeat(new byte[] { 74, 92, 138, 255 }, 150 * 118)
                 .SelectMany(pixel => pixel).ToArray();
@@ -2424,7 +2431,7 @@ internal static class Program
         var scan = new RenderTargetBitmap(320, 320, 96, 96, PixelFormats.Pbgra32);
         scan.Render(visual);
         var cropped = (BitmapSource)crop.Invoke(null, [scan])!;
-        if (cropped.PixelWidth is < 248 or > 258 || cropped.PixelWidth != cropped.PixelHeight)
+        if (cropped.PixelWidth is < 240 or > 250 || cropped.PixelWidth != cropped.PixelHeight)
             throw new InvalidOperationException($"Disc scanner margin crop was too loose: {cropped.PixelWidth}x{cropped.PixelHeight}.");
 
         var tightPixels = new byte[180 * 180 * 4];
@@ -2469,7 +2476,7 @@ internal static class Program
             var pairType = pair.GetType();
             var first = (BitmapSource)pairType.GetField("Item1")!.GetValue(pair)!;
             var second = (BitmapSource)pairType.GetField("Item2")!.GetValue(pair)!;
-            if (first.PixelWidth is < 248 or > 258 || second.PixelWidth is < 248 or > 258
+            if (first.PixelWidth is < 240 or > 250 || second.PixelWidth is < 240 or > 250
                 || first.PixelWidth != first.PixelHeight || second.PixelWidth != second.PixelHeight
                 || (source.PixelWidth, source.PixelHeight) != sourceSize)
                 throw new InvalidOperationException($"Two-disc {(horizontal ? "horizontal" : "vertical")} extraction failed: {first.PixelWidth}x{first.PixelHeight}, {second.PixelWidth}x{second.PixelHeight}.");

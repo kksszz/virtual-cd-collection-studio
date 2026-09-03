@@ -29,6 +29,7 @@ AiDevHarness/ai-*.wav
 TestResults/
 
 # Generated release packages
+artifacts/
 publish/
 releases/
 *.zip

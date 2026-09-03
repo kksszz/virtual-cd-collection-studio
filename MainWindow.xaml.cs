@@ -205,6 +205,36 @@ public partial class MainWindow : Window
             if (_cacheNeedsRefresh && _albums.Count > 0) RestoreLastSelection();
         }
         else if (_albums.Count > 0) RestoreLastSelection();
+
+        ScheduleRequested3dPreview(args);
+    }
+
+    private void ScheduleRequested3dPreview(IReadOnlyList<string> args)
+    {
+        const string option = "--preview-3d=";
+        var argument = args.FirstOrDefault(value =>
+            value.StartsWith(option, StringComparison.OrdinalIgnoreCase));
+        if (argument is null) return;
+
+        var query = argument[option.Length..].Trim().Trim('"');
+        if (query.Length == 0) return;
+        var item = _albums.FirstOrDefault(album =>
+            album.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || album.Artist.Contains(query, StringComparison.OrdinalIgnoreCase)
+            || album.Album.Path.Contains(query, StringComparison.OrdinalIgnoreCase));
+        if (item is null)
+        {
+            StatusText.Text = LocalizationService.Select(
+                $"3D確認対象が見つかりません: {query}",
+                $"3D preview target was not found: {query}");
+            return;
+        }
+
+        AlbumList.SelectedItem = item;
+        AlbumList.ScrollIntoView(item);
+        SetCurrentAlbum(item.Album);
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle,
+            new Action(() => ShowAlbum3DFullScreen_Click(this, new RoutedEventArgs())));
     }
 
     private async void Open_Click(object sender, RoutedEventArgs e)
