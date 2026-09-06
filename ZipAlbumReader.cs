@@ -205,7 +205,7 @@ public static class ZipAlbumReader
             }
 
             var tags = new TagInfo("", "", "", "", "", 0, 0, 0, 0);
-            var audio = new AudioInfo(false, false, 0, 0, TimeSpan.Zero);
+            var audio = new AudioInfo(false, false, 0, 0, TimeSpan.Zero, 0);
             var readError = "";
             if ((flags & 1) == 0 && method is 0 or 8)
             {
@@ -234,7 +234,7 @@ public static class ZipAlbumReader
                 Genre = tags.Genre,
                 DiscNumber = tags.Disc,
                 DiscCount = tags.DiscCount,
-                AudioFormat = "MP3",
+                AudioFormat = audio.Layer == 2 ? "MP2" : "MP3",
                 SourcePath = path,
                 IsArchiveEntry = true,
                 DataOffset = dataOffset,
@@ -293,7 +293,7 @@ public static class ZipAlbumReader
                 Genre = tags.Genre,
                 DiscNumber = tags.Disc,
                 DiscCount = tags.DiscCount,
-                AudioFormat = "MP3",
+                AudioFormat = audio.Layer == 2 ? "MP2" : "MP3",
                 SourcePath = path,
                 IsArchiveEntry = false,
                 DataOffset = 0,
@@ -317,11 +317,23 @@ public static class ZipAlbumReader
     }
 
     internal static bool IsStandardAudioPath(string path) =>
-        !path.EndsWith(".zip.mp3", StringComparison.OrdinalIgnoreCase)
+        !IsTagEditingArtifact(path)
+        && !path.EndsWith(".zip.mp3", StringComparison.OrdinalIgnoreCase)
         && (path.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase)
             || path.EndsWith(".wav", StringComparison.OrdinalIgnoreCase)
             || path.EndsWith(".flac", StringComparison.OrdinalIgnoreCase)
             || path.EndsWith(".m4a", StringComparison.OrdinalIgnoreCase));
+
+    internal static bool IsTagEditingArtifact(string path)
+    {
+        var name = Path.GetFileName(path);
+        if (!name.StartsWith(".", StringComparison.Ordinal)) return false;
+        var marker = name.LastIndexOf(".tagtmp.", StringComparison.OrdinalIgnoreCase);
+        if (marker <= 1) return false;
+        var guidStart = name.LastIndexOf('.', marker - 1);
+        if (guidStart < 0 || marker - guidStart - 1 != 32) return false;
+        return name.AsSpan(guidStart + 1, 32).ToString().All(Uri.IsHexDigit);
+    }
 
     private static ZipTrack ReadTaggedTrack(string path, string format, int fallbackTrack)
     {
@@ -461,6 +473,12 @@ public static class ZipAlbumReader
             audioStart = 10L + tagSize + ((header[5] & 0x10) != 0 ? 10 : 0);
             var body = new byte[Math.Min(tagSize, 16 * 1024 * 1024)];
             ReadExactly(stream, body);
+            // ID3v2.2/v2.3 frame sizes describe the data before whole-tag
+            // unsynchronization bytes are inserted. Remove those bytes from the
+            // entire body before using the frame sizes; removing them after a
+            // raw frame slice truncates the final UTF-16 byte (for example 明).
+            if (tagUnsynchronized && major is 2 or 3)
+                body = RemoveId3Unsynchronization(body);
             var pos = GetId3FrameStart(body, major, header[5]);
             var frameHeaderSize = major == 2 ? 6 : 10;
             while (pos + frameHeaderSize <= body.Length && major is 2 or 3 or 4)
@@ -478,7 +496,8 @@ public static class ZipAlbumReader
                 var frameData = body.AsSpan(pos + frameHeaderSize, size);
                 var formatFlags = major == 2 ? (byte)0 : body[pos + 9];
                 var value = id.StartsWith('T')
-                    ? DecodeId3Text(PrepareId3TextFrame(frameData, major, formatFlags, tagUnsynchronized))
+                    ? DecodeId3Text(PrepareId3TextFrame(frameData, major, formatFlags,
+                        tagUnsynchronized && major == 4))
                     : "";
                 switch (id)
                 {
@@ -521,15 +540,16 @@ public static class ZipAlbumReader
         return new TagInfo(title, artist, album, year, genre, track, disc, discCount, audioStart);
     }
 
-    private sealed record AudioInfo(bool IsValid, bool IsCbr, int Bitrate, int SampleRate, TimeSpan Duration);
+    private sealed record AudioInfo(bool IsValid, bool IsCbr, int Bitrate, int SampleRate, TimeSpan Duration, int Layer);
 
     private static AudioInfo AnalyzeMp3(Stream stream, long audioStart)
     {
         stream.Position = Math.Min(audioStart, stream.Length);
         var first = FindFirstFrame(stream);
-        if (first is null) return new(false, false, 0, 0, TimeSpan.Zero);
+        if (first is null) return new(false, false, 0, 0, TimeSpan.Zero, 0);
         var initialBitrate = first.Value.Bitrate;
         var sampleRate = first.Value.SampleRate;
+        var layer = first.Value.Layer;
         var frameCount = 0L;
         var sampleCount = 0L;
         var audioBytes = 0L;
@@ -542,7 +562,7 @@ public static class ZipAlbumReader
             if (stream.Read(four) != 4) break;
             var parsed = ParseMpegHeader(four);
             if (parsed is null) break;
-            if (parsed.Value.SampleRate != sampleRate) break;
+            if (parsed.Value.SampleRate != sampleRate || parsed.Value.Layer != layer) break;
             var next = frameStart + parsed.Value.FrameLength;
             if (next <= frameStart || next > stream.Length) break;
             if (parsed.Value.Bitrate != initialBitrate) isCbr = false;
@@ -556,10 +576,10 @@ public static class ZipAlbumReader
             ? (int)Math.Round(audioBytes * 8.0 / duration.TotalSeconds / 1000.0)
             : 0;
         var isValid = frameCount >= 3;
-        return new(isValid, isValid && isCbr, averageBitrate, sampleRate, duration);
+        return new(isValid, isValid && isCbr, averageBitrate, sampleRate, duration, layer);
     }
 
-    private static (long Offset, int Bitrate, int SampleRate, int FrameLength, int SamplesPerFrame)? FindFirstFrame(Stream stream)
+    private static (long Offset, int Bitrate, int SampleRate, int FrameLength, int SamplesPerFrame, int Layer)? FindFirstFrame(Stream stream)
     {
         var start = stream.Position;
         Span<byte> header = stackalloc byte[4];
@@ -576,7 +596,7 @@ public static class ZipAlbumReader
                     stream.Position = next;
                     if (stream.Read(header) == 4 && ParseMpegHeader(header) is not null)
                         return (pos, parsed.Value.Bitrate, parsed.Value.SampleRate, parsed.Value.FrameLength,
-                            parsed.Value.SamplesPerFrame);
+                            parsed.Value.SamplesPerFrame, parsed.Value.Layer);
                 }
             }
             stream.Position = pos + 1;
@@ -585,32 +605,46 @@ public static class ZipAlbumReader
         return null;
     }
 
-    private static (int Bitrate, int SampleRate, int FrameLength, int SamplesPerFrame)? ParseMpegHeader(ReadOnlySpan<byte> b)
+    private static (int Bitrate, int SampleRate, int FrameLength, int SamplesPerFrame, int Layer)? ParseMpegHeader(ReadOnlySpan<byte> b)
     {
         if (b.Length < 4) return null;
         var h = BinaryPrimitives.ReadUInt32BigEndian(b);
         if ((h & 0xFFE00000) != 0xFFE00000) return null;
-        var version = (h >> 19) & 3; var layer = (h >> 17) & 3;
+        var version = (h >> 19) & 3; var layerBits = (h >> 17) & 3;
         var bitrateIndex = (int)((h >> 12) & 15); var sampleIndex = (int)((h >> 10) & 3);
-        if (version == 1 || layer != 1 || bitrateIndex is 0 or 15 || sampleIndex == 3) return null;
-        int[] mpeg1Rates = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+        if (version == 1 || layerBits is not (1 or 2) || bitrateIndex is 0 or 15 || sampleIndex == 3) return null;
+        var layer = layerBits == 2 ? 2 : 3;
+        int[] mpeg1Layer3Rates = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+        int[] mpeg1Layer2Rates = [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384];
         int[] mpeg2Rates = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
         int[] mpeg1Samples = [44100, 48000, 32000];
         var divisor = version == 3 ? 1 : version == 2 ? 2 : 4;
-        var bitrate = (version == 3 ? mpeg1Rates : mpeg2Rates)[bitrateIndex];
+        var bitrate = (version == 3 ? layer == 2 ? mpeg1Layer2Rates : mpeg1Layer3Rates : mpeg2Rates)[bitrateIndex];
         var sampleRate = mpeg1Samples[sampleIndex] / divisor;
         var padding = (int)((h >> 9) & 1);
-        var samplesPerFrame = version == 3 ? 1152 : 576;
-        var frameLength = (version == 3 ? 144 : 72) * bitrate * 1000 / sampleRate + padding;
-        return (bitrate, sampleRate, frameLength, samplesPerFrame);
+        var samplesPerFrame = layer == 2 || version == 3 ? 1152 : 576;
+        var frameCoefficient = layer == 2 || version == 3 ? 144 : 72;
+        var frameLength = frameCoefficient * bitrate * 1000 / sampleRate + padding;
+        return (bitrate, sampleRate, frameLength, samplesPerFrame, layer);
     }
 
     private static string DecodeId3Text(ReadOnlySpan<byte> data)
     {
         if (data.Length < 2) return "";
         if (data[0] == 0) return DecodeLegacyText(data[1..]);
-        var encoding = data[0] switch { 1 => Encoding.Unicode, 2 => Encoding.BigEndianUnicode, 3 => Encoding.UTF8, _ => Encoding.Latin1 };
-        return encoding.GetString(data[1..]).Trim('\0', ' ', '\ufeff');
+        var encodingByte = data[0];
+        var payload = data[1..];
+        if (encodingByte is 1 or 2)
+        {
+            // Some older ID3 writers (and TagLibSharp when preserving those
+            // frames) leave a single NUL padding byte after UTF-16 text. Feeding
+            // the resulting odd byte count to Encoding produces a trailing U+FFFD.
+            if ((payload.Length & 1) != 0 && payload[^1] == 0) payload = payload[..^1];
+            while (payload.Length >= 2 && payload[^1] == 0 && payload[^2] == 0)
+                payload = payload[..^2];
+        }
+        var encoding = encodingByte switch { 1 => Encoding.Unicode, 2 => Encoding.BigEndianUnicode, 3 => Encoding.UTF8, _ => Encoding.Latin1 };
+        return encoding.GetString(payload).Trim('\0', ' ', '\ufeff');
     }
     private static int GetId3FrameStart(ReadOnlySpan<byte> body, byte major, byte flags)
     {

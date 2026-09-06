@@ -1120,7 +1120,8 @@ public sealed class JewelCaseCoverFlow : Grid
         var trayColor = item.TrayColorMode switch
         {
             "White" => Color.FromRgb(220, 218, 207),
-            "Black" => Color.FromRgb(18, 20, 24),
+            // Match the dark moulded resin sampled from img129.jpg.
+            "Black" => Color.FromRgb(51, 50, 56),
             "Gray" => Color.FromRgb(90, 94, 98),
             "Clear" => Color.FromArgb(44, 224, 232, 236),
             _ => Color.FromRgb(29, 32, 37)
@@ -1312,6 +1313,12 @@ public sealed class JewelCaseCoverFlow : Grid
         const double width = 2.42;
         const double height = 2.12;
         const double depth = DxJewelCaseScene.StandardCaseDepth;
+        // WPF Viewport3D writes transparent shell surfaces into the depth
+        // buffer. Artwork placed physically beneath those surfaces therefore
+        // disappears at oblique/rack angles. A sub-millimetre display offset
+        // keeps the print on the visible outer surface while the shortened
+        // artwork geometry still leaves the acrylic lips unobstructed.
+        const double artworkSurfaceOffset = 0.0025;
         var shell = DxJewelCaseScene.GetCoverFlowShellGeometry();
         var group = new Model3DGroup();
         var inlay = item.SplitInlay();
@@ -1361,39 +1368,37 @@ public sealed class JewelCaseCoverFlow : Grid
         var backHeight = 118 * unitY;
         var backMaterial = CreateOptionalArtworkMaterial(backArtwork, item.Title, 0.98, subdued: true);
         group.Children.Add(CreateQuad(
-            new Point3D(backWidth / 2, backHeight / 2, -depth / 2 - 0.001),
-            new Point3D(-backWidth / 2, backHeight / 2, -depth / 2 - 0.001),
-            new Point3D(-backWidth / 2, -backHeight / 2, -depth / 2 - 0.001),
-            new Point3D(backWidth / 2, -backHeight / 2, -depth / 2 - 0.001), backMaterial));
+            new Point3D(backWidth / 2, backHeight / 2, -depth / 2 - artworkSurfaceOffset),
+            new Point3D(-backWidth / 2, backHeight / 2, -depth / 2 - artworkSurfaceOffset),
+            new Point3D(-backWidth / 2, -backHeight / 2, -depth / 2 - artworkSurfaceOffset),
+            new Point3D(backWidth / 2, -backHeight / 2, -depth / 2 - artworkSurfaceOffset), backMaterial));
 
         // Match the DirectX model: centre the printed spine between the slim
         // front and rear acrylic lips instead of collecting all clearance on
         // the front side as one heavy transparent rail.
         var spineRearZ = -DxJewelCaseScene.StandardVisibleSpineDepth / 2;
         var spineFrontZ = DxJewelCaseScene.StandardVisibleSpineDepth / 2;
-        var spineLeftX = -width / 2 + DxJewelCaseScene.StandardSpinePaperInset;
-        var spineRightX = width / 2 - DxJewelCaseScene.OpeningSideSpinePaperInset;
+        var spineLeftX = -width / 2 - artworkSurfaceOffset;
+        var spineRightX = width / 2 + artworkSurfaceOffset;
 
         // Back source-right folds around the world-left edge.  Keep both
         // physical spine faces independently textured just like the 3D viewer.
         if (worldLeftSpineArtwork is not null)
             group.Children.Add(CreateQuad(
-                // Match DxJewelCaseScene.AddSpine exactly: the paper sits just
-                // beneath the clear side wall and stops inside the front/back
-                // acrylic lips. Extending beyond those lips makes it read as
-                // an obi wrapped over the outside of the case.
+                // Keep the print between the front/back acrylic lips. Only its
+                // depth-test plane is moved to the visible outer side surface.
                 new Point3D(spineLeftX, backHeight / 2, spineRearZ),
                 new Point3D(spineLeftX, backHeight / 2, spineFrontZ),
                 new Point3D(spineLeftX, -backHeight / 2, spineFrontZ),
                 new Point3D(spineLeftX, -backHeight / 2, spineRearZ),
-                CreateImageMaterial(worldLeftSpineArtwork, item.Title, 0.99, subdued: true)));
+                CreateImageMaterial(worldLeftSpineArtwork, item.Title, 1.0, subdued: true)));
         if (worldRightSpineArtwork is not null)
             group.Children.Add(CreateQuad(
                 new Point3D(spineRightX, backHeight / 2, spineFrontZ),
                 new Point3D(spineRightX, backHeight / 2, spineRearZ),
                 new Point3D(spineRightX, -backHeight / 2, spineRearZ),
                 new Point3D(spineRightX, -backHeight / 2, spineFrontZ),
-                CreateImageMaterial(worldRightSpineArtwork, item.Title, 0.99, subdued: true)));
+                CreateImageMaterial(worldRightSpineArtwork, item.Title, 1.0, subdued: true)));
 
         // A rack has no glossy floor beneath every case. These translucent
         // reflection quads overlap into a large rectangular "shadow" when
@@ -1507,7 +1512,11 @@ public sealed class JewelCaseCoverFlow : Grid
         Focus();
         _isRotating = false;
         _isDraggingWrapping = CaptureMouse();
-        if (_isDraggingWrapping) Cursor = Cursors.Hand;
+        if (_isDraggingWrapping)
+        {
+            _dxScene.BeginInteractiveMotion();
+            Cursor = Cursors.Hand;
+        }
         else _dxScene.EndWrappingDrag();
         return _isDraggingWrapping;
     }
@@ -1518,7 +1527,11 @@ public sealed class JewelCaseCoverFlow : Grid
         Focus();
         _isRotating = false;
         _isDraggingDisc = CaptureMouse();
-        if (_isDraggingDisc) Cursor = Cursors.SizeAll;
+        if (_isDraggingDisc)
+        {
+            _dxScene.BeginInteractiveMotion();
+            Cursor = Cursors.SizeAll;
+        }
         else _dxScene.EndDiscDrag();
         return _isDraggingDisc;
     }
@@ -1536,7 +1549,11 @@ public sealed class JewelCaseCoverFlow : Grid
         Focus();
         _isRotating = false;
         _isDraggingSpineCard = CaptureMouse();
-        if (_isDraggingSpineCard) Cursor = Cursors.SizeAll;
+        if (_isDraggingSpineCard)
+        {
+            _dxScene.BeginInteractiveMotion();
+            Cursor = Cursors.SizeAll;
+        }
         else _dxScene.EndSpineCardDrag();
         return _isDraggingSpineCard;
     }
@@ -1577,6 +1594,7 @@ public sealed class JewelCaseCoverFlow : Grid
         var progress = _dxScene.WrappingProgress;
         var wasCut = _isWrappingCut;
         _dxScene.EndWrappingDrag();
+        _dxScene.EndInteractiveMotion();
         _isDraggingWrapping = false;
         if (IsMouseCaptured) ReleaseMouseCapture();
         Cursor = Cursors.Arrow;
@@ -1604,7 +1622,11 @@ public sealed class JewelCaseCoverFlow : Grid
         EndPointerDrag();
         _panStart = e.GetPosition(this);
         _isPanning = CaptureMouse();
-        if (_isPanning) Cursor = Cursors.SizeAll;
+        if (_isPanning)
+        {
+            _dxScene?.BeginInteractiveMotion();
+            Cursor = Cursors.SizeAll;
+        }
         e.Handled = true;
     }
 
@@ -1659,6 +1681,7 @@ public sealed class JewelCaseCoverFlow : Grid
         _dxScene?.EndDiscDrag();
         _dxScene?.EndSpineCardDrag();
         _dxScene?.EndWrappingDrag();
+        _dxScene?.EndInteractiveMotion();
         _isPanning = false;
         _isRotating = false;
         if (IsMouseCaptured) ReleaseMouseCapture();
@@ -1672,7 +1695,12 @@ public sealed class JewelCaseCoverFlow : Grid
         if (_selectedIndex < 0) return;
         _isRotating = true;
         _rotationStart = e.GetPosition(this);
-        CaptureMouse();
+        if (!CaptureMouse())
+        {
+            _isRotating = false;
+            return;
+        }
+        _dxScene?.BeginInteractiveMotion();
         Cursor = Cursors.SizeAll;
     }
 
@@ -1699,6 +1727,7 @@ public sealed class JewelCaseCoverFlow : Grid
     {
         if (!_isRotating) return;
         _isRotating = false;
+        _dxScene?.EndInteractiveMotion();
         ReleaseMouseCapture();
         Cursor = Cursors.Arrow;
     }
@@ -2282,7 +2311,12 @@ public sealed class JewelCaseCoverFlow : Grid
             return;
         }
         var item = _items[_selectedIndex];
-        var playing = state?.IsPlaying ?? PlaybackActiveProvider?.Invoke(item.Key) ?? item.IsPlaying;
+        // PlaybackStateProvider describes the application-wide player and is
+        // also used by the full-screen transport bar. It does not identify an
+        // album, so using its IsPlaying flag directly makes every subsequently
+        // opened case spin while a different album continues playing. Prefer
+        // the key-aware provider for the physical disc animation.
+        var playing = PlaybackActiveProvider?.Invoke(item.Key) ?? state?.IsPlaying ?? item.IsPlaying;
         _dxScene.SetDiscPlaying(playing);
         UpdatePlaybackBar(state);
     }

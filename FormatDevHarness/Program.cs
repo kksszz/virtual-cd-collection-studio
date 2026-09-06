@@ -218,6 +218,16 @@ static void VerifyIncompleteMp3Frames(string parent)
         Require(track.IsSupported == expected && track.IsMp3Valid == expected && track.IsCbr == expected,
             $"Complete-frame validation: {track.FileName}");
     }
+
+    var layer2Path = Path.Combine(folder, "mpeg-layer-2.mp3");
+    var layer2Bytes = new byte[417 * 3];
+    for (var offset = 0; offset < layer2Bytes.Length; offset += 417)
+        new byte[] { 0xff, 0xfd, 0x80, 0x00 }.CopyTo(layer2Bytes, offset);
+    File.WriteAllBytes(layer2Path, layer2Bytes);
+    var layer2 = ZipAlbumReader.OpenFolder(folder).Tracks.Single(track => track.FileName == "mpeg-layer-2.mp3");
+    Require(layer2.IsSupported && layer2.IsMp3Valid && layer2.IsCbr && layer2.AudioFormat == "MP2"
+        && layer2.BitrateKbps == 128 && layer2.SampleRate == 44100,
+        "MPEG-1 Layer II stream stored with .mp3 extension");
 }
 
 static void PrintReaderFormat(ZipTrack track, string name)

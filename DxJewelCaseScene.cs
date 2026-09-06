@@ -69,7 +69,10 @@ internal sealed class DxJewelCaseScene : IDisposable
     private double _spineCardProgress;
     private double _spineCardRemovedOffsetX = -1;
     private const double SpineCardRemovedOffsetY = -0.08;
-    private const double SpineCardRemovedOffsetZ = -0.16;
+    // Keep the extracted obi just in front of the lid.  The old negative
+    // offset moved its front flap through the acrylic while it slid sideways,
+    // so the case depth buffer cut away part of the printed face.
+    private const double SpineCardRemovedOffsetZ = 0.024;
     private const double SpineCardOpenClearanceX = -2.35;
     private Point3D? _spineCardDragPoint;
     private Vector3D _spineCardDragNormal;
@@ -116,6 +119,7 @@ internal sealed class DxJewelCaseScene : IDisposable
     private readonly AxisAngleRotation3D _secondDiscSpinRotation = new(new Vector3D(0, 0, 1), 0);
     private readonly System.Diagnostics.Stopwatch _discSpinClock = new();
     private bool _discPlaying;
+    private string? _discItemKey;
     private double _discSpinStartAngle;
     internal const double DiscPlaybackRpm = 240;
     private readonly Dictionary<BitmapSource, TextureModel> _textureCache =
@@ -134,6 +138,8 @@ internal sealed class DxJewelCaseScene : IDisposable
     private const double RemovedDiscMinimumZ = 0.35;
     private readonly Transform3DGroup _caseTransform = new();
     private readonly DispatcherTimer _animationRenderTimer;
+    private bool _interactiveMotion;
+    private bool _interactiveRenderPending;
     private bool _disposed;
     private int _caseAnimationGeneration;
     private int _discAnimationGeneration;
@@ -145,6 +151,8 @@ internal sealed class DxJewelCaseScene : IDisposable
         Size = 256,
         NearField = 0.08,
         FarField = 20,
+        // The reflected studio cards are fixed. Rebuilding all six cubemap
+        // faces for every mouse move adds GPU work without changing the scene.
         IsDynamicScene = false
     };
 
@@ -289,6 +297,17 @@ internal sealed class DxJewelCaseScene : IDisposable
 
     public void SetItem(JewelCaseCoverFlowItem item, double yaw, double pitch)
     {
+        if (!string.Equals(_discItemKey, item.Key, StringComparison.OrdinalIgnoreCase))
+        {
+            // A scene can be retained while CoverFlow selects another album.
+            // Never carry the former disc's running clock or angular phase
+            // into the newly constructed case.
+            SetDiscPlaying(false);
+            _discSpinRotation.Angle = 0;
+            _secondDiscSpinRotation.Angle = 0;
+            _discSpinStartAngle = 0;
+            _discItemKey = item.Key;
+        }
         CancelWrappingMotion();
         EndWrappingDrag();
         EndDiscDrag();
@@ -397,7 +416,9 @@ internal sealed class DxJewelCaseScene : IDisposable
             // Slightly warm moulded resin.  A neutral/high-value white is
             // washed out by the environment lighting and looks painted.
             "White" => new Color4(0.76f, 0.735f, 0.66f, 1),
-            "Black" => new Color4(0.025f, 0.029f, 0.035f, 1),
+            // Sampled from the moulded main-tray area of img129.jpg.  The
+            // scan median is sRGB (51, 50, 56); PBR albedo is linear RGB.
+            "Black" => new Color4(0.0331f, 0.0319f, 0.0395f, 1),
             "Gray" => new Color4(0.29f, 0.31f, 0.33f, 1),
             "Clear" => new Color4(0.90f, 0.92f, 0.93f, 0.12f),
             _ => new Color4(0.045f, 0.052f, 0.064f, 1)
@@ -420,6 +441,39 @@ internal sealed class DxJewelCaseScene : IDisposable
             RoughnessFactor = trayIsClear ? 0.12 : 0.42,
             ReflectanceFactor = trayIsClear ? 0.42 : 0.22,
             ClearCoatStrength = trayIsClear ? 0.30 : 0,
+            RenderEnvironmentMap = trayIsClear
+        };
+        var traySpineGroove = new PBRMaterial
+        {
+            Name = "Tray spine groove floor",
+            AlbedoColor = new Color4(trayColor.Red * 0.58f, trayColor.Green * 0.58f,
+                trayColor.Blue * 0.58f, trayIsClear ? 0.16f : trayColor.Alpha),
+            EmissiveColor = new Color4(0.0015f, 0.0015f, 0.0015f, 1),
+            MetallicFactor = 0,
+            RoughnessFactor = 0.58,
+            ReflectanceFactor = trayIsClear ? 0.34 : 0.12,
+            RenderEnvironmentMap = trayIsClear
+        };
+        var traySpineRib = new PBRMaterial
+        {
+            Name = "Tray spine ribs",
+            AlbedoColor = trayColor,
+            EmissiveColor = tray.EmissiveColor,
+            MetallicFactor = 0,
+            RoughnessFactor = trayIsClear ? 0.10 : 0.34,
+            ReflectanceFactor = trayIsClear ? 0.46 : 0.28,
+            ClearCoatStrength = trayIsClear ? 0.30 : 0,
+            RenderEnvironmentMap = trayIsClear
+        };
+        var traySpineTransition = new PBRMaterial
+        {
+            Name = "Tray spine transition",
+            AlbedoColor = trayColor,
+            EmissiveColor = tray.EmissiveColor,
+            MetallicFactor = 0,
+            RoughnessFactor = tray.RoughnessFactor,
+            ReflectanceFactor = tray.ReflectanceFactor,
+            ClearCoatStrength = tray.ClearCoatStrength,
             RenderEnvironmentMap = trayIsClear
         };
         var bookletPageEdge = new PBRMaterial
@@ -462,7 +516,8 @@ internal sealed class DxJewelCaseScene : IDisposable
         // Continue the tray strip up to the inner edges of the two 2 mm clear
         // shell rails. It must not stop 4.5 mm early as before, nor pass through
         // the rails as a full 125 mm strip.
-        AddTraySpineCover(width, height, depth, tray, trayIsClear);
+        AddTraySpineCover(width, height, depth, tray, traySpineGroove,
+            traySpineRib, traySpineTransition, trayIsClear);
 
         // Use the inset plane actually modelled into the upper STL. Its source
         // dimensions are about 120.6 x 124.8 mm; using a generic 120 x 120
@@ -578,27 +633,77 @@ internal sealed class DxJewelCaseScene : IDisposable
         SetWrappingProgress(_wrappingProgress);
 
         ApplyRotation(yaw, pitch);
-        Viewport.InvalidateRender();
+        RequestRender();
     }
 
     public void SetRotation(double yaw, double pitch)
     {
         ApplyRotation(yaw, pitch);
-        Viewport.InvalidateRender();
+        RequestRender();
     }
 
     public void SetViewPan(double x, double y)
     {
         _viewPan.OffsetX = x;
         _viewPan.OffsetY = y;
-        Viewport.InvalidateRender();
+        RequestRender();
     }
 
     public void SetViewZoom(double zoom)
     {
         zoom = Math.Clamp(zoom, 0.55, 2.40);
         _viewZoom.ScaleX = _viewZoom.ScaleY = _viewZoom.ScaleZ = zoom;
-        Viewport.InvalidateRender();
+        RequestRender();
+    }
+
+    public void BeginInteractiveMotion()
+    {
+        if (_disposed || _interactiveMotion) return;
+        _interactiveMotion = true;
+        // Preserve geometry, textures, MSAA and transparent OIT. Only the
+        // finishing passes that are difficult to perceive in motion are paused.
+        Viewport.EnableSSAO = false;
+        Viewport.IsShadowMappingEnabled = false;
+        Viewport.FXAALevel = FXAALevel.None;
+        RequestRender();
+    }
+
+    public void EndInteractiveMotion()
+    {
+        if (_disposed || !_interactiveMotion) return;
+        _interactiveMotion = false;
+        if (_interactiveRenderPending)
+        {
+            CompositionTarget.Rendering -= OnInteractiveRenderFrame;
+            _interactiveRenderPending = false;
+        }
+        Viewport.EnableSSAO = true;
+        Viewport.IsShadowMappingEnabled = true;
+        Viewport.FXAALevel = FXAALevel.Medium;
+        // Produce the final still frame immediately at full quality.
+        RequestRender();
+    }
+
+    private void RequestRender()
+    {
+        if (_disposed) return;
+        if (!_interactiveMotion)
+        {
+            Viewport.InvalidateRender();
+            return;
+        }
+        // MouseMove can arrive much faster than the display refresh rate. Keep
+        // the newest transform, but submit at most one GPU frame per WPF frame.
+        if (_interactiveRenderPending) return;
+        _interactiveRenderPending = true;
+        CompositionTarget.Rendering += OnInteractiveRenderFrame;
+    }
+
+    private void OnInteractiveRenderFrame(object? sender, EventArgs e)
+    {
+        CompositionTarget.Rendering -= OnInteractiveRenderFrame;
+        _interactiveRenderPending = false;
+        if (!_disposed) Viewport.InvalidateRender();
     }
 
     public double WrappingProgress => _wrappingProgress;
@@ -665,24 +770,28 @@ internal sealed class DxJewelCaseScene : IDisposable
         var tape = Math.Clamp(_wrappingProgress / TearCompleteProgress, 0, 1);
         UpdateTearTapeGeometry(tape);
 
-        // Stage 2: lift the film from the new slit. Both sections travel in
-        // the same hand-pull direction instead of flying apart left/right.
+        // Stage 2: slide the loosened film along the case first.  While any
+        // broad face is still touching the acrylic it must translate straight
+        // up/down: rotating or moving it towards the viewer here makes the
+        // close-fitting film appear to jump free of the case.  Only after both
+        // sections clear their respective edges may they peel and be gathered
+        // to the right in the same hand-pull direction.
         var peelLinear = Math.Clamp((_wrappingProgress - TearCompleteProgress)
             / (1 - TearCompleteProgress), 0, 1);
-        var lift = Math.Sin(Math.Clamp(peelLinear / .68, 0, 1) * Math.PI / 2);
-        // Do not begin the rightward removal until both film sections have
-        // cleared the case vertically. This preserves physical separation.
+        var contactSlide = Math.Sin(Math.Clamp(peelLinear / .68, 0, 1) * Math.PI / 2);
         var releaseLinear = Math.Clamp((peelLinear - .70) / .30, 0, 1);
         var release = 1 - Math.Pow(1 - releaseLinear, 3);
-        _wrappingUpperPeel.Angle = -24 * lift + 18 * release;
+        // Preserve the former final poses, but interpolate toward them only
+        // after the close-fitting faces have passed beyond the case edges.
+        _wrappingUpperPeel.Angle = -6 * release;
         _wrappingUpperTranslation.OffsetX = 3.10 * release;
-        _wrappingUpperTranslation.OffsetY = _wrappingUpperClearanceY * lift + 0.08 * release;
-        _wrappingUpperTranslation.OffsetZ = 0.64 * lift - 0.16 * release;
-        _wrappingLowerPeel.Angle = 18 * lift - 12 * release;
+        _wrappingUpperTranslation.OffsetY = _wrappingUpperClearanceY * contactSlide + 0.08 * release;
+        _wrappingUpperTranslation.OffsetZ = 0.48 * release;
+        _wrappingLowerPeel.Angle = 6 * release;
         _wrappingLowerTranslation.OffsetX = 3.10 * release;
-        _wrappingLowerTranslation.OffsetY = -_wrappingLowerClearanceY * lift - 0.05 * release;
-        _wrappingLowerTranslation.OffsetZ = 0.52 * lift - 0.12 * release;
-        Viewport.InvalidateRender();
+        _wrappingLowerTranslation.OffsetY = -_wrappingLowerClearanceY * contactSlide - 0.05 * release;
+        _wrappingLowerTranslation.OffsetZ = 0.40 * release;
+        RequestRender();
     }
 
     private void UpdateTearTapeGeometry(double progress)
@@ -1070,7 +1179,7 @@ internal sealed class DxJewelCaseScene : IDisposable
         // jitter can no longer accumulate into uneven angular steps.
         _discSpinRotation.Angle = (_discSpinStartAngle - degrees) % 360;
         _secondDiscSpinRotation.Angle = _discSpinRotation.Angle;
-        Viewport.InvalidateRender();
+        RequestRender();
     }
 
     public void SetSpineCardRemoved(bool removed, bool animate = true)
@@ -1093,7 +1202,7 @@ internal sealed class DxJewelCaseScene : IDisposable
         _spineCardTranslation.OffsetX = _spineCardRemovedOffsetX * eased;
         _spineCardTranslation.OffsetY = SpineCardRemovedOffsetY * eased;
         _spineCardTranslation.OffsetZ = SpineCardRemovedOffsetZ * eased;
-        Viewport.InvalidateRender();
+        RequestRender();
     }
 
     private void CancelSpineCardMotion()
@@ -1181,7 +1290,7 @@ internal sealed class DxJewelCaseScene : IDisposable
         _bookletTranslation.OffsetY = pose.Y;
         _bookletTranslation.OffsetZ = pose.Z;
         _bookletTilt.Angle = pose.Tilt;
-        Viewport.InvalidateRender();
+        RequestRender();
     }
 
     private EventHandler? _bookletMotionTick;
@@ -1263,7 +1372,7 @@ internal sealed class DxJewelCaseScene : IDisposable
         _discTranslation.OffsetY = constrained.Y;
         _discTranslation.OffsetZ = constrained.Z;
         _discDragPoint = current;
-        Viewport.InvalidateRender();
+        RequestRender();
     }
 
     private static Vector3D ConstrainRemovedDiscOffset(Vector3D proposed) =>
@@ -1294,9 +1403,15 @@ internal sealed class DxJewelCaseScene : IDisposable
         var delta = inverse.Transform(current - previous);
         _spineCardDragTranslation.OffsetX += delta.X;
         _spineCardDragTranslation.OffsetY += delta.Y;
-        _spineCardDragTranslation.OffsetZ += delta.Z;
+        // A removed obi may be repositioned in the screen plane, but its
+        // printed front must never be dragged back through the closed case.
+        // Retaining a small positive clearance also prevents transparent OIT
+        // sorting from intermittently clipping the flap against the acrylic.
+        var proposedZ = _spineCardDragTranslation.OffsetZ + delta.Z;
+        _spineCardDragTranslation.OffsetZ = Math.Max(
+            0.018 - _spineCardTranslation.OffsetZ, proposedZ);
         _spineCardDragPoint = current;
-        Viewport.InvalidateRender();
+        RequestRender();
     }
 
     public void EndSpineCardDrag() => _spineCardDragPoint = null;
@@ -1434,70 +1549,6 @@ internal sealed class DxJewelCaseScene : IDisposable
             _frontPanelRoot, false);
     }
 
-    private void AddTraySpineRibs(float width, float height, float frontSurfaceZ,
-        DxMaterial material, DxMaterial grooveMaterial,
-        DxMaterial clearRailMaterial)
-    {
-        var mouldingBase = new MeshBuilder(true, true, true);
-        var grooveFloor = new MeshBuilder(true, true, true);
-        var ribs = new MeshBuilder(true, true, true);
-        var clearMouldingBase = new MeshBuilder(true, true, true);
-        var clearRibs = new MeshBuilder(true, true, true);
-
-        // This is the removable tray's narrow hinge/spine column, rather than
-        // the clear case perimeter.  Closely spaced longitudinal ribs reproduce
-        // the injection-moulded grip visible on white and coloured jewel trays.
-        const int ribCount = 23;
-        // Preserve the rail's original full width. Its outer 6 mm lies behind
-        // the Spine and is clear acrylic; only the remaining inboard section
-        // belongs to the removable tray material.
-        var bandLeft = -width / 2 + 0.003f;
-        var trayBandLeft = bandLeft
-            + width * StandardVisibleSpineWidthMm / 142f;
-        var bandRight = -width / 2 + 0.245f;
-        // Continue almost to the upper/lower tray shoulders. Keep only a very
-        // small clearance so the ribs do not intersect the clear case rails.
-        var ribLength = height - 0.045f;
-        var mouldingThickness = StandardCaseDepth / StandardCaseDepthMm;
-        const float surfaceBias = 0.00035f;
-        // This rail is part of the removable tray, so its side wall must have
-        // the same resin colour and a physical 1 mm thickness. Previously only
-        // two front-facing quads were drawn, leaving the edge visually detached.
-        clearMouldingBase.AddBox(new Vector3((bandLeft + trayBandLeft) / 2, 0,
-                frontSurfaceZ - mouldingThickness / 2),
-            trayBandLeft - bandLeft, ribLength, mouldingThickness);
-        mouldingBase.AddBox(new Vector3((trayBandLeft + bandRight) / 2, 0,
-                frontSurfaceZ - mouldingThickness / 2),
-            bandRight - trayBandLeft, ribLength, mouldingThickness);
-        grooveFloor.AddQuad(
-            new Vector3(trayBandLeft, ribLength / 2, frontSurfaceZ + surfaceBias),
-            new Vector3(trayBandLeft, -ribLength / 2, frontSurfaceZ + surfaceBias),
-            new Vector3(bandRight, -ribLength / 2, frontSurfaceZ + surfaceBias),
-            new Vector3(bandRight, ribLength / 2, frontSurfaceZ + surfaceBias));
-        var spacing = (bandRight - bandLeft) / (ribCount - 1);
-        var ribWidth = spacing * 0.72f;
-        for (var index = 0; index < ribCount; index++)
-        {
-            var x = bandLeft + (bandRight - bandLeft) * index / (ribCount - 1);
-            var left = Math.Max(bandLeft, x - ribWidth / 2);
-            var right = Math.Min(bandRight, x + ribWidth / 2);
-            var targetRibs = x < trayBandLeft ? clearRibs : ribs;
-            targetRibs.AddQuad(
-                new Vector3(left, ribLength / 2, frontSurfaceZ + surfaceBias * 2),
-                new Vector3(left, -ribLength / 2, frontSurfaceZ + surfaceBias * 2),
-                new Vector3(right, -ribLength / 2, frontSurfaceZ + surfaceBias * 2),
-                new Vector3(right, ribLength / 2, frontSurfaceZ + surfaceBias * 2));
-        }
-
-        AddMesh(clearMouldingBase.ToMeshGeometry3D(), clearRailMaterial,
-            true, false, _baseRoot, false);
-        AddMesh(clearRibs.ToMeshGeometry3D(), clearRailMaterial,
-            true, false, _baseRoot, false);
-        AddMesh(mouldingBase.ToMeshGeometry3D(), material, false, false, _baseRoot);
-        AddMesh(grooveFloor.ToMeshGeometry3D(), grooveMaterial, false, false, _baseRoot);
-        AddMesh(ribs.ToMeshGeometry3D(), material, false, false, _baseRoot);
-    }
-
     private void AddManualRetainingLip(float width, float height, float frontSurfaceZ,
         DxMaterial stopMaterial)
     {
@@ -1519,7 +1570,8 @@ internal sealed class DxJewelCaseScene : IDisposable
     private static float TrayManualStopRight(float width) => -width / 2 + 0.252f;
 
     private void AddTraySpineCover(float width, float caseHeight, float depth,
-        DxMaterial material, bool transparent)
+        DxMaterial material, DxMaterial grooveMaterial, DxMaterial ribMaterial,
+        DxMaterial transitionMaterial, bool transparent)
     {
         var millimetreX = width / 142f;
         var millimetreY = caseHeight / 125f;
@@ -1538,15 +1590,85 @@ internal sealed class DxJewelCaseScene : IDisposable
         // physical thickness, so paper and tray meet without overlapping.
         var bandRearZ = StandardVisibleSpineDepth / 2;
         var bandFrontZ = bandRearZ + 1.5f * millimetreZ;
+        // Clear trays use a smooth spine strip. Fine ribs viewed through the
+        // transparent shell read as false doubled lines, while opaque white,
+        // black and gray trays retain the scan-matched moulding below.
+        if (transparent)
+        {
+            AddBox(new Vector3((bandLeft + bandRight) / 2,
+                    0, (bandRearZ + bandFrontZ) / 2),
+                bandRight - bandLeft, caseHeight - 4.0f * millimetreY,
+                bandFrontZ - bandRearZ, material, true, _baseRoot);
+            AddTraySpineTransition(bandRight, caseHeight - 4.0f * millimetreY,
+                bandFrontZ, depth, millimetreX, transitionMaterial, true);
+            return;
+        }
+        // img129 (600 dpi) measures a repeating 18-19 px cycle: about 0.78 mm,
+        // with a 7 px / 0.30 mm recessed groove. Preserve the overall 1.5 mm
+        // tray thickness and recess only the spaces between the raised ribs.
+        const int ribCount = 17;
+        var grooveDepth = 0.12f * millimetreZ;
+        var grooveFloorZ = bandFrontZ - grooveDepth;
         // The scanned top and bottom clear rails occupy about 2 mm each.
         // A 121 mm tray strip therefore meets their inner faces without any
         // overlap while still reaching substantially farther than the old
         // 116 mm approximation.
         var spineHeight = caseHeight - 4.0f * millimetreY;
         AddBox(new Vector3((bandLeft + bandRight) / 2,
-                0, (bandRearZ + bandFrontZ) / 2),
-            bandRight - bandLeft, spineHeight, bandFrontZ - bandRearZ,
+                0, (bandRearZ + grooveFloorZ) / 2),
+            bandRight - bandLeft, spineHeight, grooveFloorZ - bandRearZ,
             material, transparent, _baseRoot);
+
+        var grooveFloor = new MeshBuilder(true, true, true);
+        grooveFloor.AddQuad(new Vector3(bandLeft, spineHeight / 2, grooveFloorZ + 0.00005f),
+            new Vector3(bandLeft, -spineHeight / 2, grooveFloorZ + 0.00005f),
+            new Vector3(bandRight, -spineHeight / 2, grooveFloorZ + 0.00005f),
+            new Vector3(bandRight, spineHeight / 2, grooveFloorZ + 0.00005f));
+        AddMesh(grooveFloor.ToMeshGeometry3D(), grooveMaterial,
+            transparent, false, _baseRoot, false);
+
+        var ribs = new MeshBuilder(true, true, true);
+        var pitch = (bandRight - bandLeft) / ribCount;
+        var grooveWidth = 0.30f * millimetreX;
+        var ribWidth = Math.Max(pitch * 0.35f, pitch - grooveWidth);
+        for (var index = 0; index < ribCount; index++)
+        {
+            var centerX = bandLeft + pitch * (index + 0.5f);
+            ribs.AddBox(new Vector3(centerX, 0, (grooveFloorZ + bandFrontZ) / 2),
+                ribWidth, spineHeight, bandFrontZ - grooveFloorZ);
+        }
+        AddMesh(ribs.ToMeshGeometry3D(), ribMaterial,
+            transparent, false, _baseRoot, false);
+        AddTraySpineTransition(bandRight, spineHeight, bandFrontZ,
+            depth, millimetreX, transitionMaterial, false);
+    }
+
+    private void AddTraySpineTransition(float bandRight, float height,
+        float bandFrontZ, float depth, float millimetreX,
+        DxMaterial material, bool transparent)
+    {
+        // The raised spine strip meets the lower main tray through a short
+        // moulded shoulder. A triangular prism closes the former blank space
+        // while retaining a visible, continuous step rather than flattening
+        // both parts to the same height.
+        var traySurfaceZ = depth * 0.1162f;
+        var transitionRight = bandRight + 1.2f * millimetreX;
+        var topY = height / 2;
+        var bottomY = -height / 2;
+        var upperTop = new Vector3(bandRight, topY, bandFrontZ);
+        var upperFloor = new Vector3(bandRight, topY, traySurfaceZ);
+        var upperRight = new Vector3(transitionRight, topY, traySurfaceZ);
+        var lowerTop = new Vector3(bandRight, bottomY, bandFrontZ);
+        var lowerFloor = new Vector3(bandRight, bottomY, traySurfaceZ);
+        var lowerRight = new Vector3(transitionRight, bottomY, traySurfaceZ);
+        var transition = new MeshBuilder(true, true, true);
+        transition.AddQuad(upperTop, upperRight, lowerRight, lowerTop);
+        transition.AddQuad(upperFloor, lowerFloor, lowerRight, upperRight);
+        transition.AddQuad(upperTop, lowerTop, lowerFloor, upperFloor);
+        transition.AddTriangle(upperTop, upperFloor, upperRight);
+        transition.AddTriangle(lowerTop, lowerRight, lowerFloor);
+        AddMesh(transition.ToMeshGeometry3D(), material,
+            transparent, false, _baseRoot, false);
     }
 
     private void AddOpeningSideMatingRails(float width, float height, float depth,
@@ -2010,6 +2132,16 @@ internal sealed class DxJewelCaseScene : IDisposable
                 && Math.Abs(faceNormal.X) > 0.55f;
             if (isOpeningSideTrayWall)
                 continue;
+            // Replace the lower STL's smooth hinge-side tray column with the
+            // scan-dimensioned 13 mm ribbed plate built by AddTraySpineCover.
+            // Leaving both surfaces in place puts this STL face about 0.5 mm
+            // in front of the procedural ribs and hides them completely.
+            // Keep the outer clear perimeter; only the removable tray resin is
+            // suppressed in this strip.
+            var isRebuiltTraySpine = !isOuterClearRim
+                && centroid.X < -targetWidth * 0.402f;
+            if (isRebuiltTraySpine)
+                continue;
             // One spatial rule owns every material assignment: everything
             // inside the clear perimeter is the removable tray, regardless of
             // triangle height, slope or whether it forms a recess. The former
@@ -2037,18 +2169,9 @@ internal sealed class DxJewelCaseScene : IDisposable
     {
         var builder = new MeshBuilder(true, true, true);
 
-        // Closely spaced injection-moulded ribs belong to the top and bottom
-        // X-Z edge faces. Each rib crosses almost the full case depth rather
-        // than being drawn as a decoration on the front cover.
-        const int ribCount = 78;
-        for (var index = 0; index < ribCount; index++)
-        {
-            var x = -1.02f + index * (2.04f / (ribCount - 1));
-            builder.AddBox(new Vector3(x, -height / 2 + 0.015f, 0),
-                0.0052f, 0.018f, depth + 0.010f);
-            builder.AddBox(new Vector3(x, height / 2 - 0.014f, 0),
-                0.0052f, 0.016f, depth + 0.010f);
-        }
+        // The fine top/bottom rib field is generated once by
+        // AddTopBottomSideRibs. The former 78-rib field here overlapped its
+        // 168 scan-spaced ribs, producing a false heavy line every few cells.
 
         // Inner shoulder and thin sealing lip visible as parallel highlights.
         builder.AddBox(new Vector3(0.055f, height / 2 - 0.057f, depth / 2 + 0.004f),
@@ -2257,12 +2380,12 @@ internal sealed class DxJewelCaseScene : IDisposable
         var film = new PBRMaterial
         {
             Name = "Caramel wrapping film",
-            AlbedoColor = new Color4(0.97f, 0.985f, 1f, 0.115f),
+            AlbedoColor = new Color4(0.985f, 0.995f, 1f, 0.17f),
             MetallicFactor = 0,
-            RoughnessFactor = 0.050,
-            ReflectanceFactor = 0.64,
+            RoughnessFactor = 0.024,
+            ReflectanceFactor = 0.84,
             ClearCoatStrength = 1.0,
-            ClearCoatRoughness = 0.012,
+            ClearCoatRoughness = 0.006,
             RenderEnvironmentMap = true,
             EnableAutoTangent = true
         };
@@ -2276,15 +2399,11 @@ internal sealed class DxJewelCaseScene : IDisposable
         var foldedFacet = new PhongMaterial
         {
             Name = "Caramel wrapping folded facet",
-            DiffuseColor = new Color4(0.84f, 0.90f, 0.97f, 0.085f),
-            SpecularColor = new Color4(0.78f, 0.84f, 0.92f, 0.34f),
-            SpecularShininess = 92
-        };
-        var sealRib = new PhongMaterial
-        {
-            Name = "Caramel wrapping seal ribs",
-            DiffuseColor = new Color4(0.88f, 0.93f, 0.98f, 0.16f),
-            SpecularColor = new Color4(0.86f, 0.91f, 0.98f, 0.48f),
+            // These triangles are the heat-folded film corners, not a case
+            // control. Keep the fold readable without the former dark,
+            // button-like patch appearing over the cover artwork.
+            DiffuseColor = new Color4(0.96f, 0.98f, 1f, 0.045f),
+            SpecularColor = new Color4(0.72f, 0.80f, 0.90f, 0.18f),
             SpecularShininess = 108
         };
         var tape = new PhongMaterial
@@ -2317,20 +2436,27 @@ internal sealed class DxJewelCaseScene : IDisposable
             outerDepth + 0.005f, fold, true, _wrappingUpperRoot, false);
         AddBox(new Vector3(0, bottom + 0.012f, 0), outerWidth - 0.04f, 0.018f,
             outerDepth + 0.005f, fold, true, _wrappingLowerRoot, false);
-        void AddFrontCrease(Vector2 start, Vector2 end, GroupModel3D target)
+        // End folds belong to the narrow top face of the package. Mapping them
+        // in X-Z keeps both Front and Back artwork completely unobstructed.
+        var topFoldY = top + 0.009f;
+        void AddTopCrease(Vector2 start, Vector2 end, GroupModel3D target)
         {
             var direction = Vector2.Normalize(end - start);
             var perpendicular = new Vector2(-direction.Y, direction.X) * 0.006f;
-            var z = outerDepth / 2 + 0.007f;
             var crease = new MeshBuilder(true, false, false);
-            crease.AddQuad(new Vector3(start + perpendicular, z), new Vector3(start - perpendicular, z),
-                new Vector3(end - perpendicular, z), new Vector3(end + perpendicular, z));
+            Vector3 OnTop(Vector2 point) => new(point.X, topFoldY, point.Y);
+            crease.AddQuad(OnTop(start + perpendicular), OnTop(start - perpendicular),
+                OnTop(end - perpendicular), OnTop(end + perpendicular));
             AddMesh(crease.ToMeshGeometry3D(), fold, true, true, target, false);
         }
         var left = -outerWidth / 2 + 0.025f;
         var right = outerWidth / 2 - 0.025f;
-        AddFrontCrease(new Vector2(left, top - 0.02f), new Vector2(left + 0.23f, top - 0.16f), _wrappingUpperRoot);
-        AddFrontCrease(new Vector2(right, top - 0.02f), new Vector2(right - 0.23f, top - 0.16f), _wrappingUpperRoot);
+        var rearFoldZ = -outerDepth / 2 + 0.012f;
+        var frontFoldZ = outerDepth / 2 - 0.012f;
+        AddTopCrease(new Vector2(left, rearFoldZ), new Vector2(left + 0.20f, 0), _wrappingUpperRoot);
+        AddTopCrease(new Vector2(left, frontFoldZ), new Vector2(left + 0.20f, 0), _wrappingUpperRoot);
+        AddTopCrease(new Vector2(right, rearFoldZ), new Vector2(right - 0.20f, 0), _wrappingUpperRoot);
+        AddTopCrease(new Vector2(right, frontFoldZ), new Vector2(right - 0.20f, 0), _wrappingUpperRoot);
 
         // Real caramel packs overlap at each sealed end. The triangular
         // facets gather excess film into the corners rather than leaving a
@@ -2341,37 +2467,18 @@ internal sealed class DxJewelCaseScene : IDisposable
             facet.AddTriangle(a, b, c);
             AddMesh(facet.ToMeshGeometry3D(), foldedFacet, true, true, target, false);
         }
-        var frontFaceZ = outerDepth / 2 + 0.009f;
-        var backFaceZ = -outerDepth / 2 - 0.009f;
-        foreach (var z in new[] { frontFaceZ, backFaceZ })
-        {
-            AddCornerFacet(new Vector3(left, top, z), new Vector3(left + 0.24f, top, z),
-                new Vector3(left + 0.14f, top - 0.17f, z + (z > 0 ? 0.004f : -0.004f)), _wrappingUpperRoot);
-            AddCornerFacet(new Vector3(right, top, z), new Vector3(right - 0.24f, top, z),
-                new Vector3(right - 0.14f, top - 0.17f, z + (z > 0 ? 0.004f : -0.004f)), _wrappingUpperRoot);
-        }
-
-        // Fine heat-seal ribs run across the narrow top and bottom faces.
-        // One mesh per edge keeps the detail inexpensive while allowing the
-        // specular highlight to break into the characteristic pressed pattern.
-        void AddSealRibs(float y, GroupModel3D target)
-        {
-            var ribs = new MeshBuilder(true, false, false);
-            const int count = 31;
-            for (var index = 1; index < count; index++)
-            {
-                var x = left + (right - left) * index / count;
-                const float halfRib = 0.0022f;
-                ribs.AddQuad(new Vector3(x - halfRib, y, -outerDepth / 2 + 0.012f),
-                    new Vector3(x - halfRib, y, outerDepth / 2 - 0.012f),
-                    new Vector3(x + halfRib, y, outerDepth / 2 - 0.012f),
-                    new Vector3(x + halfRib, y, -outerDepth / 2 + 0.012f));
-            }
-            AddMesh(ribs.ToMeshGeometry3D(), sealRib, true, true, target, false);
-        }
-        AddSealRibs(top + 0.006f, _wrappingUpperRoot);
-        AddSealRibs(bottom - 0.006f, _wrappingLowerRoot);
-
+        AddCornerFacet(new Vector3(left, topFoldY, rearFoldZ),
+            new Vector3(left + 0.24f, topFoldY, rearFoldZ),
+            new Vector3(left + 0.14f, topFoldY, 0), _wrappingUpperRoot);
+        AddCornerFacet(new Vector3(left, topFoldY, frontFoldZ),
+            new Vector3(left + 0.24f, topFoldY, frontFoldZ),
+            new Vector3(left + 0.14f, topFoldY, 0), _wrappingUpperRoot);
+        AddCornerFacet(new Vector3(right, topFoldY, rearFoldZ),
+            new Vector3(right - 0.24f, topFoldY, rearFoldZ),
+            new Vector3(right - 0.14f, topFoldY, 0), _wrappingUpperRoot);
+        AddCornerFacet(new Vector3(right, topFoldY, frontFoldZ),
+            new Vector3(right - 0.24f, topFoldY, frontFoldZ),
+            new Vector3(right - 0.14f, topFoldY, 0), _wrappingUpperRoot);
 
         // The Japanese-style tear tape circles the package. Its small tab is
         // exposed at the lower part of the right spine and can be dragged.
@@ -2416,24 +2523,22 @@ internal sealed class DxJewelCaseScene : IDisposable
     {
         if (bitmap is null) return;
         var (back, spine, front) = SpineCardArtwork.Split(bitmap);
-        // Fit the detected centre panel to the complete outside width of the
-        // physical spine, and use that horizontal scale for both flaps. Height
-        // is independent: scanner proportions and fold detection must not make
-        // a tall obi extend behind the case frame and lose its top/bottom edge.
-        // The printed side panel is exactly as deep as the physical case.
-        // Front/back flaps receive their own small Z offset below; including
-        // that render clearance in this scale made the side look too wide.
-        var wrappedSpineWidth = caseDepth;
-        var horizontalScale = wrappedSpineWidth / Math.Max(1, spine.PixelWidth);
+        // Preserve the flat scan's physical aspect ratio for both flaps. The
+        // former implementation derived their scale from the detected centre
+        // panel and forced that panel to 10 mm. A slightly wide/manual Spine
+        // selection therefore shortened the entire obi. Derive millimetres per
+        // pixel from the known 120 mm card height instead; only the folded side
+        // itself is constrained to the case's physical 10 mm depth.
+        const float obiHeightMm = 120f;
+        const float caseHeightMm = 125f;
+        var cardHeight = caseHeight * obiHeightMm / caseHeightMm;
+        var horizontalScale = cardHeight / Math.Max(1, back.PixelHeight);
         var backWidth = horizontalScale * back.PixelWidth;
         var frontWidth = horizontalScale * front.PixelWidth;
         // Leave a visible gap beside the closed case. A small forward depth
         // separation prevents the folded paper from disappearing beneath the
         // opaque lid after it opens to the left.
         _spineCardRemovedOffsetX = -(Math.Max(backWidth, frontWidth) + 0.34f);
-        const float obiHeightMm = 120f;
-        const float caseHeightMm = 125f;
-        var cardHeight = caseHeight * obiHeightMm / caseHeightMm;
         var outsideX = -caseWidth / 2 - 0.014f;
         // All three paper faces share the same physical fold line. Separating
         // the flap origin from the side plane leaves a visible crack at steep
@@ -2674,6 +2779,11 @@ internal sealed class DxJewelCaseScene : IDisposable
     public void Dispose()
     {
         _disposed = true;
+        if (_interactiveRenderPending)
+        {
+            CompositionTarget.Rendering -= OnInteractiveRenderFrame;
+            _interactiveRenderPending = false;
+        }
         CompositionTarget.Rendering -= OnDiscRenderFrame;
         _discPlaying = false;
         _discSpinClock.Stop();

@@ -257,6 +257,9 @@
                 <MenuItem Header="エクスプローラーで場所を開く" Click="OpenAlbumInExplorer_Click"/>
                 <MenuItem Header="インターネットからアルバム画像を取得" Click="DownloadAlbumArtwork_Click"/>
                 <Separator/>
+                <MenuItem Header="Wikipediaでアーティストを検索" Tag="WikipediaArtist" Click="WikipediaArtistSearch_Click"/>
+                <MenuItem Header="Wikipediaでアルバムを検索" Tag="WikipediaAlbum" Click="WikipediaAlbumSearch_Click"/>
+                <Separator/>
                 <MenuItem x:Name="ConvertToStoredZipMenuItem" Header="無圧縮ZIP.MP3へ変換…" Click="ConvertToStoredZip_Click"
                           ToolTip="音声を再エンコードせず、ZIP内の全収録物をStore方式へ変換"/>
                 <Separator/>
@@ -356,6 +359,9 @@
                 <Separator/>
                 <MenuItem Header="エクスプローラーで場所を開く" Click="OpenAlbumInExplorer_Click"/>
                 <MenuItem Header="インターネットからアルバム画像を取得" Click="DownloadAlbumArtwork_Click"/>
+                <Separator/>
+                <MenuItem Header="Wikipediaでアーティストを検索" Tag="WikipediaArtist" Click="WikipediaArtistSearch_Click"/>
+                <MenuItem Header="Wikipediaでアルバムを検索" Tag="WikipediaAlbum" Click="WikipediaAlbumSearch_Click"/>
                 <Separator/>
                 <MenuItem Header="リストから削除" Click="RemoveAlbumFromList_Click"/>
                 <Separator/>
@@ -693,7 +699,7 @@
 
     <Border x:Name="LibraryLoadingOverlay" Grid.Row="0" Grid.RowSpan="7" Grid.Column="0" Grid.ColumnSpan="3"
             Panel.ZIndex="100" Background="#D915171B" Visibility="Collapsed">
-      <Border Width="430" Padding="28,24" HorizontalAlignment="Center" VerticalAlignment="Center"
+      <Border x:Name="LibraryLoadingCard" Width="430" Padding="28,24" HorizontalAlignment="Center" VerticalAlignment="Center"
               Background="#F2262D36" BorderBrush="#58738A" BorderThickness="1" CornerRadius="8">
         <StackPanel>
           <TextBlock x:Name="LibraryLoadingTitle" Text="音楽ファイルを読み込んでいます…"

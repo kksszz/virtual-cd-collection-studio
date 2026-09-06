@@ -24,14 +24,15 @@ public partial class TagEditorWindow : Window
             : LocalizationService.Select("通常フォルダ：変更した各音楽ファイルへ実タグを書き込み", "Folder: write real tags to each edited audio file");
         SourcePathText.Text = album.Path;
         TagEditNoticeText.Text = LocalizationService.Select(
-            "音声は再エンコードしません。タグ編集バックアップの有無と保存先は設定画面で変更できます。",
-            "Audio is not re-encoded. Tag-edit backups and their destination can be changed in Settings.");
+            "ファイル名も選択・コピー・編集できます（拡張子は変更不可）。音声は再エンコードしません。タグ編集バックアップの有無と保存先は設定画面で変更できます。",
+            "File names can also be selected, copied, and edited (the extension cannot be changed). Audio is not re-encoded. Tag-edit backups and their destination can be changed in Settings.");
         LocalizationService.Apply(this);
         Loaded += (_, _) =>
         {
             var selected = _rows.FirstOrDefault(row => string.Equals(row.FileName, selectedFileName, StringComparison.Ordinal));
             if (selected is not null) { TagsGrid.SelectedItem = selected; TagsGrid.ScrollIntoView(selected); }
             TagsGrid.Focus();
+            UpdateTagAnomalySummary();
         };
     }
 
@@ -40,8 +41,16 @@ public partial class TagEditorWindow : Window
         TagsGrid.CommitEdit(DataGridEditingUnit.Cell, true);
         TagsGrid.CommitEdit(DataGridEditingUnit.Row, true);
         var updates = new List<TrackTagUpdate>();
+        var targetNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var row in _rows)
         {
+            if (!TryValidateFileName(row, out var targetFileName)) return;
+            if (!targetNames.Add(targetFileName))
+            {
+                ValidationText.Text = LocalizationService.Select($"同じファイル名が複数指定されています: {row.DisplayFileName}",
+                    $"The same file name is specified more than once: {row.DisplayFileName}");
+                return;
+            }
             if (!TryNumber(row.Year, 9999, "年", row.DisplayFileName, out var year)
                 || !TryNumber(row.TrackNumber, uint.MaxValue, "曲番号", row.DisplayFileName, out var track)
                 || !TryNumber(row.DiscNumber, uint.MaxValue, "ディスク番号", row.DisplayFileName, out var disc)
@@ -53,7 +62,8 @@ public partial class TagEditorWindow : Window
             }
             var values = new TrackTagValues(row.Title.Trim(), row.Artist.Trim(), row.Album.Trim(), year,
                 row.Genre.Trim(), track, disc, discCount);
-            if (row.IsChanged(values)) updates.Add(new TrackTagUpdate(row.FileName, row.SourcePath, values));
+            if (row.IsChanged(values, targetFileName))
+                updates.Add(new TrackTagUpdate(row.FileName, row.SourcePath, values, targetFileName));
         }
         if (updates.Count == 0)
         {
@@ -94,7 +104,8 @@ public partial class TagEditorWindow : Window
             var changed = false;
             foreach (var column in TagsGrid.Columns)
             {
-                if (GetColumnProperty(column) is not { } property || !TryGetValue(row, property, out var value)) continue;
+                if (GetColumnProperty(column) is not { } property || property == nameof(TagEditRow.DisplayFileName)
+                    || !TryGetValue(row, property, out var value)) continue;
                 var converted = TagTextNormalization.ToHalfWidthAlphaNumeric(value);
                 if (converted == value) continue;
                 SetValue(row, property, converted);
@@ -108,6 +119,74 @@ public partial class TagEditorWindow : Window
             ? LocalizationService.Select("変換対象の全角英数字・全角スペースはありません。", "No full-width letters, digits or spaces to convert.")
             : LocalizationService.Select($"{tracks}曲・{cells}項目の英数字・空白を半角にしました（未保存）。確認後に「まとめて保存」を押してください。",
                 $"Converted letters, digits and spaces in {cells} fields across {tracks} tracks (not saved). Review, then choose Save All.");
+    }
+
+    private void NormalizeTitleCase_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TagsGrid.CommitEdit(DataGridEditingUnit.Cell, true) || !TagsGrid.CommitEdit(DataGridEditingUnit.Row, true))
+        {
+            BatchStatusText.Text = LocalizationService.Select("編集中のセルを確定してから変換してください。", "Finish editing the current cell before converting.");
+            return;
+        }
+
+        var selectedTextCells = TagsGrid.SelectedCells
+            .Where(cell => cell.Item is TagEditRow && GetColumnProperty(cell.Column) is { } property && IsTitleCaseProperty(property))
+            .ToList();
+        if (selectedTextCells.Count == 0)
+        {
+            BatchStatusText.Text = LocalizationService.Select(
+                "タイトル・アーティスト・アルバム・ジャンルのセルを選択してください。",
+                "Select title, artist, album, or genre cells.");
+            return;
+        }
+
+        var changed = 0;
+        foreach (var cell in selectedTextCells)
+        {
+            var row = (TagEditRow)cell.Item;
+            var property = GetColumnProperty(cell.Column)!;
+            if (!TryGetValue(row, property, out var value)) continue;
+            var converted = TagTextNormalization.UpperCaseWordsToTitleCase(value);
+            if (converted == value) continue;
+            SetValue(row, property, converted);
+            changed++;
+        }
+        TagsGrid.Items.Refresh();
+        BatchStatusText.Text = changed == 0
+            ? LocalizationService.Select("選択範囲に変換対象の全大文字データはありません。", "No all-uppercase values were found in the selection.")
+            : LocalizationService.Select($"選択範囲の{changed}セルを先頭大文字へ変換しました（未保存）。",
+                $"Converted {changed} selected cells to title case (not saved yet).");
+    }
+
+    private static bool IsTitleCaseProperty(string property) => property is nameof(TagEditRow.Title)
+        or nameof(TagEditRow.Artist) or nameof(TagEditRow.Album) or nameof(TagEditRow.Genre);
+
+    private void CheckTagAnomalies_Click(object sender, RoutedEventArgs e)
+    {
+        TagsGrid.CommitEdit(DataGridEditingUnit.Cell, true);
+        TagsGrid.CommitEdit(DataGridEditingUnit.Row, true);
+        var anomalies = DetectTagAnomalies();
+        UpdateTagAnomalySummary(anomalies);
+        MessageBox.Show(this,
+            anomalies.Count == 0
+                ? LocalizationService.Select("明確なタグ異常は見つかりませんでした。", "No clear tag anomalies were found.")
+                : string.Join(Environment.NewLine + Environment.NewLine,
+                    anomalies.Select((anomaly, index) => $"{index + 1}. {anomaly.Message}")),
+            LocalizationService.Select("タグ異常チェック", "Tag Anomaly Check"),
+            MessageBoxButton.OK, anomalies.Count == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+    }
+
+    private IReadOnlyList<TagAnomaly> DetectTagAnomalies() => TagAnomalyDetector.Analyze(_rows.Select(row =>
+        new TagAnomalyInput(row.DisplayFileName, row.Title, row.Artist, row.Album, row.Year,
+            row.Genre, row.TrackNumber, row.DiscNumber)).ToList());
+
+    private void UpdateTagAnomalySummary(IReadOnlyList<TagAnomaly>? anomalies = null)
+    {
+        anomalies ??= DetectTagAnomalies();
+        BatchStatusText.Text = anomalies.Count == 0
+            ? LocalizationService.Select("タグ異常チェック: 明確な問題はありません。", "Tag anomaly check: no clear issues.")
+            : LocalizationService.Select($"タグ異常チェック: {anomalies.Count}項目を検出しました。「タグ異常をチェック」で詳細を確認できます。",
+                $"Tag anomaly check: {anomalies.Count} issues found. Choose Tag Anomaly Check for details.");
     }
 
     private void TagsGrid_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -159,6 +238,7 @@ public partial class TagEditorWindow : Window
     {
         value = property switch
         {
+            nameof(TagEditRow.DisplayFileName) => row.DisplayFileName,
             nameof(TagEditRow.Title) => row.Title,
             nameof(TagEditRow.Artist) => row.Artist,
             nameof(TagEditRow.Album) => row.Album,
@@ -169,7 +249,7 @@ public partial class TagEditorWindow : Window
             nameof(TagEditRow.DiscCount) => row.DiscCount,
             _ => ""
         };
-        return property is nameof(TagEditRow.Title) or nameof(TagEditRow.Artist) or nameof(TagEditRow.Album)
+        return property is nameof(TagEditRow.DisplayFileName) or nameof(TagEditRow.Title) or nameof(TagEditRow.Artist) or nameof(TagEditRow.Album)
             or nameof(TagEditRow.Year) or nameof(TagEditRow.Genre) or nameof(TagEditRow.TrackNumber)
             or nameof(TagEditRow.DiscNumber) or nameof(TagEditRow.DiscCount);
     }
@@ -178,6 +258,7 @@ public partial class TagEditorWindow : Window
     {
         switch (property)
         {
+            case nameof(TagEditRow.DisplayFileName): row.DisplayFileName = value; return true;
             case nameof(TagEditRow.Title): row.Title = value; return true;
             case nameof(TagEditRow.Artist): row.Artist = value; return true;
             case nameof(TagEditRow.Album): row.Album = value; return true;
@@ -199,12 +280,36 @@ public partial class TagEditorWindow : Window
         return false;
     }
 
+    private bool TryValidateFileName(TagEditRow row, out string targetFileName)
+    {
+        targetFileName = row.TargetFileName;
+        var name = row.DisplayFileName.Trim();
+        if (string.IsNullOrWhiteSpace(name) || name is "." or ".."
+            || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || name.Contains('/') || name.Contains('\\'))
+        {
+            ValidationText.Text = LocalizationService.Select($"{row.DisplayFileName}: 使用できるファイル名を入力してください。",
+                $"{row.DisplayFileName}: Enter a valid file name.");
+            return false;
+        }
+        if (!string.Equals(Path.GetExtension(name), Path.GetExtension(row.OriginalDisplayFileName), StringComparison.OrdinalIgnoreCase))
+        {
+            ValidationText.Text = LocalizationService.Select($"{row.OriginalDisplayFileName}: 拡張子は変更できません。",
+                $"{row.OriginalDisplayFileName}: The file extension cannot be changed.");
+            return false;
+        }
+        targetFileName = row.BuildTargetFileName(name);
+        return true;
+    }
+
     private sealed class TagEditRow
     {
         private readonly TrackTagValues _original;
         public string FileName { get; }
         public string SourcePath { get; }
-        public string DisplayFileName => Path.GetFileName(FileName);
+        public string OriginalDisplayFileName { get; }
+        public string DisplayFileName { get; set; }
+        public string TargetFileName => BuildTargetFileName(DisplayFileName.Trim());
         public string Title { get; set; }
         public string Artist { get; set; }
         public string Album { get; set; }
@@ -222,6 +327,8 @@ public partial class TagEditorWindow : Window
         {
             FileName = track.FileName;
             SourcePath = track.SourcePath;
+            OriginalDisplayFileName = Path.GetFileName(track.FileName);
+            DisplayFileName = OriginalDisplayFileName;
             Title = track.Title; Artist = track.Artist; Album = track.Album; Year = track.Year; Genre = track.Genre;
             TrackNumber = track.TrackNumber > 0 ? track.TrackNumber.ToString() : "";
             DiscNumber = track.DiscNumber > 0 ? track.DiscNumber.ToString() : "";
@@ -230,7 +337,14 @@ public partial class TagEditorWindow : Window
                 Parse(TrackNumber), Parse(DiscNumber), Parse(DiscCount));
         }
 
-        public bool IsChanged(TrackTagValues values) => values != _original;
+        public string BuildTargetFileName(string displayFileName)
+        {
+            var slash = Math.Max(FileName.LastIndexOf('/'), FileName.LastIndexOf('\\'));
+            return slash >= 0 ? FileName[..(slash + 1)] + displayFileName : displayFileName;
+        }
+
+        public bool IsChanged(TrackTagValues values, string targetFileName) => values != _original
+            || !string.Equals(targetFileName, FileName, StringComparison.Ordinal);
         private static uint Parse(string value) => uint.TryParse(value, out var parsed) ? parsed : 0;
         private static long ParseSortNumber(string value) => uint.TryParse(value, out var parsed) ? parsed : long.MaxValue;
     }

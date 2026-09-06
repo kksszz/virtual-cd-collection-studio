@@ -13,6 +13,31 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_TAG_EDITOR_ONLY") == "1")
+        {
+            var tagApp = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            tagApp.InitializeComponent();
+            try { VerifyTagEditorFilenameEditing(); }
+            finally { tagApp.Shutdown(); }
+            return;
+        }
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_LIBRARY_LOADING_ONLY") == "1")
+        {
+            var loadingData = Path.Combine(Path.GetTempPath(), "ZipMp3Player-LibraryLoadingTest-" + Guid.NewGuid().ToString("N"));
+            Environment.SetEnvironmentVariable("ZIPMP3PLAYER_DATA_DIR", loadingData);
+            var loadingApp = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            loadingApp.InitializeComponent();
+            try { VerifyLibraryLoadingIndicator(); }
+            finally { loadingApp.Shutdown(); if (Directory.Exists(loadingData)) Directory.Delete(loadingData, true); }
+            return;
+        }
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_ARTWORK_POPUP_ONLY") == "1")
+        {
+            var popupApp = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            try { VerifyArtworkPopupFit(); }
+            finally { popupApp.Shutdown(); }
+            return;
+        }
         if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_SEARCH_ONLY") == "1")
         {
             var searchData = Path.Combine(Path.GetTempPath(), "ZipMp3Player-SearchTest-" + Guid.NewGuid().ToString("N"));
@@ -548,13 +573,19 @@ internal static class Program
                     disabledFolders.Add(sampleRoot);
                     typeof(MainWindow).GetMethod("ApplyFolderVisibility", BindingFlags.Instance | BindingFlags.NonPublic)!
                         .Invoke(mainWindow, null);
+                    var browserAlbums = ((System.Collections.IEnumerable)typeof(MainWindow)
+                        .GetMethod("GetAlbumBrowserSourceAlbums", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .Invoke(mainWindow, null)!).Cast<object>().ToList();
                     if (albumList.Items.Cast<object>().OfType<object>().Any(item => ReferenceEquals(item, albumList.SelectedItem))
-                        || albumList.Items.Count != 0)
+                        || albumList.Items.Count != 0 || browserAlbums.Count != 0)
                         throw new InvalidOperationException("Disabled music-folder album filtering test failed.");
                     disabledFolders.Clear();
                     typeof(MainWindow).GetMethod("ApplyFolderVisibility", BindingFlags.Instance | BindingFlags.NonPublic)!
                         .Invoke(mainWindow, null);
-                    if (albumList.Items.Count == 0)
+                    browserAlbums = ((System.Collections.IEnumerable)typeof(MainWindow)
+                        .GetMethod("GetAlbumBrowserSourceAlbums", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .Invoke(mainWindow, null)!).Cast<object>().ToList();
+                    if (albumList.Items.Count == 0 || browserAlbums.Count == 0)
                         throw new InvalidOperationException("Re-enabled music-folder album restore test failed.");
                 }
                 extensionToggle.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -582,6 +613,16 @@ internal static class Program
                 if (!sourceType.IsReadOnly || !sourcePath.IsReadOnly || !tagEditNotice.IsReadOnly
                     || sourcePath.SelectedText != sourcePath.Text)
                     throw new InvalidOperationException("Tag editor selectable source information test failed.");
+                var initialRows = grid.Items.Cast<object>().ToList();
+                grid.CurrentItem = initialRows[0];
+                grid.CurrentCell = new DataGridCellInfo(initialRows[0], grid.Columns[0]);
+                grid.BeginEdit(); tagEditor.UpdateLayout();
+                if (grid.Columns[0].IsReadOnly || grid.Columns[0].GetCellContent(initialRows[0]) is not TextBox fileNameEditor)
+                    throw new InvalidOperationException("Tag editor file name column must be editable text.");
+                fileNameEditor.SelectAll();
+                if (fileNameEditor.SelectedText != fileNameEditor.Text)
+                    throw new InvalidOperationException("Tag editor file name text must support selection and copying.");
+                grid.CancelEdit(DataGridEditingUnit.Cell);
                 var trackNumberColumn = grid.Columns[1];
                 var sortedView = CollectionViewSource.GetDefaultView(grid.ItemsSource);
                 sortedView.SortDescriptions.Clear();
@@ -608,6 +649,7 @@ internal static class Program
                     throw new InvalidOperationException("Album tag batch-apply UI test failed.");
                 var originalFiles = rows.Select(row => row.GetType().GetProperty("FileName")!.GetValue(row)).ToArray();
                 var originalPaths = rows.Select(row => row.GetType().GetProperty("SourcePath")!.GetValue(row)).ToArray();
+                rows[0].GetType().GetProperty("DisplayFileName")!.SetValue(rows[0], "０１ editable.mp3");
                 foreach (var row in rows)
                 {
                     row.GetType().GetProperty("Title")!.SetValue(row, "日本語 カタカナ Ａｂ１２３ ①Ⅲ ～　");
@@ -628,6 +670,8 @@ internal static class Program
                     || Value(row, "Year") != "1997" || Value(row, "Genre") != "J－POP"
                     || Value(row, "TrackNumber") != "12" || Value(row, "DiscNumber") != "1" || Value(row, "DiscCount") != "2"))
                     throw new Exception("All editable tag columns must be converted; other Unicode preserved.");
+                if (Value(rows[0], "DisplayFileName") != "０１ editable.mp3")
+                    throw new Exception("Tag normalization must not alter an edited file name.");
                 if (!rows.Select(row => row.GetType().GetProperty("FileName")!.GetValue(row)).SequenceEqual(originalFiles)
                     || !rows.Select(row => row.GetType().GetProperty("SourcePath")!.GetValue(row)).SequenceEqual(originalPaths)
                     || ((System.Collections.ICollection)typeof(TagEditorWindow).GetProperty("EditedTracks", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(tagEditor)!).Count != 0)
@@ -824,6 +868,34 @@ internal static class Program
         if (Directory.Exists(data)) Directory.Delete(data, recursive: true);
         if (failures.Count > 0) throw new InvalidOperationException("Dark text detected: " + string.Join(", ", failures));
         Console.WriteLine("Theme and clipboard-to-album tests passed.");
+    }
+
+    private static void VerifyArtworkPopupFit()
+    {
+        const int pixelWidth = 2400;
+        const int pixelHeight = 1200;
+        var bitmap = BitmapSource.Create(pixelWidth, pixelHeight, 300, 300, PixelFormats.Gray8, null,
+            new byte[pixelWidth * pixelHeight], pixelWidth);
+        var image = new Image { Stretch = Stretch.Fill };
+        var flags = BindingFlags.Static | BindingFlags.NonPublic;
+        var mainWindowType = typeof(MainWindow);
+        mainWindowType.GetMethod("SetArtworkPopupImage", flags)!.Invoke(null, [image, bitmap]);
+        if (Math.Abs(image.Width - pixelWidth) > .01 || Math.Abs(image.Height - pixelHeight) > .01
+            || Math.Abs(bitmap.Width - image.Width) < 100)
+            throw new InvalidOperationException(
+                $"Artwork popup must ignore scan DPI for its pixel-sized layout: source={bitmap.Width:0.0}x{bitmap.Height:0.0}, layout={image.Width:0.0}x{image.Height:0.0}.");
+
+        var fitMethod = mainWindowType.GetMethod("CalculateArtworkPopupFitScale", flags)!;
+        var fit = (double)fitMethod.Invoke(null, [pixelWidth, pixelHeight, 1000d, 700d, 0, 24d])!;
+        if (pixelWidth * fit > 976.01 || pixelHeight * fit > 676.01
+            || Math.Abs(fit - 976d / pixelWidth) > .0001)
+            throw new InvalidOperationException($"Landscape scan did not fit the popup viewport: {fit:0.0000}.");
+
+        var rotatedFit = (double)fitMethod.Invoke(null, [pixelWidth, pixelHeight, 1000d, 700d, 90, 24d])!;
+        if (pixelHeight * rotatedFit > 976.01 || pixelWidth * rotatedFit > 676.01
+            || Math.Abs(rotatedFit - 676d / pixelWidth) > .0001)
+            throw new InvalidOperationException($"Rotated scan did not fit the popup viewport: {rotatedFit:0.0000}.");
+        Console.WriteLine("Artwork popup DPI-independent sizing and fit-to-window tests passed.");
     }
 
     private static void VerifyPlaybackCaseColor(BitmapSource image)
@@ -2013,8 +2085,8 @@ internal static class Program
                 .Skip(7).Take(2).Select(model => (System.Windows.Media.Media3D.MeshGeometry3D)model.Geometry).ToList();
             var expectedSpineX = new[]
             {
-                -1.21 + DxJewelCaseScene.StandardSpinePaperInset,
-                1.21 - DxJewelCaseScene.OpeningSideSpinePaperInset
+                -1.2125,
+                1.2125
             };
             if (exteriorSpines.Count != 2
                 || exteriorSpines.Select((mesh, index) => (mesh, index)).Any(entry =>
@@ -2024,7 +2096,11 @@ internal static class Program
                 || exteriorSpines.Any(mesh => Math.Abs(
                     mesh.Positions.Max(point => point.Z) - mesh.Positions.Min(point => point.Z)
                     - DxJewelCaseScene.StandardVisibleSpineDepth) > .0002))
-                throw new InvalidOperationException("Collection Spine paper must remain beneath the side acrylic and inside both case lips.");
+                throw new InvalidOperationException("Collection Spine artwork must remain inside both case lips but sit on the visible side surface so WPF transparent-shell depth writes cannot hide it.");
+            var exteriorBack = (System.Windows.Media.Media3D.MeshGeometry3D)
+                ((System.Windows.Media.Media3D.GeometryModel3D)exteriorBody.Children[6]).Geometry;
+            if (exteriorBack.Positions.Any(point => point.Z >= -DxJewelCaseScene.StandardCaseDepth / 2))
+                throw new InvalidOperationException("Collection Back artwork must sit on the visible rear surface so the transparent shell cannot hide it.");
             var inlayPixels = Enumerable.Repeat(new byte[] { 74, 92, 138, 255 }, 150 * 118)
                 .SelectMany(pixel => pixel).ToArray();
             var inlayOnlyArtwork = BitmapSource.Create(150, 118, 96, 96, PixelFormats.Bgra32,
@@ -2123,6 +2199,13 @@ internal static class Program
                 Save("album-browser-coverflow.png");
                 flow.RackPresentation = true; Pump(650);
                 Save("album-browser-rack.png");
+                flow.RackPresentation = false;
+                typeof(JewelCaseCoverFlow).GetField("_caseYaw", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .SetValue(flow, 180d);
+                typeof(JewelCaseCoverFlow).GetMethod("RebuildScene", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(flow, null);
+                Pump(650);
+                Save("album-browser-back.png");
             }
         }
         finally { browser.Close(); }
@@ -2155,7 +2238,7 @@ internal static class Program
         {
             window.Show();
             var task = (Task)type.GetMethod("ShowLibraryLoadingAsync", flags)!.Invoke(window,
-                ["音楽ファイルを読み込んでいます…", "保存済みライブラリを復元中 12/120"])!;
+                ["音楽ファイルを読み込んでいます…", "保存済みライブラリを復元中 12/120", false])!;
             var frame = new System.Windows.Threading.DispatcherFrame();
             task.ContinueWith(_ => window.Dispatcher.BeginInvoke(() => frame.Continue = false));
             System.Windows.Threading.Dispatcher.PushFrame(frame);
@@ -2165,14 +2248,77 @@ internal static class Program
             var detail = (TextBlock)window.FindName("LibraryLoadingDetail");
             var progress = (ProgressBar)window.FindName("LibraryLoadingProgress");
             if (overlay.Visibility != Visibility.Visible || title.Text.Length == 0
-                || !detail.Text.Contains("12/120") || !progress.IsIndeterminate)
+                || !detail.Text.Contains("12/120") || !progress.IsIndeterminate || !overlay.IsHitTestVisible)
                 throw new InvalidOperationException("Music library loading must show a rendered progress overlay before long-running work starts.");
             type.GetMethod("HideLibraryLoading", flags)!.Invoke(window, null);
             if (overlay.Visibility != Visibility.Collapsed)
                 throw new InvalidOperationException("Music library loading overlay must close after work completes.");
+
+            task = (Task)type.GetMethod("ShowLibraryLoadingAsync", flags)!.Invoke(window,
+                ["音楽ファイルを読み込んでいます…", "登録フォルダを確認しています", true])!;
+            frame = new System.Windows.Threading.DispatcherFrame();
+            task.ContinueWith(_ => window.Dispatcher.BeginInvoke(() => frame.Continue = false));
+            System.Windows.Threading.Dispatcher.PushFrame(frame);
+            window.UpdateLayout();
+            var card = (Border)window.FindName("LibraryLoadingCard");
+            type.GetMethod("UpdateLibraryLoading", flags)!.Invoke(window, ["解析中 37/100", 37, 100]);
+            if (overlay.Visibility != Visibility.Visible || overlay.IsHitTestVisible
+                || card.HorizontalAlignment != HorizontalAlignment.Right
+                || card.VerticalAlignment != VerticalAlignment.Bottom
+                || progress.IsIndeterminate || progress.Maximum != 100 || progress.Value != 37
+                || Mouse.OverrideCursor is not null)
+                throw new InvalidOperationException("Background library scan must remain click-through and show coalesced determinate progress.");
+            type.GetMethod("HideLibraryLoading", flags)!.Invoke(window, null);
+
+            var bulk = new BulkObservableCollection<int> { 1, 2 };
+            var collectionChanges = 0;
+            System.Collections.Specialized.NotifyCollectionChangedAction? lastAction = null;
+            bulk.CollectionChanged += (_, e) => { collectionChanges++; lastAction = e.Action; };
+            bulk.ReplaceAll(Enumerable.Range(0, 2000));
+            if (collectionChanges != 1 || lastAction != System.Collections.Specialized.NotifyCollectionChangedAction.Reset
+                || bulk.Count != 2000 || bulk[1999] != 1999)
+                throw new InvalidOperationException("Bulk library replacement must notify the UI exactly once.");
         }
         finally { window.Close(); }
-        Console.WriteLine("Music library loading overlay and progress text passed.");
+        Console.WriteLine("Blocking startup overlay, click-through rescan progress, and single-reset bulk replacement passed.");
+    }
+
+    private static void VerifyTagEditorFilenameEditing()
+    {
+        var album = new ZipAlbum
+        {
+            Path = @"C:\Music\Batch.zip.mp3",
+            Tracks =
+            [
+                new ZipTrack { FileName = "Album/01 original.mp3", SourcePath = @"C:\Music\Batch.zip.mp3",
+                    IsArchiveEntry = true, Title = "One", Artist = "Artist", Album = "Album", TrackNumber = 1 }
+            ]
+        };
+        var window = new TagEditorWindow(album) { ShowInTaskbar = false };
+        var selectedAll = false;
+        window.Loaded += (_, _) => window.Dispatcher.BeginInvoke(() =>
+        {
+            var grid = (DataGrid)window.FindName("TagsGrid");
+            var row = grid.Items[0];
+            grid.CurrentItem = row;
+            grid.CurrentCell = new DataGridCellInfo(row, grid.Columns[0]);
+            grid.BeginEdit(); window.UpdateLayout();
+            if (grid.Columns[0].GetCellContent(row) is not TextBox editor)
+                throw new InvalidOperationException("File name cell did not enter text editing mode.");
+            editor.SelectAll();
+            selectedAll = editor.SelectedText == editor.Text;
+            editor.Text = "01 renamed.mp3";
+            grid.CommitEdit(DataGridEditingUnit.Cell, true);
+            grid.CommitEdit(DataGridEditingUnit.Row, true);
+            var save = VisualDescendants(window).OfType<Button>().Single(button => Equals(button.Content, "まとめて保存"));
+            save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        });
+        if (window.ShowDialog() != true || !selectedAll || window.EditedTracks.Count != 1)
+            throw new InvalidOperationException("Editable/selectable file name did not produce a saved update.");
+        var update = window.EditedTracks[0];
+        if (update.FileName != "Album/01 original.mp3" || update.EffectiveTargetFileName != "Album/01 renamed.mp3")
+            throw new InvalidOperationException("Editing an archive file name must preserve its internal folder.");
+        Console.WriteLine("Tag editor selectable/editable file name and saved rename mapping passed.");
     }
 
     private static void VerifyDiscDragging()
@@ -2191,6 +2337,7 @@ internal static class Program
             var flow = (JewelCaseCoverFlow)Activator.CreateInstance(typeof(JewelCaseCoverFlow), BindingFlags.Instance | BindingFlags.NonPublic,
                 binder: null, args: [fullScreen], culture: null)!;
             var playbackState = new JewelCasePlaybackState("Test Track  •  Test Artist", true, true, .42);
+            var selectedAlbumIsPlaying = true;
             var previousRequests = 0;
             var pauseRequests = 0;
             var nextRequests = 0;
@@ -2198,6 +2345,7 @@ internal static class Program
             if (fullScreen)
             {
                 flow.PlaybackStateProvider = () => playbackState;
+                flow.PlaybackActiveProvider = _ => selectedAlbumIsPlaying;
                 flow.PreviousTrackRequested += (_, _) => previousRequests++;
                 flow.PlayPauseRequested += (_, _) => pauseRequests++;
                 flow.NextTrackRequested += (_, _) => nextRequests++;
@@ -2240,6 +2388,12 @@ internal static class Program
                     if (playbackBar.Visibility != Visibility.Visible || title.Text != playbackState.TrackDisplay
                         || Math.Abs(volume.Value - playbackState.Volume) > .001)
                         throw new InvalidOperationException("Full-screen 3D playback controls did not reflect the active track.");
+                    selectedAlbumIsPlaying = false;
+                    FlowCall("UpdateDiscPlayback");
+                    if ((bool)type.GetField("_discPlaying", flags)!.GetValue(scene)!)
+                        throw new InvalidOperationException("A global playing track must not rotate the selected case's disc when the active album key differs.");
+                    selectedAlbumIsPlaying = true;
+                    FlowCall("UpdateDiscPlayback");
                     previousButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     pauseButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     nextButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -2263,13 +2417,22 @@ internal static class Program
                 }
                 var stationaryAngle = spin.Angle;
                 Call("SetDiscPlaying", true); Pump(140);
-                if (fullScreen) playbackState = playbackState with { IsPlaying = false };
+                if (fullScreen)
+                {
+                    playbackState = playbackState with { IsPlaying = false };
+                    selectedAlbumIsPlaying = false;
+                }
                 Call("SetDiscPlaying", false);
                 if (Math.Abs(spin.Angle - stationaryAngle) < 20)
                     throw new InvalidOperationException("A playing album must rotate the disc at audio-CD speed.");
                 var pausedAngle = spin.Angle; Pump(140);
                 if (Math.Abs(spin.Angle - pausedAngle) > .01)
                     throw new InvalidOperationException("Pausing playback must stop the disc at its current angle.");
+                Call("SetDiscPlaying", true); Pump(80);
+                Call("SetItem", item with { Key = "next-album" }, -10d, -2d);
+                if ((bool)type.GetField("_discPlaying", flags)!.GetValue(scene)!
+                    || Math.Abs(spin.Angle) > .001)
+                    throw new InvalidOperationException("Selecting a different album must stop the previous disc clock and reset the new disc to its initial angle.");
                 var blocked = (System.Windows.Media.Media3D.Vector3D)constrain.Invoke(null,
                     [new System.Windows.Media.Media3D.Vector3D(.2, -.3, -4)])!;
                 if (blocked.X != .2 || blocked.Y != -.3 || blocked.Z < .349)
@@ -2319,6 +2482,10 @@ internal static class Program
                 var beginFlow = typeof(JewelCaseCoverFlow).GetMethod("TryBeginDiscDrag", flags)!;
                 if (!(bool)beginFlow.Invoke(flow, [grab])! || !flow.IsMouseCaptured)
                     throw new InvalidOperationException("Disc drag must capture pointer in the view.");
+                if (viewport.EnableSSAO || viewport.IsShadowMappingEnabled
+                    || viewport.FXAALevel != HelixToolkit.SharpDX.FXAALevel.None
+                    || viewport.MSAA != HelixToolkit.SharpDX.MSAALevel.Two)
+                    throw new InvalidOperationException("Interactive motion must pause only SSAO, shadows and FXAA while retaining MSAA geometry quality.");
                 var leftEvent = new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
                     { RoutedEvent = UIElement.PreviewMouseUpEvent };
                 FlowCall("OnRotationStarted", flow, leftEvent);
@@ -2327,6 +2494,9 @@ internal static class Program
                 FlowCall("OnDiscDragEnded", flow, leftEvent);
                 if (flow.IsMouseCaptured || (bool)typeof(JewelCaseCoverFlow).GetField("_isDraggingDisc", flags)!.GetValue(flow)!)
                     throw new InvalidOperationException("Mouse up must release disc drag capture.");
+                if (!viewport.EnableSSAO || !viewport.IsShadowMappingEnabled
+                    || viewport.FXAALevel != HelixToolkit.SharpDX.FXAALevel.Medium)
+                    throw new InvalidOperationException("Pointer release must immediately restore the full-quality still frame.");
                 beginFlow.Invoke(flow, [grab]);
                 flow.ReleaseMouseCapture();
                 if ((bool)typeof(JewelCaseCoverFlow).GetField("_isDraggingDisc", flags)!.GetValue(flow)!)
@@ -2743,6 +2913,68 @@ internal static class Program
             {
                 var current = item with { TrayColorMode = mode };
                 type.GetMethod("SetItem")!.Invoke(scene, [current, -12.0, 15.0]);
+                var baseRoot = (HelixToolkit.Wpf.SharpDX.GroupModel3D)type.GetField(
+                    "_baseRoot", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
+                var spineRibModels = baseRoot.Children.OfType<HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D>()
+                    .Where(mesh => mesh.Material?.Name == "Tray spine ribs").ToList();
+                var spineGrooveModels = baseRoot.Children.OfType<HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D>()
+                    .Where(mesh => mesh.Material?.Name == "Tray spine groove floor").ToList();
+                var spineTransitionModel = baseRoot.Children.OfType<HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D>()
+                    .Single(mesh => mesh.Material?.Name == "Tray spine transition");
+                if (mode == "Black")
+                {
+                    var scanDark = new HelixToolkit.Maths.Color4(0.0331f, 0.0319f, 0.0395f, 1);
+                    var trayMaterials = baseRoot.Children.OfType<HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D>()
+                        .Where(mesh => mesh.Material?.Name is "Tray" or "Tray spine ribs" or "Tray spine transition")
+                        .Select(mesh => (HelixToolkit.Wpf.SharpDX.PBRMaterial)mesh.Material!)
+                        .ToList();
+                    if (trayMaterials.Count < 3 || trayMaterials.Any(material =>
+                            Math.Abs(material.AlbedoColor.Red - scanDark.Red) > .0001f
+                            || Math.Abs(material.AlbedoColor.Green - scanDark.Green) > .0001f
+                            || Math.Abs(material.AlbedoColor.Blue - scanDark.Blue) > .0001f))
+                        throw new InvalidOperationException("Dark tray, scan ribs and stepped shoulder must share the img129 scan-matched resin colour.");
+                }
+                var spineTransitionPositions = ((HelixToolkit.SharpDX.MeshGeometry3D)spineTransitionModel.Geometry!).Positions!;
+                var transitionXSpanMm = (spineTransitionPositions.Max(point => point.X)
+                    - spineTransitionPositions.Min(point => point.X)) / (2.42f / 142f);
+                var transitionZSpanMm = (spineTransitionPositions.Max(point => point.Z)
+                    - spineTransitionPositions.Min(point => point.Z))
+                    / (DxJewelCaseScene.StandardCaseDepth / DxJewelCaseScene.StandardCaseDepthMm);
+                if (spineTransitionPositions.Count < 12
+                    || Math.Abs(transitionXSpanMm - 1.2f) > .02f
+                    || transitionZSpanMm < 3.2f)
+                    throw new InvalidOperationException($"Tray spine must join the main tray through a continuous 1.2 mm stepped shoulder: vertices={spineTransitionPositions.Count}, X={transitionXSpanMm:0.00} mm, Z={transitionZSpanMm:0.00} mm.");
+                if (mode == "Clear")
+                {
+                    if (spineRibModels.Count != 0 || spineGrooveModels.Count != 0)
+                        throw new InvalidOperationException("A clear tray must keep a smooth spine strip without vertical rib moulding.");
+                }
+                else
+                {
+                    var spineRibModel = spineRibModels.Single();
+                    var spineGrooveModel = spineGrooveModels.Single();
+                    var spineRibPositions = ((HelixToolkit.SharpDX.MeshGeometry3D)spineRibModel.Geometry!).Positions!;
+                    var spineGroovePositions = ((HelixToolkit.SharpDX.MeshGeometry3D)spineGrooveModel.Geometry!).Positions!;
+                    var millimetreX = 2.42f / 142f;
+                    var millimetreZ = DxJewelCaseScene.StandardCaseDepth / DxJewelCaseScene.StandardCaseDepthMm;
+                    var ribXSpan = spineRibPositions.Max(point => point.X) - spineRibPositions.Min(point => point.X);
+                    var ribZSpan = spineRibPositions.Max(point => point.Z) - spineRibPositions.Min(point => point.Z);
+                    var ribFrontZ = spineRibPositions.Max(point => point.Z);
+                    var ribMinX = spineRibPositions.Min(point => point.X);
+                    var ribMaxX = spineRibPositions.Max(point => point.X);
+                    var competingTrayZ = baseRoot.Children.OfType<HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D>()
+                        .Where(mesh => mesh != spineRibModel && mesh.Material?.Name == "Tray")
+                        .SelectMany(mesh => ((HelixToolkit.SharpDX.MeshGeometry3D)mesh.Geometry!).Positions!)
+                        .Where(point => point.X >= ribMinX && point.X <= ribMaxX)
+                        .Select(point => point.Z).DefaultIfEmpty(float.MinValue).Max();
+                    var ribEdges = spineRibPositions.Select(point => Math.Round(point.X, 5)).Distinct().Count();
+                    if (spineRibPositions.Count < 17 * 8 || ribEdges != 34
+                        || Math.Abs(ribXSpan / millimetreX - 12.70f) > .12f
+                        || Math.Abs(ribZSpan / millimetreZ - .12f) > .01f
+                        || competingTrayZ >= ribFrontZ - .0001f
+                        || spineGroovePositions.Count < 4)
+                        throw new InvalidOperationException($"Tray spine scan ribs must retain 17 unobstructed raised strips across the 13 mm band with 0.30 mm grooves and 0.12 mm relief: vertices={spineRibPositions.Count}, edges={ribEdges}, X={ribXSpan / millimetreX:0.00} mm, relief={ribZSpan / millimetreZ:0.00} mm, rib/front={ribFrontZ:0.00000}, competing={competingTrayZ:0.00000}.");
+                }
                 if (mode == "Clear")
                 {
                     var secondDiscRoot = (HelixToolkit.Wpf.SharpDX.GroupModel3D)type.GetField(
@@ -2759,19 +2991,29 @@ internal static class Program
                     var tapeGroups = new[] { "_tearTapeFrontRoot", "_tearTapeBackRoot", "_tearTapeSideRoot", "_tearTapeRibbonRoot" }
                         .Select(name => (HelixToolkit.Wpf.SharpDX.GroupModel3D)type.GetField(
                             name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!).ToList();
+                    var foldedFacets = wrappingUpper.Children.Concat(wrappingLower.Children)
+                        .OfType<HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D>()
+                        .Where(mesh => mesh.Material?.Name == "Caramel wrapping folded facet").ToList();
                     if (wrappingUpper.Children.OfType<HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D>()
                             .Count(mesh => mesh.Material?.Name is "Caramel wrapping film" or "Caramel wrapping fold") < 3
                         || wrappingLower.Children.OfType<HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D>()
                             .All(mesh => mesh.Material?.Name != "Caramel wrapping film")
+                        || foldedFacets.Count != 4
                         || wrappingUpper.Children.Concat(wrappingLower.Children)
                             .OfType<HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D>()
-                            .Count(mesh => mesh.Material?.Name == "Caramel wrapping folded facet") != 4
-                        || wrappingUpper.Children.Concat(wrappingLower.Children)
-                            .OfType<HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D>()
-                            .Count(mesh => mesh.Material?.Name == "Caramel wrapping seal ribs") != 2
+                            .Any(mesh => mesh.Material?.Name == "Caramel wrapping seal ribs")
                         || tapeGroups.SelectMany(group => group.Children.OfType<HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D>())
                             .Count(mesh => mesh.Material?.Name?.StartsWith("Caramel tear tape", StringComparison.Ordinal) == true) != 6)
-                        throw new InvalidOperationException("Caramel wrapping must include sealed ribs, folded corner facets, a four-sided tear tape, bent pull tab and deformable ribbon.");
+                        throw new InvalidOperationException("Caramel wrapping must keep smooth film sides without vertical ribs, plus folded corner facets, a four-sided tear tape, bent pull tab and deformable ribbon.");
+                    if (foldedFacets.Select(mesh => (HelixToolkit.SharpDX.MeshGeometry3D)mesh.Geometry!)
+                        .Any(geometry =>
+                        {
+                            var positions = geometry.Positions
+                                ?? throw new InvalidOperationException("Wrapping fold facet has no vertices.");
+                            return positions.Max(point => point.Y) - positions.Min(point => point.Y) > .0001f
+                                || positions.Min(point => point.Y) <= 1.06f;
+                        }))
+                        throw new InvalidOperationException("Caramel wrapping end folds must lie on the narrow top side instead of covering Front or Back artwork.");
                     if (Math.Abs(wrappingWidth - (2.42f + DxJewelCaseScene.WrappingSideClearance * 2)) > .0001
                         || Math.Abs(wrappingDepth - (DxJewelCaseScene.StandardCaseDepth
                             + DxJewelCaseScene.WrappingFaceClearance * 2)) > .0001
@@ -2789,13 +3031,18 @@ internal static class Program
                     var tabZSpan = tabPositions.Max(point => point.Z) - tabPositions.Min(point => point.Z);
                     if (tapeY > -.78f || tabXSpan > .045f || tabZSpan is < .012f or > .028f
                         || pullTab.Material is not HelixToolkit.Wpf.SharpDX.PBRMaterial { ReflectanceFactor: > .6f }
-                        || glossyFilm.ReflectanceFactor < .45f || glossyFilm.RoughnessFactor > .10f
-                        || glossyFilm.ClearCoatStrength < .95f)
+                        || glossyFilm.AlbedoColor.Alpha < .16f
+                        || glossyFilm.ReflectanceFactor < .80f || glossyFilm.RoughnessFactor > .03f
+                        || glossyFilm.ClearCoatStrength < .95f || glossyFilm.ClearCoatRoughness > .01f)
                         throw new InvalidOperationException($"The tear tape must sit near the lower edge and its short tab must bend forward instead of protruding as a flat rectangle: Y={tapeY:0.000}, X={tabXSpan:0.000}, Z={tabZSpan:0.000}.");
                     var upperTranslation = (System.Windows.Media.Media3D.TranslateTransform3D)type.GetField(
                         "_wrappingUpperTranslation", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
                     var lowerTranslation = (System.Windows.Media.Media3D.TranslateTransform3D)type.GetField(
                         "_wrappingLowerTranslation", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
+                    var upperPeel = (System.Windows.Media.Media3D.AxisAngleRotation3D)type.GetField(
+                        "_wrappingUpperPeel", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
+                    var lowerPeel = (System.Windows.Media.Media3D.AxisAngleRotation3D)type.GetField(
+                        "_wrappingLowerPeel", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
                     var tearScale = (System.Windows.Media.Media3D.ScaleTransform3D)type.GetField(
                         "_tearTapeScale", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
                     type.GetMethod("SetWrappingProgress", BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -2828,12 +3075,16 @@ internal static class Program
                     var upperClearance = (float)type.GetField("_wrappingUpperClearanceY", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
                     var lowerClearance = (float)type.GetField("_wrappingLowerClearanceY", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
                     if (upperTranslation.OffsetX != 0 || lowerTranslation.OffsetX != 0
+                        || upperTranslation.OffsetZ != 0 || lowerTranslation.OffsetZ != 0
+                        || upperPeel.Angle != 0 || lowerPeel.Angle != 0
                         || upperTranslation.OffsetY < upperClearance * .93
                         || lowerTranslation.OffsetY > -lowerClearance * .93)
-                        throw new InvalidOperationException("Both film halves must clear the case vertically before any rightward slide begins.");
+                        throw new InvalidOperationException("Close-fitting film faces must slide straight along the case until both halves clear its edges; rotation, forward lift and rightward removal may not begin while they remain in contact.");
                     type.GetMethod("SetWrappingOpened")!.Invoke(scene, [true, false]);
                     if ((double)type.GetProperty("WrappingProgress")!.GetValue(scene)! < .999
-                        || upperTranslation.OffsetX < 2.9 || lowerTranslation.OffsetX < 2.9)
+                        || upperTranslation.OffsetX < 2.9 || lowerTranslation.OffsetX < 2.9
+                        || upperTranslation.OffsetZ < .45 || lowerTranslation.OffsetZ < .37
+                        || upperPeel.Angle > -5.5 || lowerPeel.Angle < 5.5)
                         throw new InvalidOperationException("Only the second opening step may lift both loosened film sections away in one hand-pull direction.");
                     type.GetMethod("SetWrappingOpened")!.Invoke(scene, [false, false]);
                     if (pullTab.Visibility != Visibility.Visible)
@@ -2854,6 +3105,7 @@ internal static class Program
                 var activeRegions = obiHelper.GetMethod("GetRegions")!.Invoke(null, [item.SpineCard!])!;
                 var activeBack = (Int32Rect)activeRegions.GetType().GetProperty("Back")!.GetValue(activeRegions)!;
                 var activeSpine = (Int32Rect)activeRegions.GetType().GetProperty("Spine")!.GetValue(activeRegions)!;
+                var activeFront = (Int32Rect)activeRegions.GetType().GetProperty("Front")!.GetValue(activeRegions)!;
                 var backGeometry = (HelixToolkit.SharpDX.MeshGeometry3D)spineCardMeshes.Single(
                     m => m.Material?.Name == "Spine Card back flap").Geometry!;
                 var spineGeometry = (HelixToolkit.SharpDX.MeshGeometry3D)spineCardMeshes.Single(
@@ -2864,13 +3116,15 @@ internal static class Program
                     m => m.Material?.Name == "Spine Card front flap").Geometry!;
                 var frontPositions = frontGeometry.Positions ?? throw new InvalidOperationException("Spine Card Front geometry has no vertices.");
                 var mappedBackWidth = backPositions.Max(p => p.X) - backPositions.Min(p => p.X);
+                var mappedFrontWidth = frontPositions.Max(p => p.X) - frontPositions.Min(p => p.X);
                 var mappedHeight = backPositions.Max(p => p.Y) - backPositions.Min(p => p.Y);
                 var mappedSpineWidth = spinePositions.Max(p => p.Z) - spinePositions.Min(p => p.Z);
-                if (Math.Abs(mappedBackWidth / mappedSpineWidth - (double)activeBack.Width / activeSpine.Width) > 0.015
+                if (Math.Abs(mappedBackWidth / mappedHeight - (double)activeBack.Width / activeBack.Height) > 0.015
+                    || Math.Abs(mappedFrontWidth / mappedHeight - (double)activeFront.Width / activeFront.Height) > 0.015
                     || Math.Abs(mappedSpineWidth - DxJewelCaseScene.StandardCaseDepth) > .001
                     || Math.Abs(mappedHeight - 2.12 * 120 / 125) > 0.015
                     || mappedHeight >= 2.12)
-                    throw new InvalidOperationException("Spine Card must preserve its fold-based horizontal scale while fitting its full height inside the case.");
+                    throw new InvalidOperationException("Spine Card flaps must preserve the scan aspect ratio while its side remains fitted to the 10 mm case and its full height stays inside the case.");
                 var foldX = spinePositions[0].X;
                 if (Math.Abs(backPositions.Min(p => p.X) - foldX) > .0001
                     || Math.Abs(frontPositions.Min(p => p.X) - foldX) > .0001)
@@ -2880,8 +3134,8 @@ internal static class Program
                     "_spineCardTranslation", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
                 if (spineCardTranslation.OffsetX >= -.45
                     || Math.Abs(spineCardTranslation.OffsetY - -.08) > .001
-                    || Math.Abs(spineCardTranslation.OffsetZ - -.16) > .001)
-                    throw new InvalidOperationException("Spine Card must slide clear of the open lid and remain visible as one folded piece.");
+                    || spineCardTranslation.OffsetZ < .018)
+                    throw new InvalidOperationException("Spine Card must slide clear of the lid while its printed front remains ahead of the acrylic.");
                 var spineCardDragTranslation = (System.Windows.Media.Media3D.TranslateTransform3D)type.GetField(
                     "_spineCardDragTranslation", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(scene)!;
                 spineCardDragTranslation.OffsetX = .25;
@@ -2979,6 +3233,16 @@ internal static class Program
                     System.Windows.Threading.Dispatcher.PushFrame(frame);
                     Directory.CreateDirectory(previewDirectory);
                     HelixToolkit.Wpf.SharpDX.ViewportExtensions.SaveScreen(viewport, Path.Combine(previewDirectory, mode + ".png"));
+
+                    // Closed front inspection without an obi/wrapping layer:
+                    // this is the view in which the tray's hinge-side ribs must
+                    // remain legible through the clear lid beside the booklet.
+                    var traySpinePreview = current with { SpineCard = null, FrontCover = scan };
+                    type.GetMethod("SetItem")!.Invoke(scene, [traySpinePreview, -12.0, 15.0]);
+                    type.GetMethod("SetCaseOpen")!.Invoke(scene, [false, false]);
+                    window.UpdateLayout();
+                    HelixToolkit.Wpf.SharpDX.ViewportExtensions.SaveScreen(viewport,
+                        Path.Combine(previewDirectory, $"TraySpine-Closed-{mode}.png"));
                 }
             }
             if (!string.IsNullOrEmpty(previewDirectory))

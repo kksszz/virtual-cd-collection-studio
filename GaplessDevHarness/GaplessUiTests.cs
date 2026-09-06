@@ -41,14 +41,14 @@ internal static class GaplessUiTests
         object? Field(string name) => typeof(MainWindow).GetField(name, flags)!.GetValue(main);
         void Set(string name, object value) => typeof(MainWindow).GetField(name, flags)!.SetValue(main, value);
         object? Call(string name, params object[] args) => typeof(MainWindow).GetMethod(name, flags)!.Invoke(main, args);
-        var play = typeof(MainWindow).GetMethods(flags).Single(m => m.Name == "PlayTrack" && m.GetParameters().Length == 7);
+        var play = typeof(MainWindow).GetMethods(flags).Single(m => m.Name == "PlayTrack" && m.GetParameters().Length == 8);
         try
         {
             var itemType = typeof(MainWindow).GetNestedType("AlbumListItem", BindingFlags.NonPublic)!;
             foreach (var album in new[] { first, second })
                 ((System.Collections.IList)Field("_albums")!).Add(Activator.CreateInstance(itemType, [album]));
             Call("SetCurrentAlbum", first);
-            play.Invoke(main, [first, 0, null, false, true, false, null]);
+            play.Invoke(main, [first, 0, null, false, true, false, null, false]);
             var stream = (GaplessPlaybackStream)Field("_gapless")!;
             var output = Field("_output");
             var equalizer = Field("_equalizer");
@@ -80,7 +80,7 @@ internal static class GaplessUiTests
             Set("_favoriteQueue", new FavoriteTrackEntry[] { new(first, first.Tracks[0], false, true), new(second, second.Tracks[0], false, true) });
             Set("_favoriteQueueIndex", 0);
             Call("SetCurrentAlbum", first);
-            play.Invoke(main, [first, 0, null, false, true, true, null]);
+            play.Invoke(main, [first, 0, null, false, true, true, null, false]);
             stream = (GaplessPlaybackStream)Field("_gapless")!;
             stream.PrefetchCompletion.GetAwaiter().GetResult();
             // Browsing another album must not be interrupted by an automatic boundary.

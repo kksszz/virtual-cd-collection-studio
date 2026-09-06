@@ -73,7 +73,7 @@ public partial class MainWindow : Window
     };
     private readonly ObservableCollection<string> _folders = [];
     private readonly HashSet<string> _disabledFolders = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ObservableCollection<AlbumListItem> _albums = [];
+    private readonly BulkObservableCollection<AlbumListItem> _albums = [];
     private readonly ObservableCollection<ArtistTreeNode> _artistTreeRoots = [];
     private readonly ICollectionView _albumView;
     private readonly DispatcherTimer _albumSearchTimer = new(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(180) };
@@ -125,7 +125,9 @@ public partial class MainWindow : Window
     private AlbumSortMode _albumSortMode = AlbumSortMode.Artist;
     private ImagePanelLayout _imagePanelLayout = ImagePanelLayout.Bottom;
     private bool _lyricsPanelExpanded = true;
-    private const int CurrentLibraryCacheVersion = 14;
+    // v15 adds MPEG Layer II detection for files stored with an .mp3 name.
+    // Older caches may have persisted those tracks as unsupported.
+    private const int CurrentLibraryCacheVersion = 15;
     private static readonly string DataDirectory = Environment.GetEnvironmentVariable("ZIPMP3PLAYER_DATA_DIR")
         ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ZipMp3Player");
     private static readonly string SettingsPath = Path.Combine(DataDirectory, "settings.json");
@@ -282,22 +284,37 @@ public partial class MainWindow : Window
         finally { HideLibraryLoading(); }
     }
 
-    private async Task ShowLibraryLoadingAsync(string title, string detail)
+    private async Task ShowLibraryLoadingAsync(string title, string detail, bool background = false)
     {
         LibraryLoadingTitle.Text = title;
         LibraryLoadingDetail.Text = detail;
+        LibraryLoadingProgress.IsIndeterminate = true;
+        LibraryLoadingProgress.Minimum = 0;
+        LibraryLoadingProgress.Maximum = 1;
+        LibraryLoadingProgress.Value = 0;
+        LibraryLoadingOverlay.IsHitTestVisible = !background;
+        LibraryLoadingOverlay.Background = background
+            ? Brushes.Transparent
+            : new SolidColorBrush(Color.FromArgb(217, 21, 23, 27));
+        LibraryLoadingCard.HorizontalAlignment = background ? HorizontalAlignment.Right : HorizontalAlignment.Center;
+        LibraryLoadingCard.VerticalAlignment = background ? VerticalAlignment.Bottom : VerticalAlignment.Center;
+        LibraryLoadingCard.Margin = background ? new Thickness(0, 0, 24, 72) : new Thickness(0);
         LibraryLoadingOverlay.Visibility = Visibility.Visible;
         StatusText.Text = detail;
-        Mouse.OverrideCursor = Cursors.Wait;
+        Mouse.OverrideCursor = background ? null : Cursors.Wait;
         // Allow the overlay to reach the compositor before any parsing or
         // filesystem enumeration begins.
         await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
     }
 
-    private void UpdateLibraryLoading(string detail)
+    private void UpdateLibraryLoading(string detail, int current = 0, int total = 0)
     {
         LibraryLoadingDetail.Text = detail;
         StatusText.Text = detail;
+        if (total <= 0) return;
+        LibraryLoadingProgress.IsIndeterminate = false;
+        LibraryLoadingProgress.Maximum = total;
+        LibraryLoadingProgress.Value = Math.Clamp(current, 0, total);
     }
 
     private void HideLibraryLoading()
@@ -474,40 +491,47 @@ public partial class MainWindow : Window
             return;
         }
 
-        StopPlayback(resetPosition: true);
+        var keepLibraryAvailable = _albums.Count > 0;
         _removedAlbumPaths.Clear();
-        _album = null;
-        TrackGrid.ItemsSource = null;
-        ClearAlbumImages();
-        _albums.Clear();
-        _artistTreeRoots.Clear();
-        _albumPaths.Clear();
-        AlbumTitleText.Text = "ライブラリをスキャン中";
-        AlbumInfoText.Text = "登録フォルダからZIP.MP3・MP3・WAV・FLAC・M4Aを検索しています…";
+        if (!keepLibraryAvailable)
+        {
+            _album = null;
+            TrackGrid.ItemsSource = null;
+            ClearAlbumImages();
+            AlbumTitleText.Text = "ライブラリをスキャン中";
+            AlbumInfoText.Text = "登録フォルダからZIP.MP3・MP3・WAV・FLAC・M4Aを検索しています…";
+        }
         await ShowLibraryLoadingAsync(
             LocalizationService.Select("音楽ファイルを読み込んでいます…", "Loading music files…"),
-            LocalizationService.Select("登録フォルダを確認しています", "Checking registered folders"));
+            LocalizationService.Select("登録フォルダを確認しています", "Checking registered folders"),
+            background: keepLibraryAvailable);
 
+        ScanUpdate? latestUpdate = null;
+        var progressTimer = new DispatcherTimer(DispatcherPriority.Background)
+            { Interval = TimeSpan.FromMilliseconds(100) };
+        progressTimer.Tick += (_, _) =>
+        {
+            var update = Interlocked.Exchange(ref latestUpdate, null);
+            if (update is not null) UpdateLibraryLoading(update.Message, update.Current, update.Total);
+        };
         try
         {
             var folders = _folders.ToArray();
-            var progress = new Progress<ScanUpdate>(update =>
+            var progress = new DirectProgress<ScanUpdate>(update =>
             {
-                if (token.IsCancellationRequested) return;
-                if (update.Album is not null)
-                {
-                    InsertAlbumSorted(update.Album);
-                    if (AlbumList.SelectedItem is null) AlbumList.SelectedItem = update.Album;
-                }
-                UpdateLibraryLoading(update.Message);
+                if (!token.IsCancellationRequested) Interlocked.Exchange(ref latestUpdate, update);
             });
+            progressTimer.Start();
             var found = await Task.Run(() =>
             {
                 Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
                 return ScanWorker(folders, progress, token);
             }, token);
             if (token.IsCancellationRequested) return;
-            foreach (var album in found) InsertAlbumSorted(album);
+            var finalUpdate = Interlocked.Exchange(ref latestUpdate, null);
+            if (finalUpdate is not null)
+                UpdateLibraryLoading(finalUpdate.Message, finalUpdate.Current, finalUpdate.Total);
+            ApplyScannedLibrary(found);
             _completedScanGeneration = scanGeneration;
             _libraryCacheComplete = true;
             if (_album is null)
@@ -527,24 +551,57 @@ public partial class MainWindow : Window
         }
         finally
         {
+            progressTimer.Stop();
             if (scanGeneration == _scanGeneration) HideLibraryLoading();
         }
+    }
+
+    private void ApplyScannedLibrary(IReadOnlyList<AlbumListItem> found)
+    {
+        var selectedPath = (AlbumList.SelectedItem as AlbumListItem)?.Album.Path ?? _album?.Path;
+        var ordered = found
+            .Where(album => !_removedAlbumPaths.Contains(album.Album.Path))
+            .GroupBy(album => album.Album.Path, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+        foreach (var album in ordered) PrepareAlbumItem(album, updateLyrics: false);
+        ordered.Sort(CompareAlbums);
+
+        _loadingCache = true;
+        _albumPaths.Clear();
+        foreach (var album in ordered) _albumPaths.Add(album.Album.Path);
+        _albums.ReplaceAll(ordered);
+        _loadingCache = false;
+
+        _artistTreeRoots.Clear();
+        _artistTreeDirty = true;
+        RebuildArtistTree();
+        UpdateAlbumFilterResult();
+        var selected = ordered.FirstOrDefault(album =>
+            string.Equals(album.Album.Path, selectedPath, StringComparison.OrdinalIgnoreCase))
+            ?? ordered.FirstOrDefault();
+        if (selected is not null) AlbumList.SelectedItem = selected;
     }
 
     private void InsertAlbumSorted(AlbumListItem album)
     {
         if (_removedAlbumPaths.Contains(album.Album.Path) || !_albumPaths.Add(album.Album.Path)) return;
-        album.SetFavorite(_favoritesStore.IsAlbumFavorite(album.Album));
-        album.SetPlaying(_playingAlbum is not null
-            && string.Equals(album.Album.Path, _playingAlbum.Path, StringComparison.OrdinalIgnoreCase));
-        foreach (var track in album.Album.Tracks) track.IsFavorite = _favoritesStore.IsTrackFavorite(track);
-        UpdateLyricsIndicators(album.Album);
+        PrepareAlbumItem(album);
         var index = 0;
         while (index < _albums.Count && CompareAlbums(_albums[index], album) <= 0) index++;
         _albums.Insert(index, album);
         AddAlbumToArtistTree(album);
         UpdateAlbumFilterResult();
         if (!_loadingCache) { _cacheSaveTimer.Stop(); _cacheSaveTimer.Start(); }
+    }
+
+    private void PrepareAlbumItem(AlbumListItem album, bool updateLyrics = true)
+    {
+        album.SetFavorite(_favoritesStore.IsAlbumFavorite(album.Album));
+        album.SetPlaying(_playingAlbum is not null
+            && string.Equals(album.Album.Path, _playingAlbum.Path, StringComparison.OrdinalIgnoreCase));
+        foreach (var track in album.Album.Tracks) track.IsFavorite = _favoritesStore.IsTrackFavorite(track);
+        if (updateLyrics) UpdateLyricsIndicators(album.Album);
     }
 
     private int CompareAlbums(AlbumListItem left, AlbumListItem right)
@@ -819,27 +876,29 @@ public partial class MainWindow : Window
         {
             token.ThrowIfCancellationRequested();
             number++;
-            progress.Report(new ScanUpdate($"解析中 {number}/{total}: {Path.GetFileName(path)}", null));
+            progress.Report(new ScanUpdate($"解析中 {number}/{total}: {Path.GetFileName(path)}", null, number, total));
             try
             {
                 var album = new AlbumListItem(ZipAlbumReader.Open(path));
+                UpdateLyricsIndicators(album.Album);
                 result.Add(album);
-                progress.Report(new ScanUpdate($"完了 {number}/{total}: {album.Title}", album));
+                progress.Report(new ScanUpdate($"完了 {number}/{total}: {album.Title}", album, number, total));
             }
-            catch { progress.Report(new ScanUpdate($"読み取りを省略 {number}/{total}: {Path.GetFileName(path)}", null)); }
+            catch { progress.Report(new ScanUpdate($"読み取りを省略 {number}/{total}: {Path.GetFileName(path)}", null, number, total)); }
         }
         foreach (var folder in albumFolders.OrderBy(p => p))
         {
             token.ThrowIfCancellationRequested();
             number++;
-            progress.Report(new ScanUpdate($"解析中 {number}/{total}: {Path.GetFileName(folder)}", null));
+            progress.Report(new ScanUpdate($"解析中 {number}/{total}: {Path.GetFileName(folder)}", null, number, total));
             try
             {
                 var album = new AlbumListItem(ZipAlbumReader.OpenFolder(folder));
+                UpdateLyricsIndicators(album.Album);
                 result.Add(album);
-                progress.Report(new ScanUpdate($"完了 {number}/{total}: {album.Title}", album));
+                progress.Report(new ScanUpdate($"完了 {number}/{total}: {album.Title}", album, number, total));
             }
-            catch { progress.Report(new ScanUpdate($"読み取りを省略 {number}/{total}: {Path.GetFileName(folder)}", null)); }
+            catch { progress.Report(new ScanUpdate($"読み取りを省略 {number}/{total}: {Path.GetFileName(folder)}", null, number, total)); }
         }
         return result;
     }
@@ -883,7 +942,7 @@ public partial class MainWindow : Window
 
     private void OpenAlbumBrowser_Click(object sender, RoutedEventArgs e)
     {
-        var allAlbums = _albums.ToList();
+        var allAlbums = GetAlbumBrowserSourceAlbums();
         if (allAlbums.Count == 0) return;
         var visibleAlbums = _albumView.Cast<object>().OfType<AlbumListItem>().ToList();
         var selectedPath = (AlbumList.SelectedItem as AlbumListItem)?.Album.Path ?? _album?.Path;
@@ -893,8 +952,8 @@ public partial class MainWindow : Window
                 string.Equals(album.Album.Path, selectedPath, StringComparison.OrdinalIgnoreCase))
             ?? visibleAlbums.FirstOrDefault() ?? allAlbums[0];
         selected.EnsureCaseArtworkLoaded(640);
-        // Give the browser the complete library. Its own search box receives
-        // the main-window query, so clearing it can reveal every album again.
+        // Give the browser the complete enabled library. Its own search box receives
+        // the main-window query, so clearing it can reveal every enabled album again.
         var items = allAlbums.Select(CreateAlbumBrowserItem).ToList();
         AlbumBrowserPlaybackState BrowserPlaybackState()
         {
@@ -960,6 +1019,9 @@ public partial class MainWindow : Window
         if (browser.SelectedKey is { } key) SelectAlbum(key);
         Focus();
     }
+
+    private List<AlbumListItem> GetAlbumBrowserSourceAlbums()
+        => _albums.Where(album => IsAlbumFolderEnabled(album.Album.Path)).ToList();
 
     private static AlbumLibraryBrowserItem CreateAlbumBrowserItem(AlbumListItem album)
     {
@@ -1142,9 +1204,15 @@ public partial class MainWindow : Window
 
     private void AlbumPropertiesContextMenu_Opened(object sender, RoutedEventArgs e)
     {
-        if (sender is System.Windows.Controls.ContextMenu menu)
-            foreach (var item in menu.Items.OfType<System.Windows.Controls.MenuItem>().Where(item => Equals(item.Tag, "AlbumProperties")))
-                item.IsEnabled = GetSelectedAlbumItem() is not null;
+        if (sender is not System.Windows.Controls.ContextMenu menu) return;
+        var selected = GetSelectedAlbumItem();
+        foreach (var menuItem in menu.Items.OfType<System.Windows.Controls.MenuItem>())
+        {
+            if (Equals(menuItem.Tag, "AlbumProperties") || Equals(menuItem.Tag, "WikipediaAlbum"))
+                menuItem.IsEnabled = selected is not null;
+            else if (Equals(menuItem.Tag, "WikipediaArtist"))
+                menuItem.IsEnabled = selected is not null && IsKnownArtist(selected.Artist);
+        }
     }
 
     private void AlbumProperties_Click(object sender, RoutedEventArgs e)
@@ -1152,6 +1220,59 @@ public partial class MainWindow : Window
         var item = GetSelectedAlbumItem();
         if (item is not null) new AlbumPropertiesWindow(item.Album) { Owner = this }.ShowDialog();
     }
+
+    private void WikipediaArtistSearch_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetSelectedAlbumItem();
+        if (item is null || !IsKnownArtist(item.Artist))
+        {
+            MessageBox.Show(this, LocalizationService.Select(
+                    "検索できるアーティスト名が登録されていません。",
+                    "No artist name is available to search."),
+                "Wikipedia", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        OpenWikipediaSearch(item.Artist, item.Artist);
+    }
+
+    private void WikipediaAlbumSearch_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetSelectedAlbumItem();
+        if (item is null) return;
+        var query = IsKnownArtist(item.Artist)
+            ? $"{item.Artist} {item.Title}"
+            : item.Title;
+        OpenWikipediaSearch(query, item.Title);
+    }
+
+    private void OpenWikipediaSearch(string query, string displayName)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = BuildWikipediaSearchUrl(query),
+                UseShellExecute = true
+            });
+            StatusText.Text = LocalizationService.Select(
+                $"Wikipedia検索を開きました: {displayName}",
+                $"Opened Wikipedia search: {displayName}");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message,
+                LocalizationService.Select("Wikipedia検索を開けません", "Could Not Open Wikipedia Search"),
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    internal static string BuildWikipediaSearchUrl(string query)
+        => "https://ja.wikipedia.org/w/index.php?search=" + Uri.EscapeDataString(query.Trim());
+
+    private static bool IsKnownArtist(string? artist)
+        => !string.IsNullOrWhiteSpace(artist)
+            && !string.Equals(artist, "アーティスト不明", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(artist, "Unknown Artist", StringComparison.OrdinalIgnoreCase);
 
     private void OpenAlbumInExplorer_Click(object sender, RoutedEventArgs e)
     {
@@ -1390,11 +1511,13 @@ public partial class MainWindow : Window
             _loadingCache = true;
             var total = cache.Albums.Count;
             var restored = 0;
+            var removedTagArtifacts = 0;
             foreach (var album in cache.Albums)
             {
-                var exists = album.Tracks.FirstOrDefault()?.IsArchiveEntry == true
-                    ? File.Exists(album.Path) : Directory.Exists(album.Path);
-                if (exists && album.Tracks.Count > 0) InsertAlbumSorted(new AlbumListItem(album));
+                var restoredAlbum = ExcludeCachedTagEditingArtifacts(album, ref removedTagArtifacts);
+                var exists = restoredAlbum.Tracks.FirstOrDefault()?.IsArchiveEntry == true
+                    ? File.Exists(restoredAlbum.Path) : Directory.Exists(restoredAlbum.Path);
+                if (exists && restoredAlbum.Tracks.Count > 0) InsertAlbumSorted(new AlbumListItem(restoredAlbum));
                 restored++;
                 if (restored % 12 != 0 && restored != total) continue;
                 UpdateLibraryLoading(LocalizationService.Select(
@@ -1405,6 +1528,7 @@ public partial class MainWindow : Window
                 await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
             }
             _loadingCache = false;
+            if (removedTagArtifacts > 0) SaveLibraryCache();
             if (_albums.Count > 0)
             {
                 AlbumTitleText.Text = "音楽ライブラリ";
@@ -1440,12 +1564,15 @@ public partial class MainWindow : Window
             _hasCompleteLibraryCache = cache.IsComplete && string.Equals(sourcePath, LibraryPath, StringComparison.OrdinalIgnoreCase);
             _cacheNeedsRefresh = cache.Version < CurrentLibraryCacheVersion || !cache.IsComplete;
             _loadingCache = true;
+            var removedTagArtifacts = 0;
             foreach (var album in cache?.Albums ?? [])
             {
-                var exists = album.Tracks.FirstOrDefault()?.IsArchiveEntry == true ? File.Exists(album.Path) : Directory.Exists(album.Path);
-                if (exists && album.Tracks.Count > 0) InsertAlbumSorted(new AlbumListItem(album));
+                var restoredAlbum = ExcludeCachedTagEditingArtifacts(album, ref removedTagArtifacts);
+                var exists = restoredAlbum.Tracks.FirstOrDefault()?.IsArchiveEntry == true ? File.Exists(restoredAlbum.Path) : Directory.Exists(restoredAlbum.Path);
+                if (exists && restoredAlbum.Tracks.Count > 0) InsertAlbumSorted(new AlbumListItem(restoredAlbum));
             }
             _loadingCache = false;
+            if (removedTagArtifacts > 0) SaveLibraryCache();
             if (_albums.Count > 0)
             {
                 AlbumTitleText.Text = "音楽ライブラリ";
@@ -1486,6 +1613,25 @@ public partial class MainWindow : Window
         catch { /* 次回の再スキャンで復旧できるため再生は継続 */ }
     }
 
+    private static ZipAlbum ExcludeCachedTagEditingArtifacts(ZipAlbum album, ref int removedCount)
+    {
+        if (album.Tracks.FirstOrDefault()?.IsArchiveEntry == true) return album;
+        var tracks = album.Tracks
+            .Where(track => !ZipAlbumReader.IsTagEditingArtifact(track.SourcePath)
+                && !ZipAlbumReader.IsTagEditingArtifact(track.FileName))
+            .ToList();
+        if (tracks.Count == album.Tracks.Count) return album;
+        removedCount += album.Tracks.Count - tracks.Count;
+        return new ZipAlbum
+        {
+            Path = album.Path,
+            Tracks = tracks,
+            Images = album.Images,
+            TextFiles = album.TextFiles,
+            ImageCount = album.ImageCount
+        };
+    }
+
     private void RestoreLastSelection()
     {
         var enabledAlbums = _albums.Where(candidate => IsAlbumFolderEnabled(candidate.Album.Path)).ToList();
@@ -1514,6 +1660,11 @@ public partial class MainWindow : Window
     {
         if (album is null || index < 0 || index >= album.Tracks.Count) return;
         var track = album.Tracks[index];
+        // A previous cache version classified MPEG Layer II streams stored with an
+        // .mp3 extension as invalid. Re-read just the selected album on demand so
+        // playback does not have to wait for a large background library scan.
+        if (!track.IsSupported && TryRefreshUnsupportedTrack(album, index, out var refreshedTrack))
+            track = refreshedTrack;
         if (countAsNewUsageSession && !fromFavorites)
         {
             _favoriteQueue = [];
@@ -1619,6 +1770,44 @@ public partial class MainWindow : Window
             ClearNowPlaying();
             PlaybackStatusText.Text = "再生を開始できませんでした";
             MessageBox.Show(this, ex.Message, "再生エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private bool TryRefreshUnsupportedTrack(ZipAlbum album, int index, out ZipTrack refreshedTrack)
+    {
+        refreshedTrack = album.Tracks[index];
+        if (refreshedTrack.IsEncrypted
+            || !string.IsNullOrWhiteSpace(refreshedTrack.ReadError)
+            || refreshedTrack.CompressionMethod is not (0 or 8)
+            || refreshedTrack.AudioFormat is not ("MP3" or "MP2"))
+            return false;
+
+        try
+        {
+            var originalFileName = refreshedTrack.FileName;
+            var refreshedAlbum = Directory.Exists(album.Path)
+                ? ZipAlbumReader.OpenFolder(album.Path)
+                : ZipAlbumReader.Open(album.Path);
+            var candidate = refreshedAlbum.Tracks.FirstOrDefault(item =>
+                string.Equals(item.FileName, originalFileName, StringComparison.OrdinalIgnoreCase));
+            if (candidate is null || !candidate.IsSupported) return false;
+
+            refreshedTrack = candidate;
+            if (album.Tracks is IList<ZipTrack> mutableTracks)
+            {
+                mutableTracks[index] = candidate;
+                if (ReferenceEquals(album, _album))
+                {
+                    TrackGrid.Items.Refresh();
+                    PositionSlider.Maximum = Math.Max(0.1, candidate.Duration.TotalSeconds);
+                    TotalText.Text = FormatTime(candidate.Duration);
+                }
+            }
+            return true;
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException)
+        {
+            return false;
         }
     }
 
@@ -1861,6 +2050,8 @@ public partial class MainWindow : Window
         var selectedFileName = (TrackGrid.SelectedItem as ZipTrack)?.FileName;
         var dialog = new TagEditorWindow(album, selectedFileName) { Owner = this };
         if (dialog.ShowDialog() != true || dialog.EditedTracks.Count == 0) return;
+        var selectedResultFileName = dialog.EditedTracks.FirstOrDefault(update =>
+            string.Equals(update.FileName, selectedFileName, StringComparison.Ordinal))?.EffectiveTargetFileName ?? selectedFileName;
 
         if (_playingAlbum is not null && string.Equals(_playingAlbum.Path, album.Path, StringComparison.OrdinalIgnoreCase))
             StopPlayback(resetPosition: false);
@@ -1876,9 +2067,9 @@ public partial class MainWindow : Window
             var refreshed = album.Tracks.First().IsArchiveEntry
                 ? ZipAlbumReader.Open(album.Path)
                 : ZipAlbumReader.OpenFolder(album.Path);
-            ReplaceLibraryAlbum(album, refreshed, selectedFileName);
+            ReplaceLibraryAlbum(album, refreshed, selectedResultFileName);
             SaveLibraryCache();
-            StatusText.Text = $"タグを{dialog.EditedTracks.Count}曲へ保存しました";
+            StatusText.Text = $"タグ・ファイル名の変更を{dialog.EditedTracks.Count}曲へ保存しました";
             var backupMessage = result.BackupPaths.Count switch
             {
                 0 => "\nバックアップ: 作成しない設定",
@@ -1886,7 +2077,7 @@ public partial class MainWindow : Window
                 _ => $"\n\nバックアップ: {result.BackupPaths.Count}個\n保存先: {_settings.TagBackupFolder}"
             };
             MessageBox.Show(this,
-                $"{dialog.EditedTracks.Count}曲のタグを保存しました。\n音声データは再エンコードしていません。{backupMessage}",
+                $"{dialog.EditedTracks.Count}曲のタグ・ファイル名の変更を保存しました。\n音声データは再エンコードしていません。{backupMessage}",
                 "タグ編集完了", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
@@ -4139,7 +4330,10 @@ public partial class MainWindow : Window
             imageTransform.Children.Add(scale);
             var popupImage = new System.Windows.Controls.Image
             {
-                Stretch = System.Windows.Media.Stretch.None, Margin = new Thickness(8),
+                // Use an explicit pixel-sized layout surface below.  Stretch.None would
+                // otherwise make WPF honor the scanner DPI stored in the file, so a
+                // 300-dpi scan is rendered at only 96/300 of the size used by FitImage.
+                Stretch = System.Windows.Media.Stretch.Fill, Margin = new Thickness(8),
                 HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top,
                 LayoutTransform = imageTransform
             };
@@ -4195,19 +4389,20 @@ public partial class MainWindow : Window
             };
             void ApplyZoom(double zoom)
             {
-                popupZoom = Math.Clamp(zoom, 0.1, 4.0);
+                // Very large scans may need less than 10% to fit on screen.
+                popupZoom = Math.Clamp(zoom, 0.01, 4.0);
                 scale.ScaleX = popupZoom; scale.ScaleY = popupZoom;
                 zoomText.Text = $"{popupZoom * 100:0}%";
             }
             void FitImage()
             {
                 if (popupImage.Source is not BitmapSource bitmap) return;
-                var width = Math.Max(100, scrollViewer.ActualWidth - 24);
-                var height = Math.Max(100, scrollViewer.ActualHeight - 24);
-                var quarterTurn = Math.Abs(popupRotation % 180) == 90;
-                var imageWidth = quarterTurn ? bitmap.PixelHeight : bitmap.PixelWidth;
-                var imageHeight = quarterTurn ? bitmap.PixelWidth : bitmap.PixelHeight;
-                ApplyZoom(Math.Min(width / imageWidth, height / imageHeight));
+                var viewportWidth = scrollViewer.ViewportWidth > 0 && double.IsFinite(scrollViewer.ViewportWidth)
+                    ? scrollViewer.ViewportWidth : scrollViewer.ActualWidth;
+                var viewportHeight = scrollViewer.ViewportHeight > 0 && double.IsFinite(scrollViewer.ViewportHeight)
+                    ? scrollViewer.ViewportHeight : scrollViewer.ActualHeight;
+                ApplyZoom(CalculateArtworkPopupFitScale(bitmap.PixelWidth, bitmap.PixelHeight,
+                    viewportWidth, viewportHeight, popupRotation, 24));
                 scrollViewer.ScrollToHome();
             }
             void ScheduleFit() => popup.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(FitImage));
@@ -4234,7 +4429,7 @@ public partial class MainWindow : Window
             void UpdatePopup()
             {
                 var currentImage = images[popupIndex];
-                popupImage.Source = LoadBitmap(currentImage, 0);
+                SetArtworkPopupImage(popupImage, LoadBitmap(currentImage, 0));
                 countText.Text = $"{popupIndex + 1} / {images.Count}";
                 nameText.Text = currentImage.DisplayName;
                 nameText.ToolTip = currentImage.Description;
@@ -4290,6 +4485,27 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(this, ex.Message, "画像を開けません", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
+    }
+
+    private static void SetArtworkPopupImage(System.Windows.Controls.Image image, BitmapSource bitmap)
+    {
+        image.Source = bitmap;
+        // BitmapSource.Width/Height are DPI-adjusted device-independent units.  The
+        // viewer's zoom calculation deliberately uses pixels, so make the layout use
+        // the same basis. This keeps 96/300/600-dpi scans visually identical.
+        image.Width = Math.Max(1, bitmap.PixelWidth);
+        image.Height = Math.Max(1, bitmap.PixelHeight);
+    }
+
+    private static double CalculateArtworkPopupFitScale(int pixelWidth, int pixelHeight,
+        double viewportWidth, double viewportHeight, int rotationDegrees, double reservedSpace = 0)
+    {
+        var width = Math.Max(1, viewportWidth - reservedSpace);
+        var height = Math.Max(1, viewportHeight - reservedSpace);
+        var quarterTurn = Math.Abs(rotationDegrees % 180) == 90;
+        var imageWidth = Math.Max(1, quarterTurn ? pixelHeight : pixelWidth);
+        var imageHeight = Math.Max(1, quarterTurn ? pixelWidth : pixelHeight);
+        return Math.Clamp(Math.Min(width / imageWidth, height / imageHeight), 0.01, 4.0);
     }
 
     private void UpdateAlbumImageSelectionFrames()
@@ -4642,7 +4858,11 @@ public partial class MainWindow : Window
         public bool IsComplete { get; set; }
         public List<ZipAlbum> Albums { get; set; } = [];
     }
-    private sealed record ScanUpdate(string Message, AlbumListItem? Album);
+    private sealed record ScanUpdate(string Message, AlbumListItem? Album, int Current, int Total);
+    private sealed class DirectProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
+    }
     private sealed record AlbumImageSource(string DisplayName, string? FilePath, ZipImage? ZipEntry, int RotationDegrees = 0)
     {
         public string RoleKey => FilePath is not null

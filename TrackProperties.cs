@@ -54,7 +54,9 @@ internal static class TrackProperties
             ? $"{(int)track.Duration.TotalHours}:{track.Duration.Minutes:00}:{track.Duration.Seconds:00}" : "—");
         Add("音声形式", "Audio format", track.AudioFormat);
         if (track.BitrateKbps > 0) Add("ビットレート", "Bitrate", $"{track.BitrateKbps} kbps");
-        if (track.AudioFormat.Equals("MP3", StringComparison.OrdinalIgnoreCase) && (track.IsMp3Valid || track.IsCbr))
+        if ((track.AudioFormat.Equals("MP3", StringComparison.OrdinalIgnoreCase)
+                || track.AudioFormat.Equals("MP2", StringComparison.OrdinalIgnoreCase))
+            && (track.IsMp3Valid || track.IsCbr))
             Add("ビットレート方式", "Bitrate mode", track.IsCbr ? "CBR" : "VBR");
         if (track.SampleRate > 0) Add("サンプルレート", "Sample rate", $"{track.SampleRate / 1000.0:0.###} kHz");
         if (track.BitsPerSample > 0) Add("ビット深度", "Bit depth", $"{track.BitsPerSample} bit");

@@ -2,6 +2,13 @@ namespace ZipMp3Player;
 
 internal static class TagTextNormalization
 {
+    public static string UpperCaseWordsToTitleCase(string value)
+    {
+        if (string.IsNullOrEmpty(value) || !value.Any(char.IsUpper) || value.Any(char.IsLower)) return value;
+        var culture = System.Globalization.CultureInfo.CurrentCulture;
+        return culture.TextInfo.ToTitleCase(value.ToLower(culture));
+    }
+
     public static string ToHalfWidthAlphaNumeric(string value)
     {
         // Deliberately not NFKC: kana, symbols, circled numbers and Roman
