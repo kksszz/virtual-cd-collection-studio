@@ -34,11 +34,11 @@ internal sealed class DxJewelCaseScene : IDisposable
         StandardCaseDepth * StandardVisibleSpineWidthMm / StandardCaseDepthMm;
     private const float OpeningSideRearLipMm = 0.8f;
     private const float OpeningSideTrayBandMm = 2.0f;
-    // The paper is below the clear outer wall, between acrylic and tray.
-    internal const float StandardSpinePaperInset = 0.010f;
-    // The opening-side parametric lid has a 2 mm perimeter wall. Keep that
-    // spine behind the wall's inner face instead of intersecting its volume.
-    internal const float OpeningSideSpinePaperInset = 0.036f;
+    // Render the two printed faces immediately outside/inside the transparent
+    // side wall. The paper still has its true 6 mm width; these zero-thickness
+    // optical surfaces only prevent transparent tray triangles behind the
+    // insert from winning the depth test and showing through the print.
+    internal const float SpineArtworkSurfaceOffset = 0.0025f;
     internal const float WrappingSideClearance = 0.016f;
     internal const float WrappingFaceClearance = 0.010f;
     internal const float WrappingEdgeClearance = 0.010f;
@@ -368,28 +368,43 @@ internal sealed class DxJewelCaseScene : IDisposable
             RenderEnvironmentMap = true,
             EnableAutoTangent = true
         };
-        var frontSideWallAcrylic = new PBRMaterial
+        var frontLidRailAcrylic = new PBRMaterial
         {
-            Name = "Clear front-lid side walls",
-            // Seen square-on from a spine view, a 2 mm acrylic wall must read
-            // as a continuous solid between the front plate and mating seam.
-            // Using the very pale broad-panel material made this volume vanish
-            // into the background and the lid looked suspended above the tray.
-            AlbedoColor = new Color4(0.68f, 0.70f, 0.71f, 0.38f),
+            Name = "Front lid moulded rails",
+            // The upper/lower rails are thicker injection-moulded sections,
+            // not hairline window edges. Keep them clearly readable against
+            // the dark scene without enabling the reflective transparent
+            // shell that produced the full-height artefact.
+            AlbedoColor = new Color4(0.62f, 0.65f, 0.67f, 0.46f),
             MetallicFactor = 0,
-            RoughnessFactor = 0.13,
-            ReflectanceFactor = 0.48,
-            ClearCoatStrength = 0.38,
-            ClearCoatRoughness = 0.07,
+            RoughnessFactor = 0.19,
+            ReflectanceFactor = 0.34,
+            ClearCoatStrength = 0.24,
+            ClearCoatRoughness = 0.10,
+            RenderEnvironmentMap = false,
+            EnableAutoTangent = true
+        };
+        var frontPanelAcrylic = new PBRMaterial
+        {
+            Name = "Clear front panel",
+            // A single very clear outer sheet restores the readable front
+            // panel without the duplicate side faces that caused the former
+            // vertical band or the milky overlay over the whole jacket.
+            AlbedoColor = new Color4(0.96f, 0.97f, 0.98f, 0.10f),
+            MetallicFactor = 0,
+            RoughnessFactor = 0.055,
+            ReflectanceFactor = 0.50,
+            ClearCoatStrength = 0.48,
+            ClearCoatRoughness = 0.035,
             RenderEnvironmentMap = true,
             EnableAutoTangent = true
         };
         var spineWindowAcrylic = new PBRMaterial
         {
-            Name = "Clear opening-side Spine window",
-            // Only the long face over the printed Spine uses this clearer
-            // resin. Keep the denser material on the surrounding end frame,
-            // catches and top/bottom rails so their moulded shape is retained.
+            Name = "Clear opening-side Spine frame",
+            // Keep acrylic only around the printed Spine. A transparent sheet
+            // across its centre is triangulated by the renderer and exposes a
+            // false diagonal opacity seam at oblique viewing angles.
             AlbedoColor = new Color4(0.88f, 0.90f, 0.91f, 0.11f),
             MetallicFactor = 0,
             RoughnessFactor = 0.10,
@@ -487,6 +502,21 @@ internal sealed class DxJewelCaseScene : IDisposable
             RoughnessFactor = 0.94,
             ReflectanceFactor = 0.02
         };
+        var bookletRetainerAcrylic = new PBRMaterial
+        {
+            Name = "Booklet retaining clips",
+            // img284.jpg shows very slim injection-moulded guides.  They are
+            // clearer than the perimeter rails and should be visible chiefly
+            // by their edges, never as an opaque band over the booklet.
+            AlbedoColor = new Color4(0.72f, 0.75f, 0.76f, 0.16f),
+            MetallicFactor = 0,
+            RoughnessFactor = 0.20,
+            ReflectanceFactor = 0.24,
+            ClearCoatStrength = 0.18,
+            ClearCoatRoughness = 0.12,
+            RenderEnvironmentMap = false,
+            EnableAutoTangent = true
+        };
 
         // The shell is the attributed CC BY 4.0 reference model itself,
         // normalized to jewel-case proportions. The lower STL is separated
@@ -496,21 +526,32 @@ internal sealed class DxJewelCaseScene : IDisposable
         AddMesh(shell.BottomTray, tray, trayIsClear, true, _baseRoot, false);
         AddMesh(shell.BottomPerimeter, acrylic, true, true, _baseRoot);
         AddMesh(shell.BottomMouldedEdges, mouldedEdgeAcrylic, true, true, _baseRoot);
-        // Rebuild from the two source shells instead of layering corrective
-        // boxes over them. The top STL is the complete rotating front lid;
-        // its panel, rails, catches and hinge knuckles must remain one rigid
-        // part. The lower STL is split only by material into the fixed clear
-        // rear shell and its removable tray.
+        // TopLid already supplies the rotating perimeter and hinge silhouette.
+        // Do not layer the printable STL's second moulded-edge shell over it:
+        // layer-isolation renders and three unrelated album samples prove that
+        // its coincident hinge-side faces form the same wide vertical band
+        // over every Front/Inside Front image. The scan-dimensioned booklet
+        // guides below replace the useful retaining details.
         AddMesh(shell.TopLid, acrylic, true, true, _frontPanelRoot);
-        AddMesh(shell.TopMouldedEdges, frontSideWallAcrylic,
-            true, true, _frontPanelRoot);
-        AddTopBottomSideRibs(width, height, depth, mouldedEdgeAcrylic);
+        AddClearFrontPanel(width, height, depth, frontPanelAcrylic);
+        // Rebuild the moulded rails as strictly horizontal scan-dimensioned
+        // parts. Even after filtering, the printable STL rail objects changed
+        // pixels along the complete hinge edge through transparent rendering.
+        // These meshes have no vertices outside their own narrow edge band,
+        // so they cannot recreate a vertical face or full-height artefact.
+        AddScanMatchedLidRail(width, height, depth, shell.FrontArtworkArea.Z,
+            upper: true, material: frontLidRailAcrylic);
+        AddScanMatchedLidRail(width, height, depth, shell.FrontArtworkArea.Z,
+            upper: false, material: frontLidRailAcrylic);
+        // img126/img127 show that the fine ribbed side wall belongs to the
+        // front lid which wraps around the case. The Disc/rear half has no
+        // second rib field of its own.
 
-        // Once the printable STL's false tray wall is removed, the opening
-        // edge must still be closed by the two transparent shell rails. Extend
-        // the rear and front rails to the common Z=0 mating plane. They remain
-        // separate rigid parts, but meet without an empty band when closed.
-        AddOpeningSideMatingRails(width, height, depth,
+        // Once the printable STL's false tray wall is removed, retain the
+        // fixed rear-shell opening rail up to the Z=0 mating plane. The lid's
+        // edge is represented by its perimeter and discrete booklet clips;
+        // adding another full-depth rail there creates a detached plate.
+        AddOpeningSideSpineFrame(width, height, depth,
             spineWindowAcrylic);
 
         // Continue the tray strip up to the inner edges of the two 2 mm clear
@@ -533,14 +574,12 @@ internal sealed class DxJewelCaseScene : IDisposable
         var frontPlaneCenterY = (shell.FrontArtworkArea.Bottom + shell.FrontArtworkArea.Top) / 2;
         var bookletWidthMm = 120f * unitX;
         var bookletHeightMm = 120f * unitY;
-        // On this case the front manual continues to the disc's left tangent.
-        // Keep the right case inset fixed and extend only the left artwork edge;
-        // otherwise a crescent of the disc remains visible beside the manual.
-        // The booklet is retained by the raised lip at the right edge of the
-        // hinge-side retaining lip. Its artwork must begin after that lip
-        // rather than running underneath the clear moulding.
-        var bookletLeft = Math.Max(discCenterX - discOuterRadius,
-            TrayManualStopRight(width) + 0.002f);
+        // Fill the complete recessed lid window. Starting the booklet to the
+        // right of the hinge-side retaining zone left several millimetres of
+        // tray/background uncovered; after the decorative side face was
+        // removed that gap appeared as a solid black vertical band. The real
+        // booklet continues underneath the transparent retaining moulding.
+        var bookletLeft = shell.FrontArtworkArea.Left;
         var bookletRight = frontPlaneCenterX + bookletWidthMm / 2;
         var bookletBottom = frontPlaneCenterY - bookletHeightMm / 2;
         var bookletTop = frontPlaneCenterY + bookletHeightMm / 2;
@@ -561,11 +600,10 @@ internal sealed class DxJewelCaseScene : IDisposable
         AddOpenBookletPageBlock(bookletLeft, bookletRight,
             bookletBottom, bookletTop, bookletRearZ, bookletFrontZ,
             bookletPageEdge, leaveFoldOpen: item.FrontCover is not null);
-        if (item.FrontCover is not null)
-            AddBookletFoldArtwork(item.FrontCover,
-                item.InsideFrontCover ?? item.FrontCover,
-                bookletLeft, bookletBottom, bookletTop,
-                bookletRearZ, bookletFrontZ);
+        // Keep the hinge-side edge open. Wrapping the leftmost image pixels
+        // around the full 1.5 mm paper depth projects that narrow side face
+        // back onto the cover as a broad vertical grey stripe in an oblique
+        // view, especially beside an obi/Spine Card.
 
         // Fine stepped edges keep the block readable as pages rather than a
         // single plastic slab.
@@ -587,6 +625,8 @@ internal sealed class DxJewelCaseScene : IDisposable
             shell.FrontArtworkArea.Z - 0.0001f, false, _bookletRoot);
         AddArtwork(item.InsideFrontCover, bookletLeft, bookletRight, bookletBottom, bookletTop,
             bookletRearZ - 0.0001f, true, _bookletRoot);
+        AddBookletRetainers(bookletLeft, bookletRight, bookletBottom, bookletTop,
+            height, shell.FrontArtworkArea.Z, unitX, unitY, bookletRetainerAcrylic);
 
         // The rear insert is 150 x 118 mm including two 6 mm spines. The flat
         // back window therefore displays the central 138 x 118 mm panel.
@@ -615,9 +655,9 @@ internal sealed class DxJewelCaseScene : IDisposable
         // Back is viewed from -Z: its source-right edge is at world -X.
         // Inlay faces +Z, so its left/right strips stay in world order.
         AddSpine(item.RightSpineCover,
-            -width / 2 + StandardSpinePaperInset, backArtworkHeight, depth, true, _baseRoot, inlay.Left);
+            -width / 2 - SpineArtworkSurfaceOffset, backArtworkHeight, depth, true, _baseRoot, inlay.Left);
         AddSpine(item.SpineCover,
-            width / 2 - OpeningSideSpinePaperInset,
+            width / 2 + SpineArtworkSurfaceOffset,
             backArtworkHeight, depth, false, _baseRoot, inlay.Right);
         AddSpineCard(item.SpineCard, width, height, depth);
         // Japanese caramel wrapping is represented only together with an obi.
@@ -1549,25 +1589,82 @@ internal sealed class DxJewelCaseScene : IDisposable
             _frontPanelRoot, false);
     }
 
-    private void AddManualRetainingLip(float width, float height, float frontSurfaceZ,
-        DxMaterial stopMaterial)
+    private void AddBookletRetainers(float bookletLeft, float bookletRight,
+        float bookletBottom, float bookletTop, float caseHeight, float frontSurfaceZ,
+        float millimetreX, float millimetreY, DxMaterial material)
     {
-        var manualStop = new MeshBuilder(true, true, true);
-        const float stopWidth = 0.014f;
-        var stopRight = TrayManualStopRight(width);
-        var stopLength = height - 0.045f;
-        manualStop.AddBox(new Vector3(stopRight - stopWidth / 2, 0,
-                frontSurfaceZ + 0.0018f),
-            stopWidth, stopLength, 0.0036f);
-        // This lip belongs to the clear lid, not to the removable coloured
-        // tray. It therefore follows the lid when opened and always uses the
-        // denser moulded-acrylic material regardless of tray colour.
-        AddMesh(manualStop.ToMeshGeometry3D(), stopMaterial, true, false, _frontPanelRoot);
+        var retainers = new MeshBuilder(true, true, true);
+        var retainerDepth = 1.10f * millimetreX;
+        // The two long opening-side stops stand beside the booklet at the
+        // same depth. Their outer face is flush with the printed sheet; the
+        // previous +0.65 mm centre placed them visibly on top of Front art.
+        var retainerZ = frontSurfaceZ - retainerDepth / 2;
+
+        // Left/hinge-side guide measured from img284.jpg.  The guide sits
+        // outside the 120 mm booklet, 0.9 mm toward the black spine, and is
+        // only about 0.55 mm wide.  The old 0.82 mm strip was centred too far
+        // into the artwork and consequently read as a full-height grey band.
+        const float leftGuideOffsetMm = 0.90f;
+        const float leftGuideWidthMm = 0.55f;
+        var leftGuideX = bookletLeft - leftGuideOffsetMm * millimetreX;
+        // Continue into the 1 mm margin beyond the 120 mm booklet until the
+        // guide meets the inside faces of the moulded top and bottom rails.
+        // Leaving the former 1.4 mm gap at each end made the new guide look
+        // broken when the lid was open.
+        const float railInnerInsetMm = 1.50f;
+        var guideTop = caseHeight / 2 - railInnerInsetMm * millimetreY;
+        var guideBottom = -caseHeight / 2 + railInnerInsetMm * millimetreY;
+        var guideHeight = guideTop - guideBottom;
+        retainers.AddBox(new Vector3(leftGuideX, (guideTop + guideBottom) / 2,
+                retainerZ),
+            leftGuideWidthMm * millimetreX, guideHeight, retainerDepth);
+
+        // The opening-side edge in the same scan is held by two independent
+        // 21 mm clips, not by another continuous rail.  Their thin stems sit
+        // just outside the paper; short end hooks overlap it by 1.25 mm.
+        const float rightStemWidthMm = 0.65f;
+        const float rightClipLengthMm = 21.0f;
+        const float rightHookReachMm = 1.25f;
+        const float rightHookHeightMm = 0.65f;
+        var stemX = bookletRight + rightStemWidthMm * millimetreX / 2;
+        var upperCenterY = bookletTop - 28.0f * millimetreY;
+        var lowerCenterY = bookletBottom + 28.0f * millimetreY;
+        foreach (var centerY in new[] { upperCenterY, lowerCenterY })
+        {
+            var clipLength = rightClipLengthMm * millimetreY;
+            retainers.AddBox(new Vector3(stemX, centerY, retainerZ),
+                rightStemWidthMm * millimetreX, clipLength, retainerDepth);
+            var hookWidth = (rightHookReachMm + rightStemWidthMm) * millimetreX;
+            var hookX = bookletRight
+                + (rightStemWidthMm - rightHookReachMm) * millimetreX / 2;
+            var hookHeight = rightHookHeightMm * millimetreY;
+            retainers.AddBox(new Vector3(hookX, centerY + (clipLength - hookHeight) / 2,
+                    retainerZ), hookWidth, hookHeight, retainerDepth);
+            retainers.AddBox(new Vector3(hookX, centerY - (clipLength - hookHeight) / 2,
+                    retainerZ), hookWidth, hookHeight, retainerDepth);
+        }
+        AddMesh(retainers.ToMeshGeometry3D(), material, true, false,
+            _frontPanelRoot, false);
     }
 
-    // Centre the 0.014-wide clear retaining lip at the inner hinge-side
-    // boundary, rather than growing the entire lip into the booklet side.
-    private static float TrayManualStopRight(float width) => -width / 2 + 0.252f;
+    private void AddClearFrontPanel(float width, float height, float depth,
+        DxMaterial material)
+    {
+        var millimetreX = width / 142f;
+        var millimetreY = height / 125f;
+        var millimetreZ = depth / StandardCaseDepthMm;
+        var insetX = 0.65f * millimetreX;
+        var insetY = 0.65f * millimetreY;
+        const float panelThicknessMm = 0.85f;
+        var frontZ = depth / 2 + 0.12f * millimetreZ;
+        var panelThickness = panelThicknessMm * millimetreZ;
+        var centerZ = frontZ - panelThickness / 2;
+        var panel = new MeshBuilder(true, true, true);
+        panel.AddBox(new Vector3(0, 0, centerZ),
+            width - insetX * 2, height - insetY * 2, panelThickness);
+        AddMesh(panel.ToMeshGeometry3D(), material, true, true,
+            _frontPanelRoot, false);
+    }
 
     private void AddTraySpineCover(float width, float caseHeight, float depth,
         DxMaterial material, DxMaterial grooveMaterial, DxMaterial ribMaterial,
@@ -1595,12 +1692,21 @@ internal sealed class DxJewelCaseScene : IDisposable
         // black and gray trays retain the scan-matched moulding below.
         if (transparent)
         {
-            AddBox(new Vector3((bandLeft + bandRight) / 2,
-                    0, (bandRearZ + bandFrontZ) / 2),
-                bandRight - bandLeft, caseHeight - 4.0f * millimetreY,
-                bandFrontZ - bandRearZ, material, true, _baseRoot);
-            AddTraySpineTransition(bandRight, caseHeight - 4.0f * millimetreY,
-                bandFrontZ, depth, millimetreX, transitionMaterial, true);
+            // A transparent box exposes both of its long side faces, and the
+            // adjoining triangular shoulder adds a third coplanar boundary.
+            // Seen through the closed lid those boundaries become several
+            // full-height grey lines beside Front/Spine Card artwork. A clear
+            // tray needs only its smooth front skin here; the source shell
+            // supplies the surrounding physical walls.
+            var smoothStrip = new MeshBuilder(true, true, true);
+            var stripHeight = caseHeight - 4.0f * millimetreY;
+            smoothStrip.AddQuad(
+                new Vector3(bandLeft, stripHeight / 2, bandFrontZ),
+                new Vector3(bandLeft, -stripHeight / 2, bandFrontZ),
+                new Vector3(bandRight, -stripHeight / 2, bandFrontZ),
+                new Vector3(bandRight, stripHeight / 2, bandFrontZ));
+            AddMesh(smoothStrip.ToMeshGeometry3D(), material,
+                true, true, _baseRoot, false);
             return;
         }
         // img129 (600 dpi) measures a repeating 18-19 px cycle: about 0.78 mm,
@@ -1671,102 +1777,143 @@ internal sealed class DxJewelCaseScene : IDisposable
             transparent, false, _baseRoot, false);
     }
 
-    private void AddOpeningSideMatingRails(float width, float height, float depth,
-        DxMaterial material)
-    {
-        var millimetreX = width / 142f;
-        var millimetreY = height / 125f;
-        var wallThickness = 1.0f * millimetreX;
-        var endInset = 0.6f * millimetreY;
-        var railLength = height - endInset * 2;
-        var railX = width / 2 - wallThickness / 2;
-        var x0 = railX - wallThickness / 2;
-        var x1 = railX + wallThickness / 2;
-        var y0 = -railLength / 2;
-        var y1 = railLength / 2;
-
-        // The two rigid halves meet at Z=0 but have no caps on that mating
-        // plane. The former closed boxes overlapped by 0.16 mm and their two
-        // transparent end faces rendered as a dark line through the Spine.
-        AddOpenEndedRailHalf(x0, x1, y0, y1, -depth / 2, 0,
-            material, _baseRoot, capAtStart: true);
-        AddOpenEndedRailHalf(x0, x1, y0, y1, 0, depth / 2,
-            material, _frontPanelRoot, capAtStart: false);
-    }
-
-    private void AddOpenEndedRailHalf(float x0, float x1, float y0, float y1,
-        float z0, float z1, DxMaterial material, GroupModel3D target,
-        bool capAtStart)
-    {
-        var rail = new MeshBuilder(true, true, true);
-        rail.AddQuad(new Vector3(x0, y1, z0), new Vector3(x0, y0, z0),
-            new Vector3(x0, y0, z1), new Vector3(x0, y1, z1));
-        rail.AddQuad(new Vector3(x1, y1, z1), new Vector3(x1, y0, z1),
-            new Vector3(x1, y0, z0), new Vector3(x1, y1, z0));
-        rail.AddQuad(new Vector3(x0, y1, z1), new Vector3(x1, y1, z1),
-            new Vector3(x1, y1, z0), new Vector3(x0, y1, z0));
-        rail.AddQuad(new Vector3(x0, y0, z0), new Vector3(x1, y0, z0),
-            new Vector3(x1, y0, z1), new Vector3(x0, y0, z1));
-        var capZ = capAtStart ? z0 : z1;
-        rail.AddQuad(new Vector3(x0, y1, capZ), new Vector3(x1, y1, capZ),
-            new Vector3(x1, y0, capZ), new Vector3(x0, y0, capZ));
-        AddMesh(rail.ToMeshGeometry3D(), material, true, true, target, false);
-    }
-
-    private void AddTopBottomSideRibs(float width, float height, float depth,
+    private void AddOpeningSideSpineFrame(float width, float height, float depth,
         DxMaterial material)
     {
         var millimetreX = width / 142f;
         var millimetreY = height / 125f;
         var millimetreZ = depth / StandardCaseDepthMm;
-        // The rib field is recessed from all four borders of the narrow side
-        // face: 10 mm at the two short ends and 1 mm at the front/rear edges.
-        // The surrounding perimeter therefore remains a smooth clear frame.
-        var startX = -width / 2 + 10f * millimetreX;
-        var endX = width / 2 - 10f * millimetreX;
-        var rearEdgeZ = -depth / 2 + 1f * millimetreZ;
-        var frontEdgeZ = depth / 2 - 1f * millimetreZ;
-        var ribWidth = 0.16f * millimetreX;
-        var surfaceBias = 0.015f * millimetreY;
+        var wallThickness = 1.0f * millimetreX;
+        var endInset = 0.6f * millimetreY;
+        var railLength = height - endInset * 2;
+        var railX = width / 2 - wallThickness / 2;
+        var frame = new MeshBuilder(true, true, true);
+        var longEdgeHeight = 1.25f * millimetreY;
+        var endEdgeDepth = 0.80f * millimetreZ;
+        var longEdgeY = (railLength - longEdgeHeight) / 2;
+        var endEdgeZ = (depth - endEdgeDepth) / 2;
+
+        // Four slim mouldings leave the central printed Spine completely
+        // unobstructed. With no large transparent quad, there is no diagonal
+        // triangle boundary to become visible through alpha blending.
+        frame.AddBox(new Vector3(railX, longEdgeY, 0),
+            wallThickness, longEdgeHeight, depth);
+        frame.AddBox(new Vector3(railX, -longEdgeY, 0),
+            wallThickness, longEdgeHeight, depth);
+        frame.AddBox(new Vector3(railX, 0, endEdgeZ),
+            wallThickness, railLength - longEdgeHeight * 2, endEdgeDepth);
+        frame.AddBox(new Vector3(railX, 0, -endEdgeZ),
+            wallThickness, railLength - longEdgeHeight * 2, endEdgeDepth);
+        AddMesh(frame.ToMeshGeometry3D(), material, true, true,
+            _baseRoot, false);
+    }
+
+    private void AddScanMatchedLidRail(float width, float height, float depth,
+        float frontSurfaceZ, bool upper, DxMaterial material)
+    {
+        var millimetreX = width / 142f;
+        var millimetreY = height / 125f;
+        var millimetreZ = depth / StandardCaseDepthMm;
+        const float railHeightMm = 2.25f;
+        const float outerInsetMm = 0.25f;
+        var rail = new MeshBuilder(true, true, true);
+        var railY = (height / 2 - (outerInsetMm + railHeightMm / 2) * millimetreY)
+            * (upper ? 1 : -1);
+        // The ribbed front-lid side wall wraps around the full closed case,
+        // from the rear face to the outer face of the lid. Splitting this at
+        // Z=0 made the rail half-width and incorrectly put the other ribbed
+        // half on the Disc/rear shell.
+        // The photographed lid stops slightly short of the rear face; it does
+        // not cover the full 10 mm case thickness. Keep roughly 9 mm of wall.
+        var railRearZ = -depth / 2 + 1.15f * millimetreZ;
+        var railFrontZ = depth / 2 + 0.12f * millimetreZ;
+        var railZ = (railRearZ + railFrontZ) / 2;
+        rail.AddBox(new Vector3(0, railY, railZ),
+            width - 0.9f * millimetreX, railHeightMm * millimetreY,
+            railFrontZ - railRearZ);
+
+        // Fine injection-mould ribs visible along the entire front-lid rail
+        // in img127. They intentionally exist only on this lid-side wall.
         const int ribCount = 168;
-        var rearRibs = new MeshBuilder(true, true, true);
-        var frontRibs = new MeshBuilder(true, true, true);
-
-        static void AddRibFace(MeshBuilder builder, float left, float right,
-            float y, float z0, float z1)
-        {
-            builder.AddQuad(new Vector3(left, y, z0),
-                new Vector3(right, y, z0),
-                new Vector3(right, y, z1),
-                new Vector3(left, y, z1));
-        }
-
+        const float ribWidthMm = 0.16f;
+        const float ribReliefMm = 0.12f;
+        var ribStartX = -width / 2 + 10f * millimetreX;
+        var ribEndX = width / 2 - 10f * millimetreX;
+        var outerRailY = (height / 2 - outerInsetMm * millimetreY)
+            * (upper ? 1 : -1);
+        var ribY = outerRailY + (upper ? 1 : -1)
+            * ribReliefMm * millimetreY / 2;
         for (var index = 0; index < ribCount; index++)
         {
-            var x = startX + (endX - startX) * index / (ribCount - 1);
-            // The two retaining-catch blocks interrupt the fine rib field in
-            // the scan; leave those short regions clean instead of drawing
-            // lines through the moulded catches.
-            if (Math.Abs(x + 0.30f) < 0.13f || Math.Abs(x - 0.54f) < 0.13f)
-                continue;
-            var left = x - ribWidth / 2;
-            var right = x + ribWidth / 2;
-            AddRibFace(rearRibs, left, right,
-                height / 2 + surfaceBias, rearEdgeZ, 0);
-            AddRibFace(rearRibs, left, right,
-                -height / 2 - surfaceBias, 0, rearEdgeZ);
-            AddRibFace(frontRibs, left, right,
-                height / 2 + surfaceBias, 0, frontEdgeZ);
-            AddRibFace(frontRibs, left, right,
-                -height / 2 - surfaceBias, frontEdgeZ, 0);
+            var x = ribStartX + (ribEndX - ribStartX) * index / (ribCount - 1);
+            rail.AddBox(new Vector3(x, ribY, railZ),
+                ribWidthMm * millimetreX,
+                ribReliefMm * millimetreY,
+                railFrontZ - railRearZ - 0.7f * millimetreZ);
         }
 
-        // Rear ribs remain with the fixed shell; front ribs rotate with the
-        // lid. This preserves the hinge behaviour while the case is opened.
-        AddMesh(rearRibs.ToMeshGeometry3D(), material, true, true,
-            _baseRoot, false);
-        AddMesh(frontRibs.ToMeshGeometry3D(), material, true, true,
+        // Two rounded catches on each rail reproduce the four claws visible
+        // in an open scan.  They project into the booklet area; keeping them
+        // in the same upper/lower mesh restores the moulding without bringing
+        // back either of the full-height side faces that caused the stripe.
+        // The receiver scallops on the Disc half measure about 12 mm across;
+        // the previous 8 mm catches were visibly undersized even after their
+        // centres were aligned.
+        const float clawWidthMm = 12.0f;
+        const float clawReachMm = 3.4f;
+        const float bookletThicknessMm = 1.5f;
+        const float clawDepthMm = 0.90f;
+        var innerRailY = (height / 2 - (outerInsetMm + railHeightMm) * millimetreY)
+            * (upper ? 1 : -1);
+        // Centres measured from the two receiver moulds on the Disc half.
+        // The lid reverses visually about the hinge while opening, but both
+        // halves share these case-local X coordinates when closed.
+        foreach (var clawXmm in new[] { -44.8f, 32.2f })
+        {
+            AddRoundedRailClaw(rail, clawXmm * millimetreX, innerRailY,
+                clawWidthMm * millimetreX / 2,
+                clawReachMm * millimetreY,
+                // These catches support the booklet from the inside of the
+                // lid. They must sit behind the 1.5 mm page block, never over
+                // the outside Front artwork as in the previous build.
+                frontSurfaceZ - (bookletThicknessMm + clawDepthMm)
+                    * millimetreZ,
+                frontSurfaceZ - bookletThicknessMm * millimetreZ,
+                upper ? -1f : 1f);
+        }
+        AddMesh(rail.ToMeshGeometry3D(), material, true, true,
             _frontPanelRoot, false);
+    }
+
+    private static void AddRoundedRailClaw(MeshBuilder builder, float centreX,
+        float baseY, float radiusX, float reachY, float rearZ, float frontZ,
+        float inwardDirection)
+    {
+        const int segments = 16;
+        var rearCentre = new Vector3(centreX, baseY, rearZ);
+        var frontCentre = new Vector3(centreX, baseY, frontZ);
+        var previousRear = new Vector3(centreX - radiusX, baseY, rearZ);
+        var previousFront = new Vector3(centreX - radiusX, baseY, frontZ);
+
+        for (var index = 1; index <= segments; index++)
+        {
+            var angle = MathF.PI - MathF.PI * index / segments;
+            var currentRear = new Vector3(
+                centreX + radiusX * MathF.Cos(angle),
+                baseY + inwardDirection * reachY * MathF.Sin(angle), rearZ);
+            var currentFront = new Vector3(currentRear.X, currentRear.Y, frontZ);
+            builder.AddTriangle(rearCentre, currentRear, previousRear);
+            builder.AddTriangle(frontCentre, previousFront, currentFront);
+            builder.AddQuad(previousRear, currentRear, currentFront, previousFront);
+            previousRear = currentRear;
+            previousFront = currentFront;
+        }
+
+        // Close the straight edge where the claw is fused into the rail.
+        builder.AddQuad(new Vector3(centreX - radiusX, baseY, rearZ),
+            new Vector3(centreX - radiusX, baseY, frontZ),
+            new Vector3(centreX + radiusX, baseY, frontZ),
+            new Vector3(centreX + radiusX, baseY, rearZ));
     }
 
     private void AddOpenBookletPageBlock(float left, float right,
@@ -1796,51 +1943,6 @@ internal sealed class DxJewelCaseScene : IDisposable
             new Vector3(left, bottom, frontZ));
         AddMesh(pages.ToMeshGeometry3D(), material, false, true,
             _bookletRoot, false);
-    }
-
-    private void AddBookletFoldArtwork(BitmapSource frontBitmap,
-        BitmapSource rearBitmap, float x, float bottom, float top,
-        float rearZ, float frontZ)
-    {
-        var middleZ = (rearZ + frontZ) / 2;
-        const float edgeSample = 0.025f;
-
-        DxMaterial Material(BitmapSource bitmap, string name) => new PhongMaterial
-        {
-            Name = name,
-            DiffuseColor = new Color4(1, 1, 1, 1),
-            DiffuseMap = CreateTexture(bitmap),
-            RenderDiffuseMap = true,
-            SpecularColor = new Color4(0.025f, 0.025f, 0.025f, 1),
-            SpecularShininess = 5,
-            EnableAutoTangent = true
-        };
-
-        // Continue the leftmost edge of the front cover around the first half
-        // of the fold instead of exposing a white paper wall.
-        var frontFold = new MeshBuilder(true, true, true);
-        frontFold.AddQuad(new Vector3(x, top, frontZ),
-            new Vector3(x, bottom, frontZ),
-            new Vector3(x, bottom, middleZ),
-            new Vector3(x, top, middleZ),
-            new Vector2(0, 0), new Vector2(0, 1),
-            new Vector2(edgeSample, 1), new Vector2(edgeSample, 0));
-        AddMesh(frontFold.ToMeshGeometry3D(),
-            Material(frontBitmap, "Booklet front fold artwork"),
-            false, true, _bookletRoot, false);
-
-        // The second half continues into the image on the booklet's reverse.
-        // Reverse U at the centre so the two sampled strips meet as a fold.
-        var rearFold = new MeshBuilder(true, true, true);
-        rearFold.AddQuad(new Vector3(x, top, middleZ),
-            new Vector3(x, bottom, middleZ),
-            new Vector3(x, bottom, rearZ),
-            new Vector3(x, top, rearZ),
-            new Vector2(edgeSample, 0), new Vector2(edgeSample, 1),
-            new Vector2(0, 1), new Vector2(0, 0));
-        AddMesh(rearFold.ToMeshGeometry3D(),
-            Material(rearBitmap, "Booklet rear fold artwork"),
-            false, true, _bookletRoot, false);
     }
 
     private void AddTrayRecessBacking(float width, float height, float depth,
@@ -2085,17 +2187,47 @@ internal sealed class DxJewelCaseScene : IDisposable
             var b = Transform(triangle.B);
             var c = Transform(triangle.C);
             var centroid = (a + b + c) / 3;
+            var faceNormal = Vector3.Cross(b - a, c - a);
+            if (faceNormal.LengthSquared() > 0)
+                faceNormal = Vector3.Normalize(faceNormal);
+            var spanX = Math.Max(a.X, Math.Max(b.X, c.X)) - Math.Min(a.X, Math.Min(b.X, c.X));
+            var spanY = Math.Max(a.Y, Math.Max(b.Y, c.Y)) - Math.Min(a.Y, Math.Min(b.Y, c.Y));
+            var maximumX = Math.Max(a.X, Math.Max(b.X, c.X));
+            // The printable source subdivides its hinge-side reinforcement
+            // sheet into many smaller triangles.  Testing only each
+            // triangle's height therefore left a broad front-facing strip in
+            // place even after the apparent full-height faces were removed.
+            // The real img284 lid has no broad sheet here: it has a slim
+            // guide outside the booklet, rebuilt by AddBookletRetainers.
+            // Remove the complete central run, including its edge-on side
+            // face.  Layer-isolation renders proved that this side face—not
+            // the new retaining guide or the clear tray—was the persistent
+            // vertical band projected over Front artwork.  Preserve only the
+            // top/bottom hinge and rail geometry outside the central 86%.
+            if (top && maximumX < -targetWidth * 0.402f
+                && Math.Abs(centroid.Y) < targetHeight * 0.43f)
+                continue;
+            // Do not render the STL's two giant coplanar front-window
+            // triangles. Transparent PBR surfaces still contribute an
+            // environment reflection, so moving the former diagonal half to
+            // the clear material washed out the complete booklet. The real
+            // case remains readable through its perimeter rails, side walls,
+            // catches and hinge geometry without a full-face colour veil.
+            if (top && Math.Abs(faceNormal.Z) > 0.88f
+                && spanX > targetWidth * 0.52f && spanY > targetHeight * 0.52f)
+                continue;
             // Separate only the thick horizontal rails and corner blocks.
             // Broad front/back windows and the spine stay in the clearer
             // material so artwork brightness and legibility are unchanged.
             var isMouldedEdge = top
-                ? Math.Abs(centroid.Y) > targetHeight * 0.445f
-                    // The whole hinge-side strip ends at the booklet recess,
-                    // not merely at the outermost rail. Treating only the rail
-                    // as thick acrylic lets the disc show through beside the
-                    // front manual when the case is closed.
-                    || centroid.X < -targetWidth * 0.402f
-                    || centroid.X > targetWidth * 0.485f
+                // A centroid-only test assigned one half of a large coplanar
+                // STL quad to dense acrylic and the other half to clear
+                // acrylic. Its triangulation diagonal then appeared as a
+                // false streak of light. A moulded rail triangle must lie
+                // wholly inside the physical edge band instead.
+                ? Math.Min(Math.Abs(a.Y), Math.Min(Math.Abs(b.Y), Math.Abs(c.Y))) > targetHeight * 0.445f
+                    || maximumX < -targetWidth * 0.402f
+                    || Math.Min(a.X, Math.Min(b.X, c.X)) > targetWidth * 0.485f
                 // On the lower STL, the band between 44.5% and 47.5% contains
                 // the tray's four triangular support reliefs, not the clear
                 // outer rail. Classifying that whole band as acrylic leaves
@@ -2103,7 +2235,6 @@ internal sealed class DxJewelCaseScene : IDisposable
                  : Math.Abs(centroid.Y) > targetHeight * 0.475f
                      || (Math.Abs(centroid.X) > targetWidth * 0.455f
                          && Math.Abs(centroid.Y) > targetHeight * 0.365f);
-            var isTopOrBottomRail = Math.Abs(centroid.Y) > targetHeight * 0.445f;
             if (top)
             {
                 // X and Z are both mirrored for the assembled upper shell, so
@@ -2123,9 +2254,6 @@ internal sealed class DxJewelCaseScene : IDisposable
             // form the exterior. Drop only the side-facing raised triangles;
             // retain the tray's horizontal disc-support surface.
             var sourceCentroidZ = (triangle.A.Z + triangle.B.Z + triangle.C.Z) / 3;
-            var faceNormal = Vector3.Cross(b - a, c - a);
-            if (faceNormal.LengthSquared() > 0)
-                faceNormal = Vector3.Normalize(faceNormal);
             var isOpeningSideTrayWall = centroid.X > targetWidth * 0.40f
                 && !isOuterClearRim
                 && sourceCentroidZ > 1.7f
@@ -2169,9 +2297,7 @@ internal sealed class DxJewelCaseScene : IDisposable
     {
         var builder = new MeshBuilder(true, true, true);
 
-        // The fine top/bottom rib field is generated once by
-        // AddTopBottomSideRibs. The former 78-rib field here overlapped its
-        // 168 scan-spaced ribs, producing a false heavy line every few cells.
+        // The fine top/bottom rib field is generated by the front-lid rails.
 
         // Inner shoulder and thin sealing lip visible as parallel highlights.
         builder.AddBox(new Vector3(0.055f, height / 2 - 0.057f, depth / 2 + 0.004f),
@@ -2234,7 +2360,7 @@ internal sealed class DxJewelCaseScene : IDisposable
     }
 
     private void AddArtwork(BitmapSource? bitmap, float left, float right, float bottom, float top,
-        float z, bool reverse, GroupModel3D? target = null, string name = "Artwork")
+        float z, bool reverse, GroupModel3D? target = null, string name = "Artwork", bool transparent = false)
     {
         var builder = new MeshBuilder(true, true, true);
         if (!reverse)
@@ -2267,7 +2393,7 @@ internal sealed class DxJewelCaseScene : IDisposable
         // reversed during assembly. Disable back-face culling for that plane;
         // otherwise a valid Back texture is discarded even though the side
         // Spine textures remain visible.
-        AddMesh(builder.ToMeshGeometry3D(), material, false, reverse, target);
+        AddMesh(builder.ToMeshGeometry3D(), material, transparent, reverse, target);
     }
 
     private void AddSpine(BitmapSource? bitmap, float x, float height, float depth, bool leftSide,
@@ -2314,7 +2440,10 @@ internal sealed class DxJewelCaseScene : IDisposable
         // exterior spine artwork onto the paper reverse. Fold each inner strip
         // from its matching edge of the central Inlay panel.
         var reverse = new MeshBuilder(true, true, true);
-        var innerX = x + (leftSide ? 0.001f : -0.001f);
+        // The reverse print is the corresponding optical surface on the
+        // inside of the clear wall. Together with the exterior face it
+        // brackets every shell/tray triangle, so neither can tint the paper.
+        var innerX = x + (leftSide ? 2 * SpineArtworkSurfaceOffset : -2 * SpineArtworkSurfaceOffset);
         if (leftSide)
         {
             reverse.AddQuad(new Vector3(innerX, height / 2, rearZ),
@@ -2550,9 +2679,9 @@ internal sealed class DxJewelCaseScene : IDisposable
         // The source is laid flat as Back flap | Spine | Front flap. Each flap
         // stays with the physical case face it covers when the lid is opened.
         AddArtwork(back, foldX, foldX + backWidth, -cardHeight / 2, cardHeight / 2,
-            backZ, true, _spineCardRoot, "Spine Card back flap");
+            backZ, true, _spineCardRoot, "Spine Card back flap", true);
         AddArtwork(front, foldX, foldX + frontWidth, -cardHeight / 2, cardHeight / 2,
-            frontZ, false, _spineCardRoot, "Spine Card front flap");
+            frontZ, false, _spineCardRoot, "Spine Card front flap", true);
 
         var side = new MeshBuilder(true, true, true);
         side.AddQuad(new Vector3(outsideX, cardHeight / 2, caseDepth / 2),
@@ -2569,7 +2698,7 @@ internal sealed class DxJewelCaseScene : IDisposable
             SpecularColor = new Color4(0.02f, 0.02f, 0.02f, 1),
             SpecularShininess = 6,
             EnableAutoTangent = true
-        }, false, false, _spineCardRoot);
+        }, true, false, _spineCardRoot);
     }
 
     private void AddDisc(BitmapSource? bitmap, Vector3 center, float outerRadius, float innerRadius,

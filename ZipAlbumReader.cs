@@ -316,9 +316,13 @@ public static class ZipAlbumReader
         };
     }
 
+    internal static bool IsSupportedArchivePath(string path) =>
+        path.EndsWith(".zip.mp3", StringComparison.OrdinalIgnoreCase)
+        || path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
+
     internal static bool IsStandardAudioPath(string path) =>
         !IsTagEditingArtifact(path)
-        && !path.EndsWith(".zip.mp3", StringComparison.OrdinalIgnoreCase)
+        && !IsSupportedArchivePath(path)
         && (path.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase)
             || path.EndsWith(".wav", StringComparison.OrdinalIgnoreCase)
             || path.EndsWith(".flac", StringComparison.OrdinalIgnoreCase)
@@ -417,7 +421,7 @@ public static class ZipAlbumReader
             if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory)) return 0;
             var candidates = Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly).Where(IsImagePath);
             var archiveCount = Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly)
-                .Count(path => path.EndsWith(".zip.mp3", StringComparison.OrdinalIgnoreCase));
+                .Count(IsSupportedArchivePath);
             if (archiveCount <= 1) return candidates.Count();
             var fileName = Path.GetFileName(albumPath);
             var baseName = fileName.EndsWith(".zip.mp3", StringComparison.OrdinalIgnoreCase)
@@ -550,6 +554,9 @@ public static class ZipAlbumReader
         var initialBitrate = first.Value.Bitrate;
         var sampleRate = first.Value.SampleRate;
         var layer = first.Value.Layer;
+        if (TryReadXingAudioInfo(stream, first.Value.Offset, first.Value.FrameLength,
+                first.Value.SamplesPerFrame, sampleRate, layer, out var xingInfo))
+            return xingInfo;
         var frameCount = 0L;
         var sampleCount = 0L;
         var audioBytes = 0L;
@@ -577,6 +584,37 @@ public static class ZipAlbumReader
             : 0;
         var isValid = frameCount >= 3;
         return new(isValid, isValid && isCbr, averageBitrate, sampleRate, duration, layer);
+    }
+
+    private static bool TryReadXingAudioInfo(Stream stream, long frameOffset, int frameLength,
+        int samplesPerFrame, int sampleRate, int layer, out AudioInfo audio)
+    {
+        audio = new(false, false, 0, 0, TimeSpan.Zero, 0);
+        if (frameLength < 16 || sampleRate <= 0) return false;
+        var header = new byte[Math.Min(frameLength, 256)];
+        stream.Position = frameOffset;
+        var read = stream.Read(header, 0, header.Length);
+        for (var offset = 4; offset + 12 <= read; offset++)
+        {
+            var isXing = header.AsSpan(offset, 4).SequenceEqual("Xing"u8);
+            var isInfo = header.AsSpan(offset, 4).SequenceEqual("Info"u8);
+            if (!isXing && !isInfo) continue;
+            var flags = U32Big(header, offset + 4);
+            if ((flags & 1) == 0) return false;
+            var frames = U32Big(header, offset + 8);
+            if (frames < 3) return false;
+            var duration = TimeSpan.FromSeconds(frames * (double)samplesPerFrame / sampleRate);
+            var audioBytes = Math.Max(0, stream.Length - frameOffset);
+            var cursor = offset + 12;
+            if ((flags & 2) != 0 && cursor + 4 <= read)
+                audioBytes = U32Big(header, cursor);
+            var averageBitrate = duration.TotalSeconds > 0
+                ? (int)Math.Round(audioBytes * 8.0 / duration.TotalSeconds / 1000.0)
+                : 0;
+            audio = new(true, isInfo, averageBitrate, sampleRate, duration, layer);
+            return true;
+        }
+        return false;
     }
 
     private static (long Offset, int Bitrate, int SampleRate, int FrameLength, int SamplesPerFrame, int Layer)? FindFirstFrame(Stream stream)
@@ -643,8 +681,42 @@ public static class ZipAlbumReader
             while (payload.Length >= 2 && payload[^1] == 0 && payload[^2] == 0)
                 payload = payload[..^2];
         }
-        var encoding = encodingByte switch { 1 => Encoding.Unicode, 2 => Encoding.BigEndianUnicode, 3 => Encoding.UTF8, _ => Encoding.Latin1 };
+        if (encodingByte == 1) return DecodeUtf16WithBomRepair(payload);
+        var encoding = encodingByte switch { 2 => Encoding.BigEndianUnicode, 3 => Encoding.UTF8, _ => Encoding.Latin1 };
         return encoding.GetString(payload).Trim('\0', ' ', '\ufeff');
+    }
+    private static string DecodeUtf16WithBomRepair(ReadOnlySpan<byte> payload)
+    {
+        if (payload.Length >= 6 && payload[0] == 0xff && payload[1] == 0xfe)
+        {
+            var pairs = Math.Min((payload.Length - 2) / 2, 32);
+            var bigEndianZeros = 0;
+            var littleEndianZeros = 0;
+            for (var index = 0; index < pairs; index++)
+            {
+                if (payload[2 + index * 2] == 0) bigEndianZeros++;
+                if (payload[3 + index * 2] == 0) littleEndianZeros++;
+            }
+            // Some older taggers emitted an LE BOM followed by BE text.
+            if ((bigEndianZeros >= 3 && bigEndianZeros > littleEndianZeros * 2)
+                || (pairs > 0 && bigEndianZeros == pairs && littleEndianZeros == 0))
+                return Encoding.BigEndianUnicode.GetString(payload[2..]).Trim('\0', ' ', '\ufeff');
+        }
+        else if (payload.Length >= 6 && payload[0] == 0xfe && payload[1] == 0xff)
+        {
+            var pairs = Math.Min((payload.Length - 2) / 2, 32);
+            var bigEndianZeros = 0;
+            var littleEndianZeros = 0;
+            for (var index = 0; index < pairs; index++)
+            {
+                if (payload[2 + index * 2] == 0) bigEndianZeros++;
+                if (payload[3 + index * 2] == 0) littleEndianZeros++;
+            }
+            if ((littleEndianZeros >= 3 && littleEndianZeros > bigEndianZeros * 2)
+                || (pairs > 0 && littleEndianZeros == pairs && bigEndianZeros == 0))
+                return Encoding.Unicode.GetString(payload[2..]).Trim('\0', ' ', '\ufeff');
+        }
+        return Encoding.Unicode.GetString(payload).Trim('\0', ' ', '\ufeff');
     }
     private static int GetId3FrameStart(ReadOnlySpan<byte> body, byte major, byte flags)
     {

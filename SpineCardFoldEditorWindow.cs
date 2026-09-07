@@ -14,6 +14,8 @@ internal sealed class SpineCardFoldEditorWindow : Window
     private readonly Canvas _overlay = new() { Background = Brushes.Transparent };
     private readonly Thumb _leftGuide = CreateGuide(Color.FromRgb(68, 185, 240));
     private readonly Thumb _rightGuide = CreateGuide(Color.FromRgb(255, 170, 65));
+    private readonly Border _leftGuideLine = CreateGuideLine(Color.FromRgb(68, 185, 240));
+    private readonly Border _rightGuideLine = CreateGuideLine(Color.FromRgb(255, 170, 65));
     private readonly TextBlock _status = new() { Foreground = Brushes.White, TextAlignment = TextAlignment.Center };
     private bool _manual;
 
@@ -50,6 +52,10 @@ internal sealed class SpineCardFoldEditorWindow : Window
         RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
         _viewport.Children.Add(image);
         _overlay.Children.Add(_leftGuide); _overlay.Children.Add(_rightGuide);
+        // Draw the exact two-pixel fold centres as independent overlay
+        // elements. The system Thumb template may paint over OnRender, which
+        // previously made both coloured guides effectively invisible.
+        _overlay.Children.Add(_leftGuideLine); _overlay.Children.Add(_rightGuideLine);
         _viewport.Children.Add(_overlay);
         _viewport.SizeChanged += (_, _) => UpdateGuides();
         _leftGuide.DragDelta += (_, e) => MoveGuide(true, e.HorizontalChange);
@@ -101,10 +107,22 @@ internal sealed class SpineCardFoldEditorWindow : Window
     private static Thumb CreateGuide(Color color) => new PreciseGuideThumb(color)
     {
         // Keep a forgiving invisible hit area while drawing only a precise
-        // two-pixel centre line. The old solid 13 px bar made either edge look
-        // like the saved fold position.
+        // two-pixel centre line. Windows' default Thumb template paints a
+        // white grip even with a transparent Background, so make that whole
+        // hit target nearly invisible; the separate guide-line element stays
+        // fully opaque and marks the exact saved boundary.
         Width = 17, Background = Brushes.Transparent, Cursor = Cursors.SizeWE,
+        Opacity = 0.035,
         ToolTip = LocalizationService.Select("細線の中心が保存される境界です", "The centre line is the saved boundary")
+    };
+
+    private static Border CreateGuideLine(Color color) => new()
+    {
+        Width = 2,
+        Background = new SolidColorBrush(color),
+        BorderBrush = Brushes.White,
+        BorderThickness = new Thickness(.35),
+        IsHitTestVisible = false
     };
 
     private sealed class PreciseGuideThumb(Color color) : Thumb
@@ -157,6 +175,8 @@ internal sealed class SpineCardFoldEditorWindow : Window
         var rect = ImageRect();
         Place(_leftGuide, rect.Left + rect.Width * LeftFold, rect.Top, rect.Height);
         Place(_rightGuide, rect.Left + rect.Width * RightFold, rect.Top, rect.Height);
+        Place(_leftGuideLine, rect.Left + rect.Width * LeftFold, rect.Top, rect.Height);
+        Place(_rightGuideLine, rect.Left + rect.Width * RightFold, rect.Top, rect.Height);
     }
 
     private static void Place(FrameworkElement guide, double x, double top, double height)

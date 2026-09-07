@@ -40,8 +40,8 @@
       <WrapPanel>
         <Button Content="選択セルの値を全曲へ適用" Padding="11,5" Click="ApplySelectedCellToAll_Click"
               ToolTip="アーティストやアルバムなど、現在のセルと同じ列へ一括適用"/>
-        <Button x:Name="NormalizeAlphaNumericButton" Content="全曲の英数字・空白を半角に" Padding="11,5" Margin="8,0,0,0"
-                Click="NormalizeAlphaNumeric_Click" ToolTip="このアルバム全曲の編集欄にある全角英数字・全角スペースを半角へ変換します。日本語・記号・スペースの数・ファイル名は変更しません。保存するまで元ファイルは変わりません。"/>
+        <Button x:Name="NormalizeAlphaNumericButton" Content="全曲の英数字・記号・空白を半角に" Padding="11,5" Margin="8,0,0,0"
+                Click="NormalizeAlphaNumeric_Click" ToolTip="このアルバム全曲のファイル名と編集欄にある全角英数字・記号・全角スペースを半角へ変換します。日本語・半角カナ・囲み文字・ローマ数字・スペースの数は変更しません。ファイル名で使用できない半角記号は安全のため全角のまま保持します。保存するまで元ファイルは変わりません。"/>
         <Button x:Name="NormalizeTitleCaseButton" Content="選択範囲の全大文字を先頭大文字に" Padding="11,5" Margin="8,0,0,0"
                 Click="NormalizeTitleCase_Click" ToolTip="選択したタイトル・アーティスト・アルバム・ジャンルのうち、すべて大文字の値を Soul Doctor のような表記へ変換します。ファイル名と数値は変更しません。"/>
         <Button x:Name="CheckTagAnomaliesButton" Content="タグ異常をチェック" Padding="11,5" Margin="8,0,0,0"

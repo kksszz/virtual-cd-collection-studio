@@ -24,4 +24,28 @@ internal static class TagTextNormalization
         }
         return converted is null ? value : new string(converted);
     }
+
+    public static string ToHalfWidthAsciiSymbols(string value, bool preserveInvalidFileNameCharacters = false)
+    {
+        // Convert the full-width ASCII block without applying broad NFKC rules,
+        // so kana, circled numbers and Roman numerals remain untouched.
+        const string invalidFileNameCharacters = "\"*/:<>?\\|";
+        char[]? converted = null;
+        for (var index = 0; index < value.Length; index++)
+        {
+            var character = value[index];
+            if (character == '\u3000')
+            {
+                converted ??= value.ToCharArray();
+                converted[index] = ' ';
+                continue;
+            }
+            if (character is < '\uff01' or > '\uff5e') continue;
+            var halfWidth = (char)(character - 0xfee0);
+            if (preserveInvalidFileNameCharacters && invalidFileNameCharacters.Contains(halfWidth)) continue;
+            converted ??= value.ToCharArray();
+            converted[index] = halfWidth;
+        }
+        return converted is null ? value : new string(converted);
+    }
 }

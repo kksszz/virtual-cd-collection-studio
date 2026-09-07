@@ -155,8 +155,49 @@ internal static class SpineCardArtwork
     public static (BitmapSource Back, BitmapSource Spine, BitmapSource Front) Split(BitmapSource source)
     {
         var regions = GetRegions(source);
-        return (RearInsertArtwork.Crop(source, regions.Back), RearInsertArtwork.Crop(source, regions.Spine),
-            RearInsertArtwork.Crop(source, regions.Front));
+        // Some scanned obi sheets have full-height white separator/gap bands.
+        // Fade only those broad bands for 3D so they do not look like opaque
+        // extra paper. Isolated white lettering and artwork remain untouched.
+        var faded = FadeWhiteSeparatorBands(source);
+        return (RearInsertArtwork.Crop(faded, regions.Back), RearInsertArtwork.Crop(faded, regions.Spine),
+            RearInsertArtwork.Crop(faded, regions.Front));
+    }
+
+    internal static BitmapSource FadeWhiteSeparatorBands(BitmapSource source)
+    {
+        if (source.PixelWidth < 3 || source.PixelHeight < 3) return source;
+        BitmapSource image = source.Format == PixelFormats.Bgra32 ? source
+            : new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+        var stride = checked(image.PixelWidth * 4);
+        var pixels = new byte[checked(stride * image.PixelHeight)];
+        image.CopyPixels(pixels, stride, 0);
+        var fadeColumn = new bool[image.PixelWidth];
+        bool NearWhite(int offset)
+        {
+            var min = Math.Min(pixels[offset], Math.Min(pixels[offset + 1], pixels[offset + 2]));
+            var max = Math.Max(pixels[offset], Math.Max(pixels[offset + 1], pixels[offset + 2]));
+            return pixels[offset + 3] >= 240 && min >= 238 && max - min <= 16;
+        }
+        for (var x = 0; x < image.PixelWidth; x++)
+        {
+            var white = 0;
+            for (var y = 0; y < image.PixelHeight; y++)
+                if (NearWhite(y * stride + x * 4)) white++;
+            fadeColumn[x] = white >= image.PixelHeight * 0.72;
+        }
+        if (!fadeColumn.Any(value => value)) return source;
+        const byte separatorAlpha = 112;
+        for (var y = 0; y < image.PixelHeight; y++)
+        for (var x = 0; x < image.PixelWidth; x++)
+        {
+            if (!fadeColumn[x]) continue;
+            var offset = y * stride + x * 4;
+            if (NearWhite(offset)) pixels[offset + 3] = Math.Min(pixels[offset + 3], separatorAlpha);
+        }
+        var faded = BitmapSource.Create(image.PixelWidth, image.PixelHeight, image.DpiX, image.DpiY,
+            PixelFormats.Bgra32, null, pixels, stride);
+        faded.Freeze();
+        return faded;
     }
 
     private static Regions Fallback(Int32Rect content)

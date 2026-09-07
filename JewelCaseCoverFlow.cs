@@ -528,6 +528,7 @@ public sealed class JewelCaseCoverFlow : Grid
         && ReferenceEquals(left.SpineCover, right.SpineCover)
         && ReferenceEquals(left.RightSpineCover, right.RightSpineCover)
         && ReferenceEquals(left.InlayCover, right.InlayCover)
+        && ReferenceEquals(left.SpineCard, right.SpineCard)
         && string.Equals(left.TrayColorMode, right.TrayColorMode, StringComparison.OrdinalIgnoreCase);
 
     public void SelectByKey(string key, bool notify = false)
@@ -1400,6 +1401,15 @@ public sealed class JewelCaseCoverFlow : Grid
                 new Point3D(spineRightX, -backHeight / 2, spineFrontZ),
                 CreateImageMaterial(worldRightSpineArtwork, item.Title, 1.0, subdued: true)));
 
+        // The STL exterior intentionally omits the replaceable tray's
+        // scan-matched hinge-side moulding. The interactive DirectX case adds
+        // it procedurally, so the collection/rack model must do the same.
+        // Flatten the plate, ribs and shoulder into one model to keep dozens
+        // of CoverFlow cases inexpensive to render.
+        group.Children.Add(CreateCollectionTraySpineMould(
+            trayColor, string.Equals(item.TrayColorMode, "Clear",
+                StringComparison.OrdinalIgnoreCase)));
+
         // A rack has no glossy floor beneath every case. These translucent
         // reflection quads overlap into a large rectangular "shadow" when
         // dozens of upright spines are packed together, so keep them only in
@@ -1427,6 +1437,69 @@ public sealed class JewelCaseCoverFlow : Grid
 
         void AddShell(MeshGeometry3D geometry, Material material) =>
             group.Children.Add(new GeometryModel3D(geometry, material) { BackMaterial = material });
+    }
+
+    private static GeometryModel3D CreateCollectionTraySpineMould(
+        Color trayColor, bool transparent)
+    {
+        const double width = 2.42;
+        const double height = 2.12;
+        const double depth = DxJewelCaseScene.StandardCaseDepth;
+        const double caseWidthMm = 142;
+        const double caseHeightMm = 125;
+        const double caseDepthMm = 10;
+        var unitX = width / caseWidthMm;
+        var unitY = height / caseHeightMm;
+        var unitZ = depth / caseDepthMm;
+        var bandLeft = -width / 2 + .5 * unitX;
+        var bandRight = -width / 2 + 13.5 * unitX;
+        var bandRearZ = DxJewelCaseScene.StandardVisibleSpineDepth / 2;
+        var bandFrontZ = bandRearZ + 1.5 * unitZ;
+        var spineHeight = height - 4 * unitY;
+        var material = CreateMaterial(trayColor, transparent ? 72 : 30);
+        var parts = new Model3DGroup();
+
+        if (transparent)
+        {
+            // Match the interactive clear-tray variant: one smooth skin,
+            // without the opaque-resin grooves and raised ribs.
+            parts.Children.Add(CreateBox(bandRight - bandLeft, spineHeight,
+                .06 * unitZ,
+                new Point3D((bandLeft + bandRight) / 2, 0,
+                    bandFrontZ - .03 * unitZ), material));
+            return Flatten(parts);
+        }
+
+        const int ribCount = 17;
+        var grooveDepth = .12 * unitZ;
+        var grooveFloorZ = bandFrontZ - grooveDepth;
+        parts.Children.Add(CreateBox(bandRight - bandLeft, spineHeight,
+            grooveFloorZ - bandRearZ,
+            new Point3D((bandLeft + bandRight) / 2, 0,
+                (bandRearZ + grooveFloorZ) / 2), material));
+
+        var pitch = (bandRight - bandLeft) / ribCount;
+        var grooveWidth = .30 * unitX;
+        var ribWidth = Math.Max(pitch * .35, pitch - grooveWidth);
+        for (var index = 0; index < ribCount; index++)
+        {
+            var centerX = bandLeft + pitch * (index + .5);
+            parts.Children.Add(CreateBox(ribWidth, spineHeight,
+                bandFrontZ - grooveFloorZ,
+                new Point3D(centerX, 0,
+                    (grooveFloorZ + bandFrontZ) / 2), material));
+        }
+
+        // Short stepped shoulder joining the ribbed spine plate to the main
+        // tray. A box is sufficient at CoverFlow scale and avoids another
+        // transparent diagonal face.
+        var transitionWidth = 1.2 * unitX;
+        var traySurfaceZ = depth * .1162;
+        parts.Children.Add(CreateBox(transitionWidth, spineHeight,
+            Math.Max(.002, bandFrontZ - traySurfaceZ),
+            new Point3D(bandRight + transitionWidth / 2, 0,
+                (bandFrontZ + traySurfaceZ) / 2), material));
+        return Flatten(parts);
     }
 
     private static BitmapSource? SelectExteriorSpine(BitmapSource? assigned, BitmapSource? inlayFallback,

@@ -29,7 +29,7 @@ internal sealed class TrackAudioReader : IDisposable
         {
             if (!track.IsArchiveEntry)
                 return new TrackAudioReader(new MediaFoundationReader(track.SourcePath));
-            return OpenArchivedMpegLayer2(track);
+            return OpenArchivedWithMediaFoundation(track, ".mp2");
         }
 
         if (track.IsArchiveEntry || track.AudioFormat.Equals("MP3", StringComparison.OrdinalIgnoreCase)
@@ -42,7 +42,21 @@ internal sealed class TrackAudioReader : IDisposable
                 mp3 = new Mp3FileReader(source);
                 return new TrackAudioReader(trimGapless ? Mp3GaplessTrim.Apply(mp3) : mp3, source);
             }
-            catch { mp3?.Dispose(); source.Dispose(); throw; }
+            catch (Exception mp3Error)
+            {
+                mp3?.Dispose();
+                source.Dispose();
+                try
+                {
+                    return track.IsArchiveEntry
+                        ? OpenArchivedWithMediaFoundation(track, ".mp3")
+                        : new TrackAudioReader(new MediaFoundationReader(track.SourcePath));
+                }
+                catch
+                {
+                    throw new InvalidOperationException(mp3Error.Message, mp3Error);
+                }
+            }
         }
 
         if (track.AudioFormat.Equals("WAV", StringComparison.OrdinalIgnoreCase))
@@ -55,11 +69,11 @@ internal sealed class TrackAudioReader : IDisposable
         throw new NotSupportedException($"{track.AudioFormat}形式の再生には対応していません。");
     }
 
-    private static TrackAudioReader OpenArchivedMpegLayer2(ZipTrack track)
+    private static TrackAudioReader OpenArchivedWithMediaFoundation(ZipTrack track, string extension)
     {
         var temporaryDirectory = Path.Combine(Path.GetTempPath(), "ZipMp3Player", "Playback");
         Directory.CreateDirectory(temporaryDirectory);
-        var temporaryPath = Path.Combine(temporaryDirectory, $"{Guid.NewGuid():N}.mp2");
+        var temporaryPath = Path.Combine(temporaryDirectory, $"{Guid.NewGuid():N}{extension}");
         try
         {
             using (var source = ArchiveEntryExtractor.OpenSeekable(track))

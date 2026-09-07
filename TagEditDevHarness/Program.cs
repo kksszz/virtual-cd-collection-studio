@@ -276,6 +276,12 @@ static void TestHalfWidthNormalization()
     Require(TagTextNormalization.ToHalfWidthAlphaNumeric("　日本語　　曲名　") == " 日本語  曲名 ", "spaces-only conversion preserves leading, trailing and repeated spaces");
     Require(TagTextNormalization.ToHalfWidthAlphaNumeric("Ａ　 B　　１２\t\n") == "A  B  12\t\n", "mixed letters/digits/spaces and line breaks");
     Require(TagTextNormalization.ToHalfWidthAlphaNumeric(ascii) == ascii && TagTextNormalization.ToHalfWidthAlphaNumeric("") == "", "unchanged and empty inputs");
+    Require(TagTextNormalization.ToHalfWidthAsciiSymbols("０１　ＷＩＴＨ　ＬＯＶＥ＆ＦＲＩＥＮＤＳ！（１）.mp3", true)
+        == "01 WITH LOVE&FRIENDS!(1).mp3", "file-name letters, digits, spaces, and safe symbols converted");
+    Require(TagTextNormalization.ToHalfWidthAsciiSymbols("Ａ：Ｂ／Ｃ？Ｄ＊Ｅ＜Ｆ＞Ｇ｜Ｈ\uFF3CＩ.mp3", true)
+        == "A：B／C？D＊E＜F＞G｜H\uFF3CI.mp3", "file-name-invalid ASCII symbols remain safely full-width");
+    Require(TagTextNormalization.ToHalfWidthAsciiSymbols("Ｊ－ＰＯＰ ～ ①Ⅳ") == "J-POP ~ ①Ⅳ",
+        "tag symbols convert without broad compatibility normalization");
     Console.WriteLine("Full-width alphanumeric conversion and preservation tests passed.");
 }
 

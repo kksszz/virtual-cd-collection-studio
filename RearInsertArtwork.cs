@@ -30,6 +30,12 @@ internal static class RearInsertArtwork
         return crop;
     }
 
+    /// <summary>
+    /// Removes only a confidently detected, straight near-white scanner frame.
+    /// The source bitmap (and therefore the user's original image) is unchanged.
+    /// </summary>
+    public static BitmapSource CropWhiteBorder(BitmapSource image) => Crop(image, FindContent(image));
+
     internal static Int32Rect FindContent(BitmapSource source)
     {
         var width = source.PixelWidth;
@@ -59,7 +65,10 @@ internal static class RearInsertArtwork
         {
             var axis = horizontal ? w : h;
             var cross = horizontal ? h : w;
-            var limit = Math.Max(1, (int)Math.Ceiling(axis * 0.06));
+            // Flatbed scans commonly leave an 8-10% strip on one edge. The
+            // straight-edge/coverage checks below distinguish it from pale
+            // cover artwork, so allow the probe to reach those wider strips.
+            var limit = Math.Max(1, (int)Math.Ceiling(axis * 0.14));
             var margins = new List<(double Position, int Margin)>();
             var eligible = 0;
             const int samples = 51;
@@ -106,6 +115,10 @@ internal static class RearInsertArtwork
         var right = (int)Math.Round(Inset(true, true) * (double)width / w);
         var top = (int)Math.Round(Inset(false, false) * (double)height / h);
         var bottom = (int)Math.Round(Inset(false, true) * (double)height / h);
-        return new(left, top, width - left - right, height - top - bottom);
+        var contentWidth = width - left - right;
+        var contentHeight = height - top - bottom;
+        return contentWidth > 0 && contentHeight > 0
+            ? new(left, top, contentWidth, contentHeight)
+            : new(0, 0, width, height);
     }
 }

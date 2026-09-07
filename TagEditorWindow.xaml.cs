@@ -104,9 +104,9 @@ public partial class TagEditorWindow : Window
             var changed = false;
             foreach (var column in TagsGrid.Columns)
             {
-                if (GetColumnProperty(column) is not { } property || property == nameof(TagEditRow.DisplayFileName)
-                    || !TryGetValue(row, property, out var value)) continue;
-                var converted = TagTextNormalization.ToHalfWidthAlphaNumeric(value);
+                if (GetColumnProperty(column) is not { } property || !TryGetValue(row, property, out var value)) continue;
+                var converted = TagTextNormalization.ToHalfWidthAsciiSymbols(value,
+                    preserveInvalidFileNameCharacters: property == nameof(TagEditRow.DisplayFileName));
                 if (converted == value) continue;
                 SetValue(row, property, converted);
                 cells++;
@@ -116,9 +116,9 @@ public partial class TagEditorWindow : Window
         }
         TagsGrid.Items.Refresh();
         BatchStatusText.Text = cells == 0
-            ? LocalizationService.Select("変換対象の全角英数字・全角スペースはありません。", "No full-width letters, digits or spaces to convert.")
-            : LocalizationService.Select($"{tracks}曲・{cells}項目の英数字・空白を半角にしました（未保存）。確認後に「まとめて保存」を押してください。",
-                $"Converted letters, digits and spaces in {cells} fields across {tracks} tracks (not saved). Review, then choose Save All.");
+            ? LocalizationService.Select("変換対象の全角英数字・記号・全角スペースはありません。", "No full-width letters, digits, symbols, or spaces to convert.")
+            : LocalizationService.Select($"{tracks}曲・{cells}項目の英数字・記号・空白を半角にしました（未保存）。確認後に「まとめて保存」を押してください。",
+                $"Converted letters, digits, symbols, and spaces in {cells} fields across {tracks} tracks (not saved). Review, then choose Save All.");
     }
 
     private void NormalizeTitleCase_Click(object sender, RoutedEventArgs e)
