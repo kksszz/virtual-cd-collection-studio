@@ -1,11 +1,14 @@
 using System.IO;
 using System.IO.Compression;
+using System.Text;
 
 namespace ZipMp3Player;
 
 internal static class ArchiveEntryExtractor
 {
     private const int BufferSize = 128 * 1024;
+
+    static ArchiveEntryExtractor() => Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
     public static Stream OpenSeekable(ZipTrack track)
     {
@@ -29,6 +32,25 @@ internal static class ArchiveEntryExtractor
             8 => InflateToTemporaryStream(sourcePath, dataOffset, compressedSize, uncompressedSize),
             _ => throw new NotSupportedException($"ZIP圧縮方式 {compressionMethod} には対応していません。")
         };
+    }
+
+    public static Stream OpenSeekable(string sourcePath, string entryName)
+    {
+        using var file = new FileStream(sourcePath, FileMode.Open, FileAccess.Read,
+            FileShare.Read | FileShare.Delete, BufferSize, FileOptions.SequentialScan);
+        using var archive = new ZipArchive(file, ZipArchiveMode.Read, leaveOpen: false, Encoding.GetEncoding(932));
+        var matches = archive.Entries.Where(entry =>
+            string.Equals(entry.FullName, entryName, StringComparison.Ordinal)).Take(2).ToArray();
+        if (matches.Length != 1)
+            throw new InvalidDataException(matches.Length == 0
+                ? $"ZIP内に画像が見つかりません: {entryName}"
+                : $"ZIP内に同名の画像が複数あります: {entryName}");
+
+        var entry = matches[0];
+        var output = new MemoryStream(entry.Length > 0 && entry.Length <= int.MaxValue ? (int)entry.Length : 0);
+        using (var input = entry.Open()) input.CopyTo(output);
+        output.Position = 0;
+        return output;
     }
 
     private static FileStream InflateToTemporaryStream(string sourcePath, long dataOffset,

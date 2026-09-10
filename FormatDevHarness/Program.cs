@@ -25,9 +25,15 @@ try
     using (var archive = new ZipArchive(archiveFile, ZipArchiveMode.Create))
     {
         var entry = archive.CreateEntry("01 Deflate動作確認.mp3", CompressionLevel.SmallestSize);
-        using var entryStream = entry.Open();
-        using var mp3Stream = new FileStream(mp3Path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        mp3Stream.CopyTo(entryStream);
+        using (var entryStream = entry.Open())
+        using (var mp3Stream = new FileStream(mp3Path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            mp3Stream.CopyTo(entryStream);
+        using (var unwanted = archive.CreateEntry("Artwork/unwanted.png", CompressionLevel.Optimal).Open())
+            unwanted.Write([1, 2, 3, 4, 5]);
+        using (var retained = archive.CreateEntry("Artwork/front.png", CompressionLevel.NoCompression).Open())
+            retained.Write([10, 20, 30, 40]);
+        using (var notes = new StreamWriter(archive.CreateEntry("notes.txt", CompressionLevel.Optimal).Open()))
+            notes.Write("preserve me");
     }
 
     var wavAlbum = ZipAlbumReader.OpenFolder(temporaryFolder);
@@ -55,6 +61,32 @@ try
         "Deflate ZIP scanned properties");
     DecodeSamples(deflatedTrack, "Deflate ZIP playback decode");
     VerifyCachedCbr(deflatedTrack);
+    var staleFrontImage = deflatedAlbum.Images.Single(image => image.FileName == "Artwork/front.png");
+    // Simulate a playback/thumbnail reader that remains open while the archive is atomically replaced.
+    using var concurrentArchiveReader = new BoundedFileStream(deflatedZipPath, 0, 1);
+    var deletion = ArchiveImageDeletionService.Delete(deflatedZipPath, "Artwork/unwanted.png");
+    Require(deletion.RemainingEntryCount == 3, "ZIP image deletion remaining entry count");
+    using (var rebuilt = ZipFile.OpenRead(deflatedZipPath))
+    {
+        Require(rebuilt.GetEntry("Artwork/unwanted.png") is null, "ZIP image deletion target removed");
+        Require(rebuilt.GetEntry("Artwork/front.png") is not null && rebuilt.GetEntry("notes.txt") is not null,
+            "ZIP image deletion preserves other files");
+    }
+    var rebuiltAlbum = ZipAlbumReader.Open(deflatedZipPath);
+    Require(rebuiltAlbum.Tracks.Single().IsSupported && rebuiltAlbum.Images.Select(image => image.FileName)
+        .SequenceEqual(["Artwork/front.png"]), "ZIP image deletion preserves playable audio and other artwork");
+    using (var staleImageBytes = new BoundedFileStream(deflatedZipPath,
+               staleFrontImage.DataOffset, staleFrontImage.CompressedSize))
+    using (var recoveredImageBytes = ArchiveEntryExtractor.OpenSeekable(deflatedZipPath, staleFrontImage.FileName))
+    {
+        var stale = new byte[4];
+        var recovered = new byte[4];
+        staleImageBytes.ReadExactly(stale);
+        recoveredImageBytes.ReadExactly(recovered);
+        var expectedImageBytes = new byte[] { 10, 20, 30, 40 };
+        Require(!stale.SequenceEqual(expectedImageBytes) && recovered.SequenceEqual(expectedImageBytes),
+            "stale image offsets recover through the rebuilt ZIP central directory");
+    }
     Require(ExistingTemporaryEntries(extractionFolder).SetEquals(temporaryEntriesBefore),
         "Deflate ZIP temporary extraction cleanup");
 

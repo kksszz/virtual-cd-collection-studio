@@ -189,6 +189,7 @@ internal static class Program
         VerifyArtworkRoleSelection(data, testImage);
         VerifySupplementalArtworkRoles(data, testImage);
         VerifyCoverFlowPan(testImage);
+        VerifyContinuousCoverFlowKeyboard(testImage);
         VerifyAlbumLibraryBrowser(testImage);
         VerifyLibraryLoadingIndicator();
         VerifyFavorites(data);
@@ -645,6 +646,7 @@ internal static class Program
                 if (fileNameEditor.SelectedText != fileNameEditor.Text)
                     throw new InvalidOperationException("Tag editor file name text must support selection and copying.");
                 grid.CancelEdit(DataGridEditingUnit.Cell);
+                grid.CancelEdit(DataGridEditingUnit.Row);
                 var trackNumberColumn = grid.Columns[1];
                 var sortedView = CollectionViewSource.GetDefaultView(grid.ItemsSource);
                 sortedView.SortDescriptions.Clear();
@@ -848,8 +850,13 @@ internal static class Program
         if (!File.ReadAllText(libraryPath).Contains("\"IsComplete\":true")
             || !File.Exists(partialLibraryPath) || !File.ReadAllText(partialLibraryPath).Contains("\"IsComplete\":false"))
             throw new InvalidOperationException("Incomplete scan must not replace complete library cache.");
-        if (!File.ReadAllText(partialLibraryPath).Contains("\"Version\":14"))
+        var currentCacheVersion = (int)typeof(MainWindow).GetField("CurrentLibraryCacheVersion",
+            BindingFlags.Static | BindingFlags.NonPublic)!.GetRawConstantValue()!;
+        if (!File.ReadAllText(partialLibraryPath).Contains($"\"Version\":{currentCacheVersion}"))
             throw new InvalidOperationException("Updated cache must persist the VBR schema version.");
+        // Completing the migration clears the refresh request before the
+        // partial snapshot is promoted to the complete cache.
+        needsRefresh.SetValue(cacheWindow, false);
         typeof(MainWindow).GetField("_libraryCacheComplete", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(cacheWindow, true);
         typeof(MainWindow).GetField("_completedScanGeneration", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(cacheWindow, 1);
         typeof(MainWindow).GetMethod("SaveLibraryCache", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(cacheWindow, null);
@@ -1539,6 +1546,16 @@ internal static class Program
 
     private static void VerifyBookletViewer(string data)
     {
+        var defaultImageMethod = typeof(MainWindow).GetMethod("GetDefaultAlbumImageIndex",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+        static int PreferredIndex(MethodInfo method, params string[] roles) =>
+            (int)method.Invoke(null, [roles])!;
+        if (PreferredIndex(defaultImageMethod, "Back", "FrontSpreadVertical", "Front", "FrontSpread") != 3
+            || PreferredIndex(defaultImageMethod, "Back", "FrontSpreadVertical", "Front") != 2
+            || PreferredIndex(defaultImageMethod, "Back", "FrontSpreadVertical", "Disc") != 1
+            || PreferredIndex(defaultImageMethod, "Back", "Disc") != 0)
+            throw new InvalidOperationException("Album image default selection must prefer Front Spread, then Front, then Vertical Front Spread, and otherwise preserve detection order.");
+
         void Pump(int milliseconds)
         {
             var frame = new System.Windows.Threading.DispatcherFrame();
@@ -1794,6 +1811,58 @@ internal static class Program
         Console.WriteLine("Booklet roles/order, manual overrides, opening/navigation/zoom, empty state and 3D extraction/return passed.");
     }
 
+    private static void VerifyContinuousCoverFlowKeyboard(BitmapSource image)
+    {
+        void Pump(int milliseconds)
+        {
+            var frame = new System.Windows.Threading.DispatcherFrame();
+            var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(milliseconds) };
+            timer.Tick += (_, _) => { timer.Stop(); frame.Continue = false; };
+            timer.Start();
+            System.Windows.Threading.Dispatcher.PushFrame(frame);
+        }
+        var items = Enumerable.Range(0, 8).Select(index => new JewelCaseCoverFlowItem(
+            $"key-{index}", $"Album {index}", "Artist", "DIR", "Clear",
+            image, null, null, null, null, null, null, false)).ToArray();
+        var flow = new JewelCaseCoverFlow { CollectionPresentation = true };
+        var window = new Window { Content = flow, Width = 900, Height = 650, ShowInTaskbar = false };
+        var notifications = 0;
+        flow.SelectionChanged += (_, _) => notifications++;
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var navigate = typeof(JewelCaseCoverFlow).GetMethod("NavigateByKeyboard", flags)!;
+        var finish = typeof(JewelCaseCoverFlow).GetMethod("FinishKeyboardNavigation", flags)!;
+        try
+        {
+            flow.SetItems(items, "key-0");
+            window.Show();
+            window.UpdateLayout();
+            navigate.Invoke(flow, [Key.Right, false]);
+            Thread.Sleep(95);
+            navigate.Invoke(flow, [Key.Right, true]);
+            Thread.Sleep(95);
+            navigate.Invoke(flow, [Key.Right, true]);
+            if (flow.SelectedKey != "key-3" || notifications != 1)
+                throw new InvalidOperationException("Held Right must advance continuously while deferring expensive selection updates.");
+            var motions = (System.Collections.IDictionary)typeof(JewelCaseCoverFlow)
+                .GetField("_collectionMotions", flags)!.GetValue(flow)!;
+            if (motions.Count == 0)
+                throw new InvalidOperationException("Held arrow navigation must keep the shared CoverFlow motion active.");
+            var firstMotion = motions.Values.Cast<object>().First();
+            var duration = (double)firstMotion.GetType().GetProperty("DurationSeconds")!.GetValue(firstMotion)!;
+            var easeOut = (bool)firstMotion.GetType().GetProperty("EaseOut")!.GetValue(firstMotion)!;
+            if (Math.Abs(duration - .14) > .001 || easeOut)
+                throw new InvalidOperationException("Held arrow navigation must use short linear motion for an uninterrupted flow.");
+            finish.Invoke(flow, null);
+            if (notifications != 2)
+                throw new InvalidOperationException("Releasing a held arrow must publish the final album exactly once.");
+            Pump(350);
+            if (motions.Count != 0)
+                throw new InvalidOperationException("Held arrow navigation must settle and release its render motion after key-up.");
+        }
+        finally { window.Close(); }
+        Console.WriteLine("Continuous held-arrow CoverFlow motion and deferred selection synchronization passed.");
+    }
+
     private static void VerifyAlbumLibraryBrowser(BitmapSource image)
     {
         SynchronizationContext.SetSynchronizationContext(
@@ -1981,7 +2050,27 @@ internal static class Program
                 throw new InvalidOperationException("Album browser search must provide a one-click clear button and retain search focus.");
             coverFlowMode.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             flow.SelectByKey("first", true);
+            var synchronizedMotions = (System.Collections.IDictionary)typeof(JewelCaseCoverFlow)
+                .GetField("_collectionMotions", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(flow)!;
+            if (synchronizedMotions.Count is < 1 or > 25)
+                throw new InvalidOperationException("CoverFlow must animate all visible cases through one bounded render-synchronized motion set.");
+            foreach (System.Windows.Media.Media3D.ContainerUIElement3D movingModel in synchronizedMotions.Keys)
+            {
+                var transforms = (System.Windows.Media.Media3D.Transform3DGroup)movingModel.Transform;
+                var scale = (System.Windows.Media.Media3D.ScaleTransform3D)transforms.Children[0];
+                var translation = (System.Windows.Media.Media3D.TranslateTransform3D)transforms.Children[3];
+                if (DependencyPropertyHelper.GetValueSource(scale,
+                        System.Windows.Media.Media3D.ScaleTransform3D.ScaleXProperty).IsAnimated
+                    || DependencyPropertyHelper.GetValueSource(translation,
+                        System.Windows.Media.Media3D.TranslateTransform3D.OffsetXProperty).IsAnimated)
+                    throw new InvalidOperationException("CoverFlow must not create independent WPF animation clocks per transform property.");
+            }
             Pump(650);
+            PumpUntil(() => synchronizedMotions.Count == 0, 3000);
+            if (synchronizedMotions.Count != 0
+                || (bool)typeof(JewelCaseCoverFlow).GetField("_collectionRenderingSubscribed",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(flow)!)
+                throw new InvalidOperationException("CoverFlow must release its shared render callback after motion settles.");
             var circularModels = (System.Collections.IDictionary)typeof(JewelCaseCoverFlow).GetField("_collectionModels",
                 BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(flow)!;
             var wrappedJapanese = (System.Windows.Media.Media3D.ContainerUIElement3D)circularModels["japanese"]!;
@@ -2200,14 +2289,16 @@ internal static class Program
             var retainedAgain = (System.Windows.Media.Media3D.ContainerUIElement3D)modelMap["second"]!;
             var retainedTransforms = (System.Windows.Media.Media3D.Transform3DGroup)retainedAgain.Transform;
             var retainedTranslation = (System.Windows.Media.Media3D.TranslateTransform3D)retainedTransforms.Children[3];
-            if (!ReferenceEquals(retainedModel, retainedAgain) || !retainedTranslation.HasAnimatedProperties)
+            if (!ReferenceEquals(retainedModel, retainedAgain) || !synchronizedMotions.Contains(retainedAgain))
                 throw new InvalidOperationException("3D CoverFlow must retain and animate case models instead of replacing the scene.");
             Pump(650);
+            PumpUntil(() => synchronizedMotions.Count == 0, 3000);
             if (browser.SelectedKey != "third" || (tiles.SelectedItem as AlbumLibraryBrowserItem)?.Key != "third")
                 throw new InvalidOperationException("Tile and 3D CoverFlow selections must remain synchronized.");
+            var settledLeftModel = (System.Windows.Media.Media3D.ContainerUIElement3D)modelMap["second"]!;
             var leftYaw = (System.Windows.Media.Media3D.AxisAngleRotation3D)
                 ((System.Windows.Media.Media3D.RotateTransform3D)
-                    ((System.Windows.Media.Media3D.Transform3DGroup)retainedAgain.Transform).Children[2]).Rotation;
+                    ((System.Windows.Media.Media3D.Transform3DGroup)settledLeftModel.Transform).Children[2]).Rotation;
             var rightModel = (System.Windows.Media.Media3D.ContainerUIElement3D)modelMap["sixth"]!;
             var rightYaw = (System.Windows.Media.Media3D.AxisAngleRotation3D)
                 ((System.Windows.Media.Media3D.RotateTransform3D)
@@ -2216,19 +2307,12 @@ internal static class Program
                 throw new InvalidOperationException($"CoverFlow side cases must turn inward so their inner Spine faces the selected album. left={leftYaw.Angle:0.0}, right={rightYaw.Angle:0.0}");
             flow.SelectByKey("second", true);
             var incomingFromLeft = (System.Windows.Media.Media3D.ContainerUIElement3D)modelMap["second"]!;
-            var incomingYaw = (System.Windows.Media.Media3D.AxisAngleRotation3D)
-                ((System.Windows.Media.Media3D.RotateTransform3D)
-                    ((System.Windows.Media.Media3D.Transform3DGroup)incomingFromLeft.Transform).Children[2]).Rotation;
-            var incomingBaseYaw = (double)incomingYaw.GetAnimationBaseValue(
-                System.Windows.Media.Media3D.AxisAngleRotation3D.AngleProperty);
-            if (Math.Abs(incomingBaseYaw + 30) > .01)
+            if (!synchronizedMotions.Contains(incomingFromLeft))
                 throw new InvalidOperationException("A case selected from the left must turn toward the viewer without flipping across centre.");
             flow.SelectByKey("fourth", true);
             flow.SelectByKey("fifth", true);
             var rapidTarget = (System.Windows.Media.Media3D.ContainerUIElement3D)modelMap["fifth"]!;
-            var rapidTranslation = (System.Windows.Media.Media3D.TranslateTransform3D)
-                ((System.Windows.Media.Media3D.Transform3DGroup)rapidTarget.Transform).Children[3];
-            if (!rapidTranslation.HasAnimatedProperties)
+            if (!synchronizedMotions.Contains(rapidTarget))
                 throw new InvalidOperationException("Repeated CoverFlow selection must continue from an animated pose without snapping.");
             flow.SelectByKey("third", true);
             var activated = 0;
@@ -2939,14 +3023,14 @@ internal static class Program
         var printedEdgeSpine = (Int32Rect)printedEdgeRegions.GetType().GetProperty("Spine")!.GetValue(printedEdgeRegions)!;
         if (Math.Abs(printedEdgeBack.Width - 278) > 10 || Math.Abs(printedEdgeSpine.Width - 106) > 14)
             throw new InvalidOperationException($"Printed flap artwork was mistaken for a Spine Card fold: {printedEdgeBack} / {printedEdgeSpine}");
-        var fadedObi = (BitmapSource)obiHelper.GetMethod("FadeWhiteSeparatorBands",
+        var opaqueObi = (BitmapSource)obiHelper.GetMethod("MakeOpaque",
             BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [obi])!;
-        var fadedPixel = new byte[4];
-        fadedObi.CopyPixels(new Int32Rect(239, 100, 1, 1), fadedPixel, 4, 0);
+        var separatorPixel = new byte[4];
+        opaqueObi.CopyPixels(new Int32Rect(239, 100, 1, 1), separatorPixel, 4, 0);
         var printedPixel = new byte[4];
-        fadedObi.CopyPixels(new Int32Rect(100, 100, 1, 1), printedPixel, 4, 0);
-        if (fadedPixel[3] != 112 || printedPixel[3] != 255)
-            throw new InvalidOperationException("Only full-height white Spine Card separator bands should become semi-transparent.");
+        opaqueObi.CopyPixels(new Int32Rect(100, 100, 1, 1), printedPixel, 4, 0);
+        if (separatorPixel[3] != 255 || printedPixel[3] != 255)
+            throw new InvalidOperationException("Every Spine Card pixel, including white separator bands, must remain opaque paper.");
         var item = new JewelCaseCoverFlowItem("inlay", "Inlay test", "Artist", "ZIP", "Clear",
             null, null, null, null, null, scan, scan, false) { SpineCard = obi, SecondDiscImage = scan };
         var frontSpreadPath = Environment.GetEnvironmentVariable("ZIPMP3PLAYER_TEST_FRONT_SPREAD");
@@ -3322,6 +3406,17 @@ internal static class Program
                 var spineCardMeshes = spineCardRoot.Children.OfType<HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D>().ToList();
                 if (spineCardMeshes.Count(m => m.Material?.Name is "Spine Card back flap" or "Spine Card spine" or "Spine Card front flap") != 3)
                     throw new InvalidOperationException("All three Spine Card faces must belong to one independently removable group.");
+                if (spineCardMeshes.Where(m => m.Material?.Name is "Spine Card back flap" or "Spine Card spine" or "Spine Card front flap")
+                    .Any(m => m.IsTransparent || m.CullMode != SharpDX.Direct3D11.CullMode.Back))
+                    throw new InvalidOperationException("Spine Card print must be opaque and outward-facing so it cannot replace its plain reverse.");
+                var paperReverse = spineCardMeshes.SingleOrDefault(m => m.Material?.Name == "Spine Card paper reverse");
+                if (paperReverse is null || paperReverse.IsTransparent
+                    || paperReverse.Material is not HelixToolkit.Wpf.SharpDX.PhongMaterial reverseMaterial
+                    || reverseMaterial.DiffuseMap is not null || reverseMaterial.DiffuseColor.Alpha < .999f
+                    || reverseMaterial.DiffuseColor.Red < .95f || reverseMaterial.DiffuseColor.Green < .95f
+                    || reverseMaterial.DiffuseColor.Blue < .95f
+                    || ((HelixToolkit.SharpDX.MeshGeometry3D)paperReverse.Geometry!).Positions?.Count != 12)
+                    throw new InvalidOperationException("All three unregistered Spine Card reverse panels must be opaque plain white paper.");
                 var activeRegions = obiHelper.GetMethod("GetRegions")!.Invoke(null, [item.SpineCard!])!;
                 var activeBack = (Int32Rect)activeRegions.GetType().GetProperty("Back")!.GetValue(activeRegions)!;
                 var activeSpine = (Int32Rect)activeRegions.GetType().GetProperty("Spine")!.GetValue(activeRegions)!;
@@ -3409,6 +3504,15 @@ internal static class Program
                         geometry.Positions[geometry.TriangleIndices[2]] - geometry.Positions[geometry.TriangleIndices[0]]);
                     if (i == 10 ? normal.Z <= 0 : i == 11 ? normal.X <= 0 : normal.X >= 0)
                         throw new InvalidOperationException("Fallback inlay normals must face into the case.");
+                }
+                foreach (var mesh in body.Children.OfType<System.Windows.Media.Media3D.GeometryModel3D>().TakeLast(3))
+                {
+                    if (mesh.BackMaterial is not System.Windows.Media.Media3D.MaterialGroup reverse
+                        || reverse.Children.OfType<System.Windows.Media.Media3D.DiffuseMaterial>().Single().Brush
+                            is not SolidColorBrush reverseBrush
+                        || reverseBrush.Color.A != 255 || reverseBrush.Color.R < 245
+                        || reverseBrush.Color.G < 245 || reverseBrush.Color.B < 245)
+                        throw new InvalidOperationException("Fallback Spine Card reverse panels must use opaque plain white paper.");
                 }
                 if (!string.IsNullOrEmpty(previewDirectory))
                 {
@@ -3515,44 +3619,22 @@ internal static class Program
             var caseButton = (Button)flowType.GetField("_caseOpenButton", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(wrappingFlow)!;
             var wrappingButton = (Button)flowType.GetField("_wrappingButton", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(wrappingFlow)!;
             var spineButton = (Button)flowType.GetField("_spineCardButton", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(wrappingFlow)!;
-            if (caseButton.IsEnabled || !wrappingButton.IsEnabled || spineButton.IsEnabled)
-                throw new InvalidOperationException("An unopened caramel package must lock case and obi operations while leaving its tear control available.");
-            wrappingButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            var wrappingFrame = new System.Windows.Threading.DispatcherFrame();
-            var wrappingTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1350) };
-            wrappingTimer.Tick += (_, _) => { wrappingTimer.Stop(); wrappingFrame.Continue = false; };
-            wrappingTimer.Start(); System.Windows.Threading.Dispatcher.PushFrame(wrappingFrame);
-            if (caseButton.IsEnabled || spineButton.IsEnabled
-                || (string)wrappingButton.Content != "◇ フィルムを外す")
-                throw new InvalidOperationException("Removing only the tear tape must leave the film and case interlock in place.");
-            wrappingButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            var filmFrame = new System.Windows.Threading.DispatcherFrame();
-            var filmTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1350) };
-            filmTimer.Tick += (_, _) => { filmTimer.Stop(); filmFrame.Continue = false; };
-            filmTimer.Start(); System.Windows.Threading.Dispatcher.PushFrame(filmFrame);
-            if (!caseButton.IsEnabled || !spineButton.IsEnabled)
-                throw new InvalidOperationException("Lifting the loosened film must unlock the case and Spine Card controls.");
-            flowType.GetMethod("SetCaseOpen", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .Invoke(wrappingFlow, [true, false]);
-            var rewrap = (Task<bool>)flowType.GetMethod("SetWrappingOpenedAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .Invoke(wrappingFlow, [false, false])!;
-            if (rewrap.GetAwaiter().GetResult())
-                throw new InvalidOperationException("Caramel wrapping must not be restored around an open case.");
-            flowType.GetMethod("SetCaseOpen", BindingFlags.Instance | BindingFlags.NonPublic)!
+            if (!caseButton.IsEnabled || !spineButton.IsEnabled
+                || wrappingButton.Visibility != Visibility.Visible
+                || (string)wrappingButton.Content != "◇ 包装を戻す")
+                throw new InvalidOperationException("An unwrapped Spine Card case must expose both removal and optional packaging controls.");
+            flowType.GetMethod("ApplyWrappingOpened", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .Invoke(wrappingFlow, [false, false]);
-            flowType.GetMethod("ApplySpineCardRemoved", BindingFlags.Instance | BindingFlags.NonPublic)!
+            if (caseButton.IsEnabled || spineButton.IsEnabled || !wrappingButton.IsEnabled)
+                throw new InvalidOperationException("Restored wrapping must lock the case and Spine Card until the film is removed.");
+            flowType.GetMethod("ApplyWrappingOpened", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .Invoke(wrappingFlow, [true, false]);
-            flowType.GetMethod("UpdateWrappingButton", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .Invoke(wrappingFlow, null);
-            if (!wrappingButton.IsEnabled)
-                throw new InvalidOperationException("A closed case must keep Rewrap available even while the obi is removed.");
-            rewrap = (Task<bool>)flowType.GetMethod("SetWrappingOpenedAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .Invoke(wrappingFlow, [false, false])!;
-            if (!rewrap.GetAwaiter().GetResult()
-                || (bool)flowType.GetField("_isSpineCardRemoved", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(wrappingFlow)!
-                || (bool)flowType.GetField("_isWrappingOpened", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(wrappingFlow)!
-                || (string)wrappingButton.Content != "◆ テープを引く")
-                throw new InvalidOperationException("Rewrap must automatically return a removed obi and restore the complete package.");
+            var open = (Task<bool>)flowType.GetMethod("SetCaseOpenAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(wrappingFlow, [true, false])!;
+            if (!open.GetAwaiter().GetResult()
+                || !(bool)flowType.GetField("_isCaseOpen", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(wrappingFlow)!
+                || !(bool)flowType.GetField("_isSpineCardRemoved", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(wrappingFlow)!)
+                throw new InvalidOperationException("Opening a Spine Card case must restore the obi removal motion and open state.");
             var plainCase = item with { Key = "without-spine-card", SpineCard = null };
             wrappingFlow.SetItems([plainCase], plainCase.Key);
             if (!caseButton.IsEnabled || wrappingButton.Visibility != Visibility.Collapsed)
@@ -3568,7 +3650,7 @@ internal static class Program
             ((IDisposable?)typeof(JewelCaseCoverFlow).GetField("_dxScene", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(wrappingFlow))?.Dispose();
         }
-        Console.WriteLine("Inlay, Spine Card, caramel wrapping, tear tape and case interlock tests passed.");
+        Console.WriteLine("Inlay, opaque Spine Card, removal motion, and optional packaging tests passed.");
     }
 
     private static void VerifyBlankCaseArtwork(BitmapSource image)
@@ -3715,6 +3797,42 @@ internal static class Program
                 && GetAlbums(window).Any(album => string.Equals(album.Path, archivePath, StringComparison.OrdinalIgnoreCase)
                     && album.Tracks.Count == 1 && album.Tracks[0].IsArchiveEntry),
                 "initial folder and ordinary ZIP library scan");
+
+            // Simulate a network share dropping its watcher notification. The
+            // lightweight reconciliation must find and queue only the new album,
+            // without reopening every cached album in a full scan.
+            var flags = BindingFlags.Instance | BindingFlags.Static | BindingFlags.NonPublic;
+            typeof(MainWindow).GetMethod("DisposeLibraryWatchers", flags)!.Invoke(window, null);
+            var missedAlbumRoot = Path.Combine(musicRoot, "Missed Network Album");
+            Directory.CreateDirectory(missedAlbumRoot);
+            WriteTestWave(Path.Combine(missedAlbumRoot, "01.wav"));
+            var discovered = (IReadOnlyList<string>)typeof(MainWindow)
+                .GetMethod("DiscoverUntrackedAlbums", flags)!.Invoke(null,
+                    [new[] { musicRoot }, GetAlbums(window).Select(album => album.Path).ToArray(), CancellationToken.None])!;
+            if (discovered.Count != 1 || !string.Equals(discovered[0], missedAlbumRoot, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Missed network-folder notification was not recovered as one untracked album.");
+            typeof(MainWindow).GetMethod("QueueLibraryChange", flags)!.Invoke(window, [discovered[0]]);
+            WaitFor(() => GetAlbums(window).Any(album => string.Equals(album.Path, missedAlbumRoot, StringComparison.OrdinalIgnoreCase)),
+                "missed network folder reconciliation");
+            var changeLogStore = typeof(MainWindow).GetField("_libraryChangeLogStore", flags)!.GetValue(window)!;
+            var changeLogSnapshot = (System.Collections.IEnumerable)changeLogStore.GetType().GetMethod("Snapshot")!.Invoke(changeLogStore, null)!;
+            var addedLog = changeLogSnapshot.Cast<object>().FirstOrDefault(entry =>
+                Equals(entry.GetType().GetProperty("Action")!.GetValue(entry), "Added")
+                && string.Equals((string)entry.GetType().GetProperty("Path")!.GetValue(entry)!, missedAlbumRoot,
+                    StringComparison.OrdinalIgnoreCase));
+            if (addedLog is null || (int)addedLog.GetType().GetProperty("TrackCount")!.GetValue(addedLog)! != 1)
+                throw new InvalidOperationException("Incremental album addition was not persisted in library history.");
+            Directory.Delete(missedAlbumRoot, true);
+            typeof(MainWindow).GetMethod("QueueLibraryChange", flags)!.Invoke(window, [missedAlbumRoot]);
+            WaitFor(() => GetAlbums(window).Count == 2, "reconciled folder cleanup");
+            changeLogSnapshot = (System.Collections.IEnumerable)changeLogStore.GetType().GetMethod("Snapshot")!.Invoke(changeLogStore, null)!;
+            if (!changeLogSnapshot.Cast<object>().Any(entry =>
+                    Equals(entry.GetType().GetProperty("Action")!.GetValue(entry), "Removed")
+                    && string.Equals((string)entry.GetType().GetProperty("Path")!.GetValue(entry)!, missedAlbumRoot,
+                        StringComparison.OrdinalIgnoreCase))
+                || !File.Exists(Path.Combine(dataRoot, "library-events.json")))
+                throw new InvalidOperationException("Incremental album removal was not persisted in library history.");
+            typeof(MainWindow).GetMethod("ConfigureLibraryWatchers", flags)!.Invoke(window, null);
 
             WriteTestWave(Path.Combine(albumRoot, "02.wav"));
             WaitFor(() => GetAlbums(window).Single(album => Directory.Exists(album.Path)).Tracks.Count == 2,

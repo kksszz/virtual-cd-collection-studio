@@ -143,7 +143,7 @@ internal static class LocalizationService
             ["保存して再スキャン"] = "Save and Rescan", ["表示言語"] = "Display Language", ["日本語"] = "Japanese", ["英語"] = "English",
             ["再生履歴・Usage"] = "Playback History and Usage", ["再生履歴ダッシュボード"] = "Playback Dashboard",
             ["これまでの再生記録を集計して表示します"] = "A summary of your listening history",
-            ["ダッシュボード"] = "Dashboard", ["すべての履歴"] = "All History",
+            ["ダッシュボード"] = "Dashboard", ["すべての履歴"] = "All History", ["ライブラリ変更"] = "Library Changes",
             ["累計再生時間"] = "Total Play Time", ["総再生回数"] = "Total Plays", ["記録された曲"] = "Tracked Songs",
             ["いちばん聴いた曲"] = "Most-Played Song", ["よく聴くアーティスト"] = "Top Artists",
             ["よく聴くアルバム"] = "Top Albums", ["再生時間ランキング"] = "Top Listening Time",

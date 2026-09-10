@@ -13,11 +13,11 @@
     <Copyright>Copyright (C) 2026 kksszz</Copyright>
     <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
-    <Version>0.77.0</Version>
-    <InformationalVersion>0.77.0</InformationalVersion>
+    <Version>0.78.0</Version>
+    <InformationalVersion>0.78.0</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <AssemblyVersion>0.77.0.0</AssemblyVersion>
-    <FileVersion>0.77.0.0</FileVersion>
+    <AssemblyVersion>0.78.0.0</AssemblyVersion>
+    <FileVersion>0.78.0.0</FileVersion>
   </PropertyGroup>
   <ItemGroup>
     <Resource Include="Assets\AppIcon.ico" />
@@ -31,7 +31,7 @@
   <ItemGroup>
     <None Update="LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="README.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <None Update="RELEASE_NOTES_v0.77.0.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="RELEASE_NOTES_v0.78.0.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="CD_BOX_SCAN_GUIDE.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="THIRD_PARTY_LICENSES\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

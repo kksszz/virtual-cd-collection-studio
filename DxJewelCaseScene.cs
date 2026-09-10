@@ -2360,7 +2360,8 @@ internal sealed class DxJewelCaseScene : IDisposable
     }
 
     private void AddArtwork(BitmapSource? bitmap, float left, float right, float bottom, float top,
-        float z, bool reverse, GroupModel3D? target = null, string name = "Artwork", bool transparent = false)
+        float z, bool reverse, GroupModel3D? target = null, string name = "Artwork", bool transparent = false,
+        bool? twoSided = null)
     {
         var builder = new MeshBuilder(true, true, true);
         if (!reverse)
@@ -2393,7 +2394,7 @@ internal sealed class DxJewelCaseScene : IDisposable
         // reversed during assembly. Disable back-face culling for that plane;
         // otherwise a valid Back texture is discarded even though the side
         // Spine textures remain visible.
-        AddMesh(builder.ToMeshGeometry3D(), material, transparent, reverse, target);
+        AddMesh(builder.ToMeshGeometry3D(), material, transparent, twoSided ?? reverse, target);
     }
 
     private void AddSpine(BitmapSource? bitmap, float x, float height, float depth, bool leftSide,
@@ -2678,10 +2679,12 @@ internal sealed class DxJewelCaseScene : IDisposable
 
         // The source is laid flat as Back flap | Spine | Front flap. Each flap
         // stays with the physical case face it covers when the lid is opened.
+        // The obi is opaque printed paper. Putting these planes in the
+        // transparent OIT pass blends the tray moulding through pale artwork.
         AddArtwork(back, foldX, foldX + backWidth, -cardHeight / 2, cardHeight / 2,
-            backZ, true, _spineCardRoot, "Spine Card back flap", true);
+            backZ, true, _spineCardRoot, "Spine Card back flap", twoSided: false);
         AddArtwork(front, foldX, foldX + frontWidth, -cardHeight / 2, cardHeight / 2,
-            frontZ, false, _spineCardRoot, "Spine Card front flap", true);
+            frontZ, false, _spineCardRoot, "Spine Card front flap");
 
         var side = new MeshBuilder(true, true, true);
         side.AddQuad(new Vector3(outsideX, cardHeight / 2, caseDepth / 2),
@@ -2698,7 +2701,35 @@ internal sealed class DxJewelCaseScene : IDisposable
             SpecularColor = new Color4(0.02f, 0.02f, 0.02f, 1),
             SpecularShininess = 6,
             EnableAutoTangent = true
-        }, true, false, _spineCardRoot);
+        }, false, false, _spineCardRoot);
+
+        // A scan describes only the printed outside of the folded card. Its
+        // unregistered reverse is plain opaque paper; without these opposing
+        // faces the renderer exposes its black clear colour when the card is
+        // removed and viewed from behind.
+        var reverse = new MeshBuilder(true, false, false);
+        reverse.AddQuad(
+            new Vector3(foldX, cardHeight / 2, backZ),
+            new Vector3(foldX, -cardHeight / 2, backZ),
+            new Vector3(foldX + backWidth, -cardHeight / 2, backZ),
+            new Vector3(foldX + backWidth, cardHeight / 2, backZ));
+        reverse.AddQuad(
+            new Vector3(foldX, cardHeight / 2, frontZ),
+            new Vector3(foldX + frontWidth, cardHeight / 2, frontZ),
+            new Vector3(foldX + frontWidth, -cardHeight / 2, frontZ),
+            new Vector3(foldX, -cardHeight / 2, frontZ));
+        reverse.AddQuad(
+            new Vector3(outsideX, cardHeight / 2, -caseDepth / 2),
+            new Vector3(outsideX, cardHeight / 2, caseDepth / 2),
+            new Vector3(outsideX, -cardHeight / 2, caseDepth / 2),
+            new Vector3(outsideX, -cardHeight / 2, -caseDepth / 2));
+        AddMesh(reverse.ToMeshGeometry3D(), new PhongMaterial
+        {
+            Name = "Spine Card paper reverse",
+            DiffuseColor = new Color4(0.98f, 0.98f, 0.97f, 1),
+            SpecularColor = new Color4(0.015f, 0.015f, 0.015f, 1),
+            SpecularShininess = 6
+        }, false, false, _spineCardRoot);
     }
 
     private void AddDisc(BitmapSource? bitmap, Vector3 center, float outerRadius, float innerRadius,

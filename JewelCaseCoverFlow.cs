@@ -87,6 +87,7 @@ public sealed class JewelCaseCoverFlow : Grid
     private bool _isDraggingWrapping;
     private bool _isWrappingOpened;
     private bool _isWrappingCut;
+    private readonly HashSet<string> _wrappingInitializedKeys = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _unwrappedKeys = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _cutWrappingKeys = new(StringComparer.OrdinalIgnoreCase);
     private bool _collectionPresentation;
@@ -97,6 +98,12 @@ public sealed class JewelCaseCoverFlow : Grid
     private int _selectionMotionDirection;
     private readonly Dictionary<string, ContainerUIElement3D> _collectionModels =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<ContainerUIElement3D, CollectionMotion> _collectionMotions = [];
+    private bool _collectionRenderingSubscribed;
+    private Key _heldNavigationKey = Key.None;
+    private long _lastKeyboardNavigationTimestamp;
+    private bool _continuousCollectionMotion;
+    private bool _keyboardNavigationNeedsNotification;
     private readonly HashSet<string> _collectionArtworkRefreshes =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer _playbackVisualTimer = new(DispatcherPriority.Render)
@@ -158,6 +165,7 @@ public sealed class JewelCaseCoverFlow : Grid
             // the old reflection quads stacked beneath the rack as a dark box.
             foreach (var model in _collectionModels.Values) _viewport.Children.Remove(model);
             _collectionModels.Clear();
+            ClearCollectionMotions();
             _collectionArtworkRefreshes.Clear();
             RebuildScene();
         }
@@ -389,6 +397,11 @@ public sealed class JewelCaseCoverFlow : Grid
             e.Handled = true;
         };
         PreviewKeyDown += OnPreviewKeyDown;
+        PreviewKeyUp += OnPreviewKeyUp;
+        LostKeyboardFocus += (_, _) =>
+        {
+            if (!IsKeyboardFocusWithin) FinishKeyboardNavigation();
+        };
         ToolTip = LocalizationService.Select(
             "左ドラッグ: 回転（取り出したCD・帯の上では個別に移動） ／ ディスクをダブルクリック: アルバム再生 ／ 中央ボタンドラッグ: 全体を移動 ／ R: 位置を戻す",
             "Left drag: rotate (drag an extracted CD or obi to move it) / Double-click disc: play album / Middle drag: move all / R: reset position");
@@ -409,6 +422,8 @@ public sealed class JewelCaseCoverFlow : Grid
         Unloaded += (_, _) =>
         {
             EndPointerDrag();
+            FinishKeyboardNavigation();
+            ClearCollectionMotions();
             _playbackVisualTimer.Stop();
             _dxScene?.SetDiscPlaying(false);
         };
@@ -499,6 +514,11 @@ public sealed class JewelCaseCoverFlow : Grid
     public void SetItems(IReadOnlyList<JewelCaseCoverFlowItem> items, string? selectedKey = null)
     {
         var previousKey = SelectedKey;
+        var sameCollectionVisuals = _collectionPresentation && _collectionModels.Count > 0
+            && _items.Count == items.Count
+            && _items.Select((item, index) => string.Equals(item.Key, items[index].Key,
+                    StringComparison.OrdinalIgnoreCase) && SameExteriorArtwork(item, items[index]))
+                .All(same => same);
         if (_collectionPresentation && _collectionModels.Count > 0)
         {
             var nextItems = items.ToDictionary(item => item.Key, StringComparer.OrdinalIgnoreCase);
@@ -507,6 +527,7 @@ public sealed class JewelCaseCoverFlow : Grid
                 if (!nextItems.TryGetValue(oldItem.Key, out var nextItem) || SameExteriorArtwork(oldItem, nextItem)) continue;
                 if (_collectionModels.Remove(oldItem.Key, out var stale))
                 {
+                    StopCollectionMotion(stale);
                     _viewport.Children.Remove(stale);
                     // A nearby/selected cover is replaced after its larger
                     // bitmap finishes decoding. Keep the replacement at the
@@ -519,6 +540,12 @@ public sealed class JewelCaseCoverFlow : Grid
         _selectedIndex = selectedKey is null ? -1 : FindIndex(selectedKey);
         if (_selectedIndex < 0 && _items.Count > 0) _selectedIndex = 0;
         if (!string.Equals(previousKey, SelectedKey, StringComparison.OrdinalIgnoreCase)) ResetCaseRotation();
+        if (sameCollectionVisuals
+            && string.Equals(previousKey, SelectedKey, StringComparison.OrdinalIgnoreCase))
+        {
+            UpdateCollectionSummary();
+            return;
+        }
         RebuildScene();
     }
 
@@ -575,7 +602,9 @@ public sealed class JewelCaseCoverFlow : Grid
             .ToList();
     }
 
-    private void MoveSelection(int offset)
+    private void MoveSelection(int offset) => MoveSelectionCore(offset, notify: true);
+
+    private void MoveSelectionCore(int offset, bool notify)
     {
         if (_items.Count == 0) return;
         var current = _selectedIndex < 0 ? 0 : _selectedIndex;
@@ -586,7 +615,60 @@ public sealed class JewelCaseCoverFlow : Grid
         _selectedIndex = next;
         ResetCaseRotation();
         RebuildScene();
-        RaiseSelectionChanged();
+        if (notify) RaiseSelectionChanged();
+    }
+
+    private void NavigateByKeyboard(Key key, bool repeated)
+    {
+        var direction = key == Key.Left ? -1 : 1;
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (!repeated || _heldNavigationKey != key)
+        {
+            FinishKeyboardNavigation();
+            _heldNavigationKey = key;
+            _lastKeyboardNavigationTimestamp = now;
+            MoveSelection(direction);
+            return;
+        }
+        if (!_collectionPresentation)
+        {
+            MoveSelection(direction);
+            return;
+        }
+
+        _continuousCollectionMotion = true;
+        var elapsed = (now - _lastKeyboardNavigationTimestamp) /
+            (double)System.Diagnostics.Stopwatch.Frequency;
+        if (elapsed < .085) return;
+        _lastKeyboardNavigationTimestamp = now;
+        MoveSelectionCore(direction, notify: false);
+        _keyboardNavigationNeedsNotification = true;
+    }
+
+    private void OnPreviewKeyUp(object sender, KeyEventArgs e)
+    {
+        if (e.Key != _heldNavigationKey) return;
+        FinishKeyboardNavigation();
+        e.Handled = true;
+    }
+
+    private void FinishKeyboardNavigation()
+    {
+        if (_heldNavigationKey == Key.None && !_continuousCollectionMotion) return;
+        _heldNavigationKey = Key.None;
+        _continuousCollectionMotion = false;
+        if (_keyboardNavigationNeedsNotification && _selectedIndex >= 0)
+        {
+            _keyboardNavigationNeedsNotification = false;
+            RaiseSelectionChanged();
+        }
+
+        // Preserve the current on-screen position, then gently settle the last
+        // short continuous step after the user releases the arrow key.
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        foreach (var pair in _collectionMotions.ToArray())
+            _collectionMotions[pair.Key] = new CollectionMotion(ReadCollectionPose(pair.Key),
+                pair.Value.To, now, .24, EaseOut: true, Completed: pair.Value.Completed);
     }
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
@@ -597,8 +679,8 @@ public sealed class JewelCaseCoverFlow : Grid
                 ResetCasePosition();
                 e.Handled = true;
                 break;
-            case Key.Left: MoveSelection(-1); e.Handled = true; break;
-            case Key.Right: MoveSelection(1); e.Handled = true; break;
+            case Key.Left: NavigateByKeyboard(Key.Left, e.IsRepeat); e.Handled = true; break;
+            case Key.Right: NavigateByKeyboard(Key.Right, e.IsRepeat); e.Handled = true; break;
             case Key.Home: SelectIndex(0, true); e.Handled = true; break;
             case Key.End: SelectIndex(_items.Count - 1, true); e.Handled = true; break;
             case Key.F11:
@@ -638,6 +720,7 @@ public sealed class JewelCaseCoverFlow : Grid
         var fullScreenFlow = new JewelCaseCoverFlow(true);
         fullScreenFlow.PlaybackStateProvider = PlaybackStateProvider;
         fullScreenFlow.PlaybackActiveProvider = PlaybackActiveProvider;
+        foreach (var key in _wrappingInitializedKeys) fullScreenFlow._wrappingInitializedKeys.Add(key);
         foreach (var key in _unwrappedKeys) fullScreenFlow._unwrappedKeys.Add(key);
         foreach (var key in _cutWrappingKeys) fullScreenFlow._cutWrappingKeys.Add(key);
         fullScreenFlow.SetItems(_items, SelectedKey);
@@ -674,6 +757,8 @@ public sealed class JewelCaseCoverFlow : Grid
             Content = fullScreenFlow
         };
         window.ShowDialog();
+        _wrappingInitializedKeys.Clear();
+        foreach (var key in fullScreenFlow._wrappingInitializedKeys) _wrappingInitializedKeys.Add(key);
         _unwrappedKeys.Clear();
         foreach (var key in fullScreenFlow._unwrappedKeys) _unwrappedKeys.Add(key);
         _cutWrappingKeys.Clear();
@@ -743,6 +828,7 @@ public sealed class JewelCaseCoverFlow : Grid
             if (!_collectionPresentation)
             {
                 _collectionModels.Clear();
+                ClearCollectionMotions();
                 _collectionArtworkRefreshes.Clear();
             }
             var lightGroup = new Model3DGroup();
@@ -775,8 +861,11 @@ public sealed class JewelCaseCoverFlow : Grid
         _wrappingButton.Visibility = !_collectionPresentation && _dxScene is not null && hasSpineCard
             ? Visibility.Visible : Visibility.Collapsed;
         if (!hasSpineCard) _isSpineCardRemoved = false;
-        // A case without an obi has no caramel wrapping and is immediately
-        // openable. Wrapped/unwrapped state exists only for Spine Card items.
+        // A scanned obi does not imply that the photographed case is still
+        // factory wrapped. Start each Spine Card case unwrapped; the user can
+        // explicitly restore the caramel wrapping from its dedicated control.
+        if (hasSpineCard && _wrappingInitializedKeys.Add(_items[_selectedIndex].Key))
+            _unwrappedKeys.Add(_items[_selectedIndex].Key);
         _isWrappingOpened = hasItems && (!hasSpineCard || _unwrappedKeys.Contains(_items[_selectedIndex].Key));
         _isWrappingCut = hasSpineCard && (_isWrappingOpened
             || (hasItems && _cutWrappingKeys.Contains(_items[_selectedIndex].Key)));
@@ -787,16 +876,12 @@ public sealed class JewelCaseCoverFlow : Grid
         UpdateSpineCardButton();
         UpdateWrappingButton();
         _emptyText.Visibility = hasItems ? Visibility.Collapsed : Visibility.Visible;
-        _counterText.Text = hasItems ? $"{_selectedIndex + 1} / {_items.Count}" : "0 / 0";
-        _titleText.Text = hasItems ? _items[_selectedIndex].Title : "";
-        _detailText.Text = hasItems
-            ? $"{(_items[_selectedIndex].IsPlaying ? "▶ " : "")}{_items[_selectedIndex].Artist}  •  {_items[_selectedIndex].SourceBadge}"
-            : "";
-        ApplyCollectionBackground(hasItems ? _items[_selectedIndex].FrontCover : null);
+        UpdateCollectionSummary();
         if (!hasItems)
         {
             foreach (var model in _collectionModels.Values) _viewport.Children.Remove(model);
             _collectionModels.Clear();
+            ClearCollectionMotions();
             _collectionArtworkRefreshes.Clear();
             if (_rackFrame is not null) _viewport.Children.Remove(_rackFrame);
             _rackFrame = null;
@@ -849,7 +934,20 @@ public sealed class JewelCaseCoverFlow : Grid
         _viewport.BeginAnimation(OpacityProperty, new DoubleAnimation(0.72, 1, TimeSpan.FromMilliseconds(150)));
     }
 
+    private void UpdateCollectionSummary()
+    {
+        var hasItems = _items.Count > 0 && _selectedIndex >= 0;
+        _counterText.Text = hasItems ? $"{_selectedIndex + 1} / {_items.Count}" : "0 / 0";
+        _titleText.Text = hasItems ? _items[_selectedIndex].Title : "";
+        _detailText.Text = hasItems
+            ? $"{(_items[_selectedIndex].IsPlaying ? "▶ " : "")}{_items[_selectedIndex].Artist}  •  {_items[_selectedIndex].SourceBadge}"
+            : "";
+        ApplyCollectionBackground(hasItems ? _items[_selectedIndex].FrontCover : null);
+    }
+
     private readonly record struct CollectionPose(double X, double Y, double Z, double Scale, double Yaw, double Pitch);
+    private readonly record struct CollectionMotion(CollectionPose From, CollectionPose To,
+        long StartedTimestamp, double DurationSeconds, bool EaseOut, Action? Completed);
 
     private CollectionPose GetCollectionPose(int relative)
     {
@@ -938,7 +1036,11 @@ public sealed class JewelCaseCoverFlow : Grid
             AnimateCollectionPose(pair.Value, exitPose, () =>
             {
                 if (IsCollectionKeyVisible(pair.Key)) return;
-                if (_collectionModels.Remove(pair.Key, out var stale)) _viewport.Children.Remove(stale);
+                if (_collectionModels.Remove(pair.Key, out var stale))
+                {
+                    StopCollectionMotion(stale);
+                    _viewport.Children.Remove(stale);
+                }
             });
         }
         _selectionMotionDirection = 0;
@@ -981,7 +1083,13 @@ public sealed class JewelCaseCoverFlow : Grid
         _viewport.Children.Add(_rackFrame);
     }
 
-    private static void SetCollectionPose(ContainerUIElement3D model, CollectionPose pose)
+    private void SetCollectionPose(ContainerUIElement3D model, CollectionPose pose)
+    {
+        StopCollectionMotion(model);
+        ApplyCollectionPose(model, pose);
+    }
+
+    private static void ApplyCollectionPose(ContainerUIElement3D model, CollectionPose pose)
     {
         var transforms = (Transform3DGroup)model.Transform;
         var scale = (ScaleTransform3D)transforms.Children[0];
@@ -996,53 +1104,81 @@ public sealed class JewelCaseCoverFlow : Grid
         translation.OffsetZ = pose.Z;
     }
 
-    private static void AnimateCollectionPose(ContainerUIElement3D model, CollectionPose pose, Action? completed = null)
+    private static CollectionPose ReadCollectionPose(ContainerUIElement3D model)
     {
         var transforms = (Transform3DGroup)model.Transform;
         var scale = (ScaleTransform3D)transforms.Children[0];
         var pitch = (AxisAngleRotation3D)((RotateTransform3D)transforms.Children[1]).Rotation;
         var yaw = (AxisAngleRotation3D)((RotateTransform3D)transforms.Children[2]).Rotation;
         var translation = (TranslateTransform3D)transforms.Children[3];
-        // EaseOut preserves momentum when the user presses repeatedly: each
-        // new destination starts immediately from the currently rendered pose
-        // and then settles gently instead of pausing at every album.
-        var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
-        const int durationMilliseconds = 560;
-        DoubleAnimation Animation(double current, double target) => new(current, target,
-            TimeSpan.FromMilliseconds(durationMilliseconds)) { EasingFunction = easing, FillBehavior = FillBehavior.Stop };
+        return new CollectionPose(translation.OffsetX, translation.OffsetY, translation.OffsetZ,
+            scale.ScaleX, yaw.Angle, pitch.Angle);
+    }
 
-        void AnimateScale(DependencyProperty property, double target)
-        {
-            var current = (double)scale.GetValue(property);
-            scale.BeginAnimation(property, null);
-            scale.SetValue(property, target);
-            scale.BeginAnimation(property, Animation(current, target));
-        }
-        void AnimateRotation(AxisAngleRotation3D rotation, double target)
-        {
-            var current = rotation.Angle;
-            rotation.BeginAnimation(AxisAngleRotation3D.AngleProperty, null);
-            rotation.Angle = target;
-            rotation.BeginAnimation(AxisAngleRotation3D.AngleProperty, Animation(current, target));
-        }
-        void AnimateTranslation(DependencyProperty property, double target, bool signalsCompletion = false)
-        {
-            var current = (double)translation.GetValue(property);
-            translation.BeginAnimation(property, null);
-            translation.SetValue(property, target);
-            var animation = Animation(current, target);
-            if (signalsCompletion && completed is not null) animation.Completed += (_, _) => completed();
-            translation.BeginAnimation(property, animation);
-        }
+    private void AnimateCollectionPose(ContainerUIElement3D model, CollectionPose pose, Action? completed = null)
+    {
+        // A single render-clock drives every case. This avoids creating up to
+        // 175 independent WPF animation clocks for the 25 visible cases while
+        // retaining the same 560 ms cubic ease-out motion and full geometry.
+        var continuous = _continuousCollectionMotion && _collectionPresentation;
+        _collectionMotions[model] = new CollectionMotion(ReadCollectionPose(model), pose,
+            System.Diagnostics.Stopwatch.GetTimestamp(), continuous ? .14 : .56,
+            EaseOut: !continuous, Completed: completed);
+        if (_collectionRenderingSubscribed) return;
+        CompositionTarget.Rendering += OnCollectionRendering;
+        _collectionRenderingSubscribed = true;
+    }
 
-        AnimateScale(ScaleTransform3D.ScaleXProperty, pose.Scale);
-        AnimateScale(ScaleTransform3D.ScaleYProperty, pose.Scale);
-        AnimateScale(ScaleTransform3D.ScaleZProperty, pose.Scale);
-        AnimateRotation(pitch, pose.Pitch);
-        AnimateRotation(yaw, pose.Yaw);
-        AnimateTranslation(TranslateTransform3D.OffsetYProperty, pose.Y);
-        AnimateTranslation(TranslateTransform3D.OffsetZProperty, pose.Z);
-        AnimateTranslation(TranslateTransform3D.OffsetXProperty, pose.X, true);
+    private void OnCollectionRendering(object? sender, EventArgs e)
+    {
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        List<(ContainerUIElement3D Model, CollectionMotion Motion)>? completed = null;
+        foreach (var pair in _collectionMotions.ToArray())
+        {
+            var elapsed = (now - pair.Value.StartedTimestamp) /
+                (double)System.Diagnostics.Stopwatch.Frequency;
+            var progress = Math.Clamp(elapsed / pair.Value.DurationSeconds, 0, 1);
+            var eased = pair.Value.EaseOut ? 1 - Math.Pow(1 - progress, 3) : progress;
+            var from = pair.Value.From;
+            var to = pair.Value.To;
+            double Lerp(double start, double end) => start + (end - start) * eased;
+            ApplyCollectionPose(pair.Key, new CollectionPose(
+                Lerp(from.X, to.X), Lerp(from.Y, to.Y), Lerp(from.Z, to.Z),
+                Lerp(from.Scale, to.Scale), Lerp(from.Yaw, to.Yaw), Lerp(from.Pitch, to.Pitch)));
+            if (progress >= 1)
+                (completed ??= []).Add((pair.Key, pair.Value));
+        }
+        if (completed is not null)
+        {
+            foreach (var entry in completed)
+            {
+                if (!_collectionMotions.TryGetValue(entry.Model, out var current)
+                    || current.StartedTimestamp != entry.Motion.StartedTimestamp) continue;
+                _collectionMotions.Remove(entry.Model);
+                ApplyCollectionPose(entry.Model, entry.Motion.To);
+                entry.Motion.Completed?.Invoke();
+            }
+        }
+        StopCollectionRenderingIfIdle();
+    }
+
+    private void StopCollectionMotion(ContainerUIElement3D model)
+    {
+        _collectionMotions.Remove(model);
+        StopCollectionRenderingIfIdle();
+    }
+
+    private void ClearCollectionMotions()
+    {
+        _collectionMotions.Clear();
+        StopCollectionRenderingIfIdle();
+    }
+
+    private void StopCollectionRenderingIfIdle()
+    {
+        if (!_collectionRenderingSubscribed || _collectionMotions.Count != 0) return;
+        CompositionTarget.Rendering -= OnCollectionRendering;
+        _collectionRenderingSubscribed = false;
     }
 
     private void ApplyCollectionBackground(BitmapSource? cover)
@@ -1285,24 +1421,31 @@ public sealed class JewelCaseCoverFlow : Grid
             var cardHeight = height * obiHeightMm / caseHeightMm;
             var outsideX = -width / 2 - 0.014;
             var foldX = outsideX;
-            group.Children.Add(CreateQuad(
+            var paperReverse = CreateMaterial(Color.FromRgb(250, 250, 247), 6);
+            var obiBackFace = CreateQuad(
                 new Point3D(foldX, cardHeight / 2, -depth / 2 - flapClearance),
                 new Point3D(foldX + backWidth, cardHeight / 2, -depth / 2 - flapClearance),
                 new Point3D(foldX + backWidth, -cardHeight / 2, -depth / 2 - flapClearance),
                 new Point3D(foldX, -cardHeight / 2, -depth / 2 - flapClearance),
-                CreateImageMaterial(obiBack, item.Title, 0.97), reflected: true));
-            group.Children.Add(CreateQuad(
+                CreateImageMaterial(obiBack, item.Title, 1.0), reflected: true);
+            obiBackFace.BackMaterial = paperReverse;
+            group.Children.Add(obiBackFace);
+            var obiFrontFace = CreateQuad(
                 new Point3D(foldX, cardHeight / 2, depth / 2 + flapClearance),
                 new Point3D(foldX + frontWidth, cardHeight / 2, depth / 2 + flapClearance),
                 new Point3D(foldX + frontWidth, -cardHeight / 2, depth / 2 + flapClearance),
                 new Point3D(foldX, -cardHeight / 2, depth / 2 + flapClearance),
-                CreateImageMaterial(obiFront, item.Title, 0.97)));
-            group.Children.Add(CreateQuad(
+                CreateImageMaterial(obiFront, item.Title, 1.0));
+            obiFrontFace.BackMaterial = paperReverse;
+            group.Children.Add(obiFrontFace);
+            var obiSpineFace = CreateQuad(
                 new Point3D(outsideX, cardHeight / 2, depth / 2),
                 new Point3D(outsideX, cardHeight / 2, -depth / 2),
                 new Point3D(outsideX, -cardHeight / 2, -depth / 2),
                 new Point3D(outsideX, -cardHeight / 2, depth / 2),
-                CreateImageMaterial(obiSpine, item.Title, 0.97)));
+                CreateImageMaterial(obiSpine, item.Title, 1.0));
+            obiSpineFace.BackMaterial = paperReverse;
+            group.Children.Add(obiSpineFace);
         }
         return container;
     }

@@ -152,6 +152,21 @@
           </DataGrid.Columns>
         </DataGrid>
       </TabItem>
+      <TabItem Header="ライブラリ変更">
+        <DataGrid x:Name="LibraryChangeGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                  SelectionMode="Single" SelectionUnit="FullRow" CanUserAddRows="False" CanUserDeleteRows="False"
+                  Background="#1E2127" Foreground="#F2F3F5" BorderBrush="#353B45"
+                  RowBackground="#1E2127" AlternatingRowBackground="#23272E"
+                  GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#303640">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="日時" Binding="{Binding Occurred}" Width="145"/>
+            <DataGridTextColumn Header="操作" Binding="{Binding Action}" Width="75"/>
+            <DataGridTextColumn Header="アルバム" Binding="{Binding AlbumTitle}" Width="2*" MinWidth="180"/>
+            <DataGridTextColumn Header="曲数" Binding="{Binding TrackCount}" Width="80"/>
+            <DataGridTextColumn Header="場所" Binding="{Binding Path}" Width="3*" MinWidth="260"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </TabItem>
     </TabControl>
 
     <DockPanel Grid.Row="2" Margin="0,10,0,0">

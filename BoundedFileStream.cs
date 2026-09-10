@@ -11,7 +11,9 @@ public sealed class BoundedFileStream : Stream
 
     public BoundedFileStream(string path, long start, long length)
     {
-        _file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
+        // Keep archive reads compatible with verified atomic replacement (tag edits,
+        // storage conversion, and ZIP-internal artwork deletion).
+        _file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete,
             64 * 1024, FileOptions.RandomAccess | FileOptions.SequentialScan);
         _start = start;
         _length = length;

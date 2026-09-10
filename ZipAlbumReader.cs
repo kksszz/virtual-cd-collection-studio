@@ -141,7 +141,8 @@ public static class ZipAlbumReader
 
     public static ZipAlbum Open(string path)
     {
-        using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        // Library refreshes may overlap a verified atomic archive replacement.
+        using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
         var (entryCount, centralOffset) = ReadEocd(file);
         var tracks = new List<ZipTrack>();
         var images = new List<ZipImage>();

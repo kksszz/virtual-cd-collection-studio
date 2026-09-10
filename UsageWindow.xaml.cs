@@ -7,10 +7,17 @@ public partial class UsageWindow : Window
     internal PlaybackUsageEntry? SelectedForPlayback { get; private set; }
 
     internal UsageWindow(IReadOnlyList<PlaybackUsageEntry> entries)
+        : this(entries, [])
+    {
+    }
+
+    internal UsageWindow(IReadOnlyList<PlaybackUsageEntry> entries,
+        IReadOnlyList<LibraryChangeLogEntry> libraryChanges)
     {
         InitializeComponent();
         var rows = entries.Select(entry => new UsageRow(entry)).ToList();
         UsageGrid.ItemsSource = rows;
+        LibraryChangeGrid.ItemsSource = libraryChanges.Select(entry => new LibraryChangeRow(entry)).ToList();
 
         var totalSeconds = entries.Sum(entry => entry.TotalPlayedSeconds);
         var totalPlays = entries.Sum(entry => entry.PlayCount);
@@ -113,6 +120,27 @@ public partial class UsageWindow : Window
             PlayedSeconds = entry.TotalPlayedSeconds; DurationSeconds = entry.TrackDurationSeconds; LastPlayedValue = entry.LastPlayedLocal;
             PlayedTime = FormatLongTime(entry.TotalPlayedSeconds); Duration = FormatLongTime(entry.TrackDurationSeconds);
             LastPlayed = entry.LastPlayedLocal?.ToString("yyyy/MM/dd HH:mm") ?? "—";
+        }
+    }
+
+    private sealed class LibraryChangeRow
+    {
+        public string Occurred { get; }
+        public string Action { get; }
+        public string AlbumTitle { get; }
+        public string TrackCount { get; }
+        public string Path { get; }
+
+        public LibraryChangeRow(LibraryChangeLogEntry entry)
+        {
+            Occurred = entry.OccurredLocal.ToString("yyyy/MM/dd HH:mm:ss");
+            Action = entry.Action == "Added"
+                ? LocalizationService.Select("追加", "Added")
+                : entry.Action == "Removed"
+                    ? LocalizationService.Select("削除", "Removed") : entry.Action;
+            AlbumTitle = entry.AlbumTitle;
+            TrackCount = LocalizationService.Select($"{entry.TrackCount}曲", $"{entry.TrackCount} tracks");
+            Path = entry.Path;
         }
     }
 }
