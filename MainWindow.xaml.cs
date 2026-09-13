@@ -113,6 +113,8 @@ public partial class MainWindow : Window
     private bool _incrementalRefreshInProgress;
     private bool _libraryDiscoveryInProgress;
     private CancellationTokenSource? _libraryDiscoveryCancellation;
+    private CancellationTokenSource? _cachedLibraryMaintenanceCancellation;
+    private bool _cachedLibraryMaintenanceInProgress;
     private readonly PlaybackUsageStore _usageStore;
     private readonly LibraryChangeLogStore _libraryChangeLogStore;
     private readonly FavoritesStore _favoritesStore;
@@ -213,6 +215,7 @@ public partial class MainWindow : Window
             DisposeLibraryWatchers();
             _incrementalRefreshCancellation?.Cancel();
             _libraryDiscoveryCancellation?.Cancel();
+            _cachedLibraryMaintenanceCancellation?.Cancel();
             _coverFlowHighResolutionCancellation?.Cancel();
         };
         Activated += (_, _) =>
@@ -244,8 +247,92 @@ public partial class MainWindow : Window
         else if (_albums.Count > 0) RestoreLastSelection();
 
         ConfigureLibraryWatchers();
-        ScheduleLibraryDiscovery(TimeSpan.FromMilliseconds(500));
+        if (_hasCompleteLibraryCache && !_cacheNeedsRefresh) StartCachedLibraryMaintenance();
+        // Give the selected album and the window first access to the network;
+        // missed-change discovery remains automatic but no longer competes
+        // with the first rendered frame.
+        ScheduleLibraryDiscovery(TimeSpan.FromSeconds(5));
         ScheduleRequested3dPreview(args);
+    }
+
+    private void StartCachedLibraryMaintenance()
+    {
+        if (_cachedLibraryMaintenanceInProgress || _albums.Count == 0) return;
+        _cachedLibraryMaintenanceCancellation?.Cancel();
+        _cachedLibraryMaintenanceCancellation?.Dispose();
+        _cachedLibraryMaintenanceCancellation = new CancellationTokenSource();
+        _ = MaintainCachedLibraryAsync(_albums.ToArray(), _cachedLibraryMaintenanceCancellation.Token);
+    }
+
+    private async Task MaintainCachedLibraryAsync(
+        IReadOnlyList<AlbumListItem> cachedItems, CancellationToken cancellationToken)
+    {
+        _cachedLibraryMaintenanceInProgress = true;
+        try
+        {
+            // The cached titles and tracks are already usable. Delay all
+            // network existence checks and cover preparation until the window
+            // has become interactive, then process one album at a time.
+            await Task.Delay(350, cancellationToken);
+            var roots = _folders.ToArray();
+            var availableRoots = await Task.Run(() => roots
+                .Where(root =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    try { return Directory.Exists(root); }
+                    catch { return false; }
+                })
+                .Select(NormalizeLibraryPath)
+                .Where(root => root is not null)
+                .Cast<string>()
+                .ToArray(), cancellationToken);
+
+            var selectedPath = _album?.Path;
+            var ordered = cachedItems.OrderByDescending(item =>
+                    string.Equals(item.Album.Path, selectedPath, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            foreach (var item in ordered)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!availableRoots.Any(root => PathsEqual(item.Album.Path, root)
+                    || IsPathWithin(item.Album.Path, root))) continue;
+                try
+                {
+                    var exists = await Task.Run(() =>
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        return item.IsArchive ? File.Exists(item.Album.Path) : Directory.Exists(item.Album.Path);
+                    }, cancellationToken);
+                    if (!exists)
+                    {
+                        QueueLibraryChange(item.Album.Path);
+                        continue;
+                    }
+
+                    if (!item.ArtworkSummaryLoaded)
+                    {
+                        await item.RefreshImageCountAsync(cancellationToken);
+                        if (string.Equals(item.Album.Path, _album?.Path, StringComparison.OrdinalIgnoreCase))
+                            QueueCoverFlowRefresh();
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Cached album maintenance skipped {item.Album.Path}: {ex.Message}");
+                }
+
+                // Yield between network albums. This keeps playback, search,
+                // scrolling and 3D animation ahead of maintenance work.
+                await Task.Delay(8, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Cached library maintenance failed: {ex.Message}");
+        }
+        finally { _cachedLibraryMaintenanceInProgress = false; }
     }
 
     private void ScheduleRequested3dPreview(IReadOnlyList<string> args)
@@ -515,6 +602,7 @@ public partial class MainWindow : Window
 
     private async Task ScanFoldersAsync()
     {
+        _cachedLibraryMaintenanceCancellation?.Cancel();
         _incrementalRefreshCancellation?.Cancel();
         var scanGeneration = ++_scanGeneration;
         _scanCancellation?.Cancel();
@@ -2056,8 +2144,10 @@ public partial class MainWindow : Window
             var sourcePath = File.Exists(LibraryPath) ? LibraryPath
                 : File.Exists(PartialLibraryPath) ? PartialLibraryPath : null;
             if (sourcePath is null) return;
-            var cache = await Task.Run(() =>
-                JsonSerializer.Deserialize<LibraryCache>(File.ReadAllText(sourcePath)));
+            await using var input = new FileStream(sourcePath, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete, 128 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            var cache = await JsonSerializer.DeserializeAsync<LibraryCache>(input);
             if (cache is null || cache.Version < 10)
             {
                 _cacheNeedsRefresh = true;
@@ -2067,26 +2157,7 @@ public partial class MainWindow : Window
             _hasCompleteLibraryCache = cache.IsComplete
                 && string.Equals(sourcePath, LibraryPath, StringComparison.OrdinalIgnoreCase);
             _cacheNeedsRefresh = cache.Version < CurrentLibraryCacheVersion || !cache.IsComplete;
-            _loadingCache = true;
-            var total = cache.Albums.Count;
-            var restored = 0;
-            var removedTagArtifacts = 0;
-            foreach (var album in cache.Albums)
-            {
-                var restoredAlbum = ExcludeCachedTagEditingArtifacts(album, ref removedTagArtifacts);
-                var exists = restoredAlbum.Tracks.FirstOrDefault()?.IsArchiveEntry == true
-                    ? File.Exists(restoredAlbum.Path) : Directory.Exists(restoredAlbum.Path);
-                if (exists && restoredAlbum.Tracks.Count > 0) InsertAlbumSorted(new AlbumListItem(restoredAlbum));
-                restored++;
-                if (restored % 12 != 0 && restored != total) continue;
-                UpdateLibraryLoading(LocalizationService.Select(
-                    $"保存済みライブラリを復元中 {restored}/{total}",
-                    $"Restoring saved library {restored}/{total}"));
-                // Batch UI insertion so the progress indicator and window keep
-                // repainting even with a very large cached music library.
-                await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
-            }
-            _loadingCache = false;
+            var removedTagArtifacts = RestoreCachedAlbums(cache.Albums);
             if (removedTagArtifacts > 0) SaveLibraryCache();
             if (_albums.Count > 0)
             {
@@ -2122,15 +2193,7 @@ public partial class MainWindow : Window
             _libraryCacheComplete = cache.IsComplete;
             _hasCompleteLibraryCache = cache.IsComplete && string.Equals(sourcePath, LibraryPath, StringComparison.OrdinalIgnoreCase);
             _cacheNeedsRefresh = cache.Version < CurrentLibraryCacheVersion || !cache.IsComplete;
-            _loadingCache = true;
-            var removedTagArtifacts = 0;
-            foreach (var album in cache?.Albums ?? [])
-            {
-                var restoredAlbum = ExcludeCachedTagEditingArtifacts(album, ref removedTagArtifacts);
-                var exists = restoredAlbum.Tracks.FirstOrDefault()?.IsArchiveEntry == true ? File.Exists(restoredAlbum.Path) : Directory.Exists(restoredAlbum.Path);
-                if (exists && restoredAlbum.Tracks.Count > 0) InsertAlbumSorted(new AlbumListItem(restoredAlbum));
-            }
-            _loadingCache = false;
+            var removedTagArtifacts = RestoreCachedAlbums(cache.Albums);
             if (removedTagArtifacts > 0) SaveLibraryCache();
             if (_albums.Count > 0)
             {
@@ -2144,6 +2207,35 @@ public partial class MainWindow : Window
             }
         }
         catch { _loadingCache = false; StatusText.Text = "保存済みライブラリを読み込めませんでした"; }
+    }
+
+    private int RestoreCachedAlbums(IReadOnlyList<ZipAlbum> cachedAlbums)
+    {
+        var removedTagArtifacts = 0;
+        var restored = new List<AlbumListItem>(cachedAlbums.Count);
+        foreach (var album in cachedAlbums)
+        {
+            var restoredAlbum = ExcludeCachedTagEditingArtifacts(album, ref removedTagArtifacts);
+            if (restoredAlbum.Tracks.Count > 0)
+                restored.Add(new AlbumListItem(restoredAlbum, loadArtwork: false));
+        }
+
+        foreach (var item in restored) PrepareAlbumItem(item, updateLyrics: false);
+        restored = restored
+            .GroupBy(item => item.Album.Path, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+        restored.Sort(CompareAlbums);
+
+        _loadingCache = true;
+        _albumPaths.Clear();
+        foreach (var item in restored) _albumPaths.Add(item.Album.Path);
+        _albums.ReplaceAll(restored);
+        _loadingCache = false;
+        _artistTreeRoots.Clear();
+        _artistTreeDirty = true;
+        UpdateAlbumFilterResult();
+        return removedTagArtifacts;
     }
 
     private void SaveLibraryCache()
@@ -5625,6 +5717,7 @@ public partial class MainWindow : Window
         private BitmapSource? _mediumSpineCardThumbnail;
         private bool _caseArtworkLoaded;
         private int _caseArtworkDecodeWidth;
+        private bool _artworkSummaryLoaded;
         private string _coverDescription = "画像はありません";
         private string _trayColorMode = "Auto";
         private bool _isFavorite;
@@ -5649,6 +5742,7 @@ public partial class MainWindow : Window
         public string CoverDescription => _coverDescription;
         public string TrayColorMode => _trayColorMode;
         public bool HasFrontSpread { get; private set; }
+        public bool ArtworkSummaryLoaded => _artworkSummaryLoaded;
 
         public BookletContent LoadBooklet()
         {
@@ -5713,7 +5807,11 @@ public partial class MainWindow : Window
         public string SourceDescription => LocalizationService.Select(
             $"{Title}\n形式: {(IsZipMp3 ? "ZIP.MP3" : IsArchive ? "ZIP" : "音楽フォルダ")}\n場所: {Album.Path}",
             $"{Title}\nType: {(IsZipMp3 ? "ZIP.MP3" : IsArchive ? "ZIP" : "Music folder")}\nLocation: {Album.Path}");
-        public AlbumListItem(ZipAlbum album)
+        public AlbumListItem(ZipAlbum album) : this(album, loadArtwork: true)
+        {
+        }
+
+        public AlbumListItem(ZipAlbum album, bool loadArtwork)
         {
             Album = album;
             var first = album.Tracks.First();
@@ -5727,7 +5825,7 @@ public partial class MainWindow : Window
             Artist = string.IsNullOrWhiteSpace(first.Artist) ? "アーティスト不明" : first.Artist;
             SearchText = NormalizeAlbumSearch(string.Join(' ', new[] { Title, Artist, album.Path }
                 .Concat(album.Tracks.SelectMany(track => new[] { track.Title, track.Artist, track.Album, track.FileName }))));
-            RefreshImageCount();
+            if (loadArtwork) RefreshImageCount();
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;
@@ -5748,19 +5846,54 @@ public partial class MainWindow : Window
 
         public void RefreshImageCount()
         {
+            ApplyArtworkSummary(LoadArtworkSummary());
+        }
+
+        public async Task RefreshImageCountAsync(CancellationToken cancellationToken)
+        {
+            var summary = await Task.Run(() =>
+            {
+                var thread = Thread.CurrentThread;
+                var previousPriority = thread.Priority;
+                try
+                {
+                    thread.Priority = ThreadPriority.BelowNormal;
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return LoadArtworkSummary();
+                }
+                finally { thread.Priority = previousPriority; }
+            }, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            ApplyArtworkSummary(summary);
+        }
+
+        private ArtworkSummary LoadArtworkSummary()
+        {
             var directory = GetDownloadedArtworkDirectory(Album.Path);
             var sources = GetCaseArtworkSources(Album, directory);
             var roles = LoadArtworkRoles(Album.Path);
             var roleSet = sources.Select(source => GetEffectiveArtworkRole(source, roles)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            HasFrontSpread = roleSet.Contains("FrontSpread") || roleSet.Contains("FrontSpreadReversed")
+            var hasFrontSpread = roleSet.Contains("FrontSpread") || roleSet.Contains("FrontSpreadReversed")
                 || roleSet.Contains("FrontSpreadVertical")
                 || (roleSet.Contains("Front") && roleSet.Contains("FrontInside"));
-            _trayColorMode = HasInlayArtwork(sources, roles)
+            var trayColorMode = HasInlayArtwork(sources, roles)
                 ? "Clear" : LoadTrayColor(Album.Path);
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(TrayColorMode)));
-            _downloadedImageCount = Directory.Exists(directory)
+            var downloadedImageCount = Directory.Exists(directory)
                 ? Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly).Count(IsAlbumImage) : 0;
-            (_coverThumbnail, _coverDescription) = LoadCoverThumbnail(directory);
+            var (coverThumbnail, coverDescription) = LoadCoverThumbnail(directory);
+            return new ArtworkSummary(downloadedImageCount, coverThumbnail, coverDescription,
+                trayColorMode, hasFrontSpread);
+        }
+
+        private void ApplyArtworkSummary(ArtworkSummary summary)
+        {
+            _downloadedImageCount = summary.DownloadedImageCount;
+            _coverThumbnail = summary.CoverThumbnail;
+            _coverDescription = summary.CoverDescription;
+            _trayColorMode = summary.TrayColorMode;
+            HasFrontSpread = summary.HasFrontSpread;
+            _artworkSummaryLoaded = true;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(TrayColorMode)));
             _caseFrontThumbnail = _insideFrontThumbnail = _backCoverThumbnail = _spineThumbnail = _rightSpineThumbnail = _inlayThumbnail = _discThumbnail = _secondDiscThumbnail = _spineCardThumbnail = null;
             _mediumCaseFrontThumbnail = _mediumInsideFrontThumbnail = _mediumBackCoverThumbnail = _mediumSpineThumbnail = _mediumRightSpineThumbnail = null;
             _mediumInlayThumbnail = _mediumDiscThumbnail = _mediumSecondDiscThumbnail = _mediumSpineCardThumbnail = null;
@@ -5780,6 +5913,9 @@ public partial class MainWindow : Window
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasCoverThumbnail)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CoverDescription)));
         }
+
+        private sealed record ArtworkSummary(int DownloadedImageCount, BitmapSource? CoverThumbnail,
+            string CoverDescription, string TrayColorMode, bool HasFrontSpread);
 
         public void EnsureCaseArtworkLoaded(int decodePixelWidth = 640)
         {

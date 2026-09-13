@@ -87,7 +87,6 @@ public sealed class JewelCaseCoverFlow : Grid
     private bool _isDraggingWrapping;
     private bool _isWrappingOpened;
     private bool _isWrappingCut;
-    private readonly HashSet<string> _wrappingInitializedKeys = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _unwrappedKeys = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _cutWrappingKeys = new(StringComparer.OrdinalIgnoreCase);
     private bool _collectionPresentation;
@@ -720,7 +719,6 @@ public sealed class JewelCaseCoverFlow : Grid
         var fullScreenFlow = new JewelCaseCoverFlow(true);
         fullScreenFlow.PlaybackStateProvider = PlaybackStateProvider;
         fullScreenFlow.PlaybackActiveProvider = PlaybackActiveProvider;
-        foreach (var key in _wrappingInitializedKeys) fullScreenFlow._wrappingInitializedKeys.Add(key);
         foreach (var key in _unwrappedKeys) fullScreenFlow._unwrappedKeys.Add(key);
         foreach (var key in _cutWrappingKeys) fullScreenFlow._cutWrappingKeys.Add(key);
         fullScreenFlow.SetItems(_items, SelectedKey);
@@ -757,8 +755,6 @@ public sealed class JewelCaseCoverFlow : Grid
             Content = fullScreenFlow
         };
         window.ShowDialog();
-        _wrappingInitializedKeys.Clear();
-        foreach (var key in fullScreenFlow._wrappingInitializedKeys) _wrappingInitializedKeys.Add(key);
         _unwrappedKeys.Clear();
         foreach (var key in fullScreenFlow._unwrappedKeys) _unwrappedKeys.Add(key);
         _cutWrappingKeys.Clear();
@@ -861,11 +857,8 @@ public sealed class JewelCaseCoverFlow : Grid
         _wrappingButton.Visibility = !_collectionPresentation && _dxScene is not null && hasSpineCard
             ? Visibility.Visible : Visibility.Collapsed;
         if (!hasSpineCard) _isSpineCardRemoved = false;
-        // A scanned obi does not imply that the photographed case is still
-        // factory wrapped. Start each Spine Card case unwrapped; the user can
-        // explicitly restore the caramel wrapping from its dedicated control.
-        if (hasSpineCard && _wrappingInitializedKeys.Add(_items[_selectedIndex].Key))
-            _unwrappedKeys.Add(_items[_selectedIndex].Key);
+        // A Spine Card case starts factory wrapped. Only an explicit opening
+        // operation records it as unwrapped for the lifetime of this viewer.
         _isWrappingOpened = hasItems && (!hasSpineCard || _unwrappedKeys.Contains(_items[_selectedIndex].Key));
         _isWrappingCut = hasSpineCard && (_isWrappingOpened
             || (hasItems && _cutWrappingKeys.Contains(_items[_selectedIndex].Key)));
@@ -1121,13 +1114,35 @@ public sealed class JewelCaseCoverFlow : Grid
         // 175 independent WPF animation clocks for the 25 visible cases while
         // retaining the same 560 ms cubic ease-out motion and full geometry.
         var continuous = _continuousCollectionMotion && _collectionPresentation;
-        _collectionMotions[model] = new CollectionMotion(ReadCollectionPose(model), pose,
+        var startPose = ReadCollectionPose(model);
+        if (continuous && _rackPresentation && IsRackSlotPose(pose))
+        {
+            // A repeated key press can select the next case before the old one
+            // has finished returning from the pickup position. If every pose
+            // component is retargeted, several formerly selected cases remain
+            // broad and raised at once, overlap, and appear to swap front/back
+            // instead of sliding along the rack. Return non-selected cases to
+            // their common Spine-facing rack lane immediately, while retaining
+            // the current X coordinate for an uninterrupted horizontal slide.
+            startPose = startPose with
+            {
+                Y = pose.Y, Z = pose.Z, Scale = pose.Scale,
+                Yaw = pose.Yaw, Pitch = pose.Pitch
+            };
+            ApplyCollectionPose(model, startPose);
+        }
+        _collectionMotions[model] = new CollectionMotion(startPose, pose,
             System.Diagnostics.Stopwatch.GetTimestamp(), continuous ? .14 : .56,
             EaseOut: !continuous, Completed: completed);
         if (_collectionRenderingSubscribed) return;
         CompositionTarget.Rendering += OnCollectionRendering;
         _collectionRenderingSubscribed = true;
     }
+
+    private static bool IsRackSlotPose(CollectionPose pose) =>
+        Math.Abs(pose.Y + .10) < .001
+        && Math.Abs(pose.Z - .02) < .001
+        && Math.Abs(pose.Yaw - 90) < .001;
 
     private void OnCollectionRendering(object? sender, EventArgs e)
     {

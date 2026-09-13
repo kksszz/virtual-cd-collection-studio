@@ -1855,6 +1855,32 @@ internal static class Program
             finish.Invoke(flow, null);
             if (notifications != 2)
                 throw new InvalidOperationException("Releasing a held arrow must publish the final album exactly once.");
+
+            flow.RackPresentation = true;
+            flow.SetItems(items, "key-0");
+            notifications = 0;
+            navigate.Invoke(flow, [Key.Right, false]);
+            Thread.Sleep(95);
+            navigate.Invoke(flow, [Key.Right, true]);
+            var models = (System.Collections.IDictionary)typeof(JewelCaseCoverFlow)
+                .GetField("_collectionModels", flags)!.GetValue(flow)!;
+            var oldSelectedModel = models["key-1"]!;
+            var rackMotion = motions[oldSelectedModel]!;
+            var rackMotionType = rackMotion.GetType();
+            var rackFrom = rackMotionType.GetProperty("From")!.GetValue(rackMotion)!;
+            var rackTo = rackMotionType.GetProperty("To")!.GetValue(rackMotion)!;
+            var poseType = rackFrom.GetType();
+            foreach (var component in new[] { "Y", "Z", "Scale", "Yaw", "Pitch" })
+            {
+                var property = poseType.GetProperty(component)!;
+                var fromValue = (double)property.GetValue(rackFrom)!;
+                var toValue = (double)property.GetValue(rackTo)!;
+                if (Math.Abs(fromValue - toValue) > .001)
+                    throw new InvalidOperationException($"A former rack selection retained a pickup {component} transition during continuous navigation.");
+            }
+            finish.Invoke(flow, null);
+            if (notifications != 2)
+                throw new InvalidOperationException("Rack navigation must publish its initial and final selections exactly once each.");
             Pump(350);
             if (motions.Count != 0)
                 throw new InvalidOperationException("Held arrow navigation must settle and release its render motion after key-up.");
@@ -2422,6 +2448,27 @@ internal static class Program
             if (collectionChanges != 1 || lastAction != System.Collections.Specialized.NotifyCollectionChangedAction.Reset
                 || bulk.Count != 2000 || bulk[1999] != 1999)
                 throw new InvalidOperationException("Bulk library replacement must notify the UI exactly once.");
+
+            var cachedFolder = Path.Combine(Environment.GetEnvironmentVariable("ZIPMP3PLAYER_DATA_DIR")!, "cached-album");
+            Directory.CreateDirectory(cachedFolder);
+            File.WriteAllBytes(Path.Combine(cachedFolder, "Front.jpg"), [0, 0, 0, 0]);
+            var cachedAlbum = new ZipAlbum
+            {
+                Path = cachedFolder,
+                Tracks = [new ZipTrack
+                {
+                    TrackNumber = 1, FileName = "01.mp3", SourcePath = Path.Combine(cachedFolder, "01.mp3"),
+                    Title = "Cached", Artist = "Artist", Album = "Cached", IsArchiveEntry = false
+                }],
+                ImageCount = 1
+            };
+            type.GetMethod("RestoreCachedAlbums", flags)!.Invoke(window, [new[] { cachedAlbum }]);
+            var restoredAlbums = (System.Collections.IList)type.GetField("_albums", flags)!.GetValue(window)!;
+            var restoredItem = restoredAlbums[0]!;
+            if (restoredAlbums.Count != 1
+                || (bool)restoredItem.GetType().GetProperty("ArtworkSummaryLoaded")!.GetValue(restoredItem)!
+                || restoredItem.GetType().GetProperty("CoverThumbnail")!.GetValue(restoredItem) is not null)
+                throw new InvalidOperationException("Startup cache restore must defer filesystem and artwork work until background maintenance.");
         }
         finally { window.Close(); }
         Console.WriteLine("Blocking startup overlay, click-through rescan progress, and single-reset bulk replacement passed.");
@@ -3619,14 +3666,10 @@ internal static class Program
             var caseButton = (Button)flowType.GetField("_caseOpenButton", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(wrappingFlow)!;
             var wrappingButton = (Button)flowType.GetField("_wrappingButton", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(wrappingFlow)!;
             var spineButton = (Button)flowType.GetField("_spineCardButton", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(wrappingFlow)!;
-            if (!caseButton.IsEnabled || !spineButton.IsEnabled
+            if (caseButton.IsEnabled || spineButton.IsEnabled
                 || wrappingButton.Visibility != Visibility.Visible
-                || (string)wrappingButton.Content != "◇ 包装を戻す")
-                throw new InvalidOperationException("An unwrapped Spine Card case must expose both removal and optional packaging controls.");
-            flowType.GetMethod("ApplyWrappingOpened", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .Invoke(wrappingFlow, [false, false]);
-            if (caseButton.IsEnabled || spineButton.IsEnabled || !wrappingButton.IsEnabled)
-                throw new InvalidOperationException("Restored wrapping must lock the case and Spine Card until the film is removed.");
+                || (string)wrappingButton.Content != "◆ テープを引く")
+                throw new InvalidOperationException("A Spine Card case must start wrapped and lock the case and Spine Card until the film is removed.");
             flowType.GetMethod("ApplyWrappingOpened", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .Invoke(wrappingFlow, [true, false]);
             var open = (Task<bool>)flowType.GetMethod("SetCaseOpenAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
