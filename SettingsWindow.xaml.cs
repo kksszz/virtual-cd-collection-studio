@@ -17,6 +17,16 @@ public partial class SettingsWindow : Window
     public bool RestoreCompleted { get; private set; }
     public string? RestoreSafetyBackupPath { get; private set; }
     public bool MinimizeOnClose => MinimizeOnCloseCheck.IsChecked == true;
+    public bool AutomaticArtworkEnabled
+    {
+        get => AutomaticArtworkCheck.IsChecked == true;
+        set => AutomaticArtworkCheck.IsChecked = value;
+    }
+    public bool AutomaticArtworkPaused
+    {
+        get => AutomaticArtworkPauseCheck.IsChecked == true;
+        set => AutomaticArtworkPauseCheck.IsChecked = value;
+    }
     public bool TagBackupEnabled => TagBackupCheck.IsChecked == true;
     public string TagBackupFolder => TagBackupFolderTextBox.Text.Trim();
     public string DisplayLanguage => (LanguageCombo.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag?.ToString()

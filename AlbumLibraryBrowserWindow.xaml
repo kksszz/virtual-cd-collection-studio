@@ -155,7 +155,7 @@
                 </Border.Effect>
                 <Grid>
                   <TextBlock Text="♪" FontSize="50" Foreground="#687482" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                  <Image Source="{Binding TileCover}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
+                  <Image Source="{Binding TileArtwork.Image}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
                   <Border IsHitTestVisible="False">
                     <Border.Background>
                       <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">

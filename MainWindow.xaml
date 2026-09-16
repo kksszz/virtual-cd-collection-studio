@@ -66,12 +66,21 @@
         <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
       </Grid.ColumnDefinitions>
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-        <Button Content="ファイルを開く" Click="Open_Click" Padding="13,6"/>
-        <Button Content="履歴" Click="Usage_Click" Padding="13,6" ToolTip="再生履歴・Usageを表示"/>
-        <Button Content="★ お気に入り" Click="Favorites_Click" Padding="10,6" ToolTip="お気に入りの曲・アルバムを一覧から連続再生"/>
+        <StackPanel.Resources>
+          <Style x:Key="HeaderNavigationButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Width" Value="132"/>
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="Margin" Value="3,0"/>
+            <Setter Property="Padding" Value="6,0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+          </Style>
+        </StackPanel.Resources>
+        <Button Content="◷ 履歴" Click="Usage_Click" Style="{StaticResource HeaderNavigationButton}" ToolTip="再生履歴・Usageを表示"/>
+        <Button Content="★ お気に入り" Click="Favorites_Click" Style="{StaticResource HeaderNavigationButton}" ToolTip="お気に入りの曲・アルバムを一覧から連続再生"/>
         <Button x:Name="AlbumBrowserButton" Content="▦ アルバムブラウザー" Click="OpenAlbumBrowser_Click"
-                Padding="11,6" ToolTip="アルバムブラウザー・3D CoverFlow・CDラック・Attractモード"/>
-        <Button Content="⚙" Width="40" Padding="0,7" FontSize="16"
+                Style="{StaticResource HeaderNavigationButton}" ToolTip="アルバムブラウザー・3D CoverFlow・CDラック・Attractモード"/>
+        <Button Content="⚙" Width="40" Height="36" Margin="3,0" Padding="0" FontSize="16"
                 Click="Settings_Click" ToolTip="設定（フォルダ管理・バックアップ・移行）"/>
       </StackPanel>
       <Border x:Name="UnifiedInfoCard" Grid.Column="1" Padding="8,5" Background="#1E2730" Margin="9,0,8,0"
@@ -502,9 +511,9 @@
       <Border x:Name="AlbumImagePanel" Grid.Column="4" Grid.RowSpan="3" Background="#1E2127" BorderBrush="#353B45" BorderThickness="1" Padding="10">
         <Grid Grid.IsSharedSizeScope="True">
           <Grid.ColumnDefinitions>
-            <ColumnDefinition x:Name="ArtworkColumn" Width="6*" MinWidth="180"/>
+            <ColumnDefinition x:Name="ArtworkColumn" Width="3*" MinWidth="180"/>
             <ColumnDefinition x:Name="ImageLyricsSplitterColumn" Width="8"/>
-            <ColumnDefinition x:Name="LyricsColumn" Width="4*" MinWidth="180"/>
+            <ColumnDefinition x:Name="LyricsColumn" Width="1*" MinWidth="180"/>
           </Grid.ColumnDefinitions>
           <Grid Grid.Column="0">
             <Grid.RowDefinitions><RowDefinition x:Name="ArtworkToolbarRow" Height="Auto" SharedSizeGroup="ImageLyricsToolbar"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
@@ -532,12 +541,10 @@
               <Button x:Name="PreviousImageButton" Content="◀" Padding="10,4" Click="PreviousImage_Click" IsEnabled="False"/>
               <TextBlock x:Name="AlbumImageCountText" Text="0 / 0" Width="62" HorizontalAlignment="Center" TextAlignment="Center"/>
               <Button x:Name="NextImageButton" Content="▶" Padding="10,4" Click="NextImage_Click" IsEnabled="False"/>
-              <Button x:Name="RotateAlbumImageLeftButton" Content="↶ 90°" Padding="8,4" Margin="7,0,1,0"
+              <Button x:Name="RotateAlbumImageLeftButton" Content="↶" AutomationProperties.Name="画像を左へ90度回転" Padding="8,4" Margin="7,0,1,0"
                       Click="RotateAlbumImageLeft_Click" IsEnabled="False" ToolTip="選択画像を左へ90度回転して保存"/>
-              <Button x:Name="RotateAlbumImageRightButton" Content="90° ↷" Padding="8,4" Margin="1,0"
+              <Button x:Name="RotateAlbumImageRightButton" Content="↷" AutomationProperties.Name="画像を右へ90度回転" Padding="8,4" Margin="1,0"
                       Click="RotateAlbumImageRight_Click" IsEnabled="False" ToolTip="選択画像を右へ90度回転して保存"/>
-              <Button x:Name="ResetAlbumImageRotationButton" Content="向きを戻す" Padding="8,4" Margin="1,0"
-                      Click="ResetAlbumImageRotation_Click" IsEnabled="False" ToolTip="選択画像を元の向きへ戻す"/>
               <TextBlock Text="用途" Margin="9,0,3,0" VerticalAlignment="Center" Foreground="#A6AFBB"/>
               <ComboBox x:Name="ArtworkRoleCombo" Width="196" Height="27" SelectedIndex="0"
                         SelectionChanged="ArtworkRole_Changed" ToolTip="3D CDケースでの画像の割り当て">
@@ -584,7 +591,15 @@
           <GridSplitter x:Name="ImageLyricsSplitter" Grid.Column="1" Width="8" HorizontalAlignment="Stretch" Background="#252A31"
                         ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" ShowsPreview="True"
                         DragCompleted="ImageLyricsSplitter_DragCompleted"
-                        ToolTip="ドラッグしてアルバム画像と歌詞の幅を変更"/>
+                        ToolTip="ドラッグで幅を調整／右クリックで割合テンプレート">
+            <GridSplitter.ContextMenu>
+              <ContextMenu>
+                <MenuItem Header="標準：画像75%／歌詞25%" Tag="0.75" Click="ImageLyricsPreset_Click"/>
+                <MenuItem Header="画像重視：画像80%／歌詞20%" Tag="0.80" Click="ImageLyricsPreset_Click"/>
+                <MenuItem Header="歌詞重視：画像60%／歌詞40%" Tag="0.60" Click="ImageLyricsPreset_Click"/>
+              </ContextMenu>
+            </GridSplitter.ContextMenu>
+          </GridSplitter>
           <Button x:Name="LyricsPanelToggleButton" Grid.Column="1" Panel.ZIndex="10"
                   Width="24" Height="46" Padding="0" Margin="0"
                   HorizontalAlignment="Center" VerticalAlignment="Center" Content="▶"
@@ -598,7 +613,8 @@
                         Checked="LyricsAutoScroll_Changed" Unchecked="LyricsAutoScroll_Changed"
                         ToolTip="LRCは時刻同期、通常歌詞は再生位置から推定して追従"/>
               <WrapPanel HorizontalAlignment="Right">
-                <Button x:Name="LyricsOcrButton" Content="画像からOCR ▼" Padding="9,4" Click="LyricsOcrMenu_Click"
+                <Button x:Name="LyricsOcrButton" Content="OCR ▾" Padding="6,4" Click="LyricsOcrMenu_Click"
+                        AutomationProperties.Name="画像から歌詞を認識"
                         ToolTip="表示画像・Snipping Tool・画像ファイルから日本語歌詞を認識">
                   <Button.ContextMenu>
                     <ContextMenu>
@@ -608,9 +624,10 @@
                     </ContextMenu>
                   </Button.ContextMenu>
                 </Button>
-                <Button Content="Google歌詞" Padding="9,4" Click="GoogleLyricsSearch_Click"
+                <Button Content="検索" Padding="6,4" Click="GoogleLyricsSearch_Click" AutomationProperties.Name="Googleで歌詞を検索"
                         ToolTip="アーティスト名・曲名・アルバム名を使ってGoogleで歌詞検索"/>
-                <Button Content="歌詞を保存" Padding="9,4" Click="SaveLyrics_Click" Background="#276E9F"/>
+                <Button Content="保存" Padding="6,4" Click="SaveLyrics_Click" Background="#276E9F"
+                        ToolTip="歌詞を保存" AutomationProperties.Name="歌詞を保存"/>
               </WrapPanel>
             </DockPanel>
             <Grid Grid.Row="1">

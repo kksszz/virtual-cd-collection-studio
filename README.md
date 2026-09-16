@@ -6,6 +6,9 @@ CDの音楽だけでなく、ジャケット、Spine Card（帯）、ブック�
 
 ## 主な機能
 
+最新版の変更内容は [v0.80.0 リリースノート](RELEASE_NOTES_v0.80.0.md) を参照してください。
+画像のないアルバムの自動ジャケット取得（既定OFF）は [自動取得ガイド](AUTOMATIC_ARTWORK.md) を参照してください。
+
 - ZIP / ZIP.MP3内のMP3を展開管理せずに一覧化・再生
 - 圧縮ZIP.MP3を無圧縮ZIP.MP3へ変換
 - CBR/VBR MP3、WAV、FLAC、M4Aの再生（VBR MP3の時間指定頭出しに対応）

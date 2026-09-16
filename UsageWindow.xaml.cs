@@ -1,4 +1,6 @@
 using System.Windows;
+using System.ComponentModel;
+using System.Windows.Data;
 
 namespace ZipMp3Player;
 
@@ -17,6 +19,9 @@ public partial class UsageWindow : Window
         InitializeComponent();
         var rows = entries.Select(entry => new UsageRow(entry)).ToList();
         UsageGrid.ItemsSource = rows;
+        // Sort the actual timestamp, not the formatted display text. Nulls remain last.
+        CollectionViewSource.GetDefaultView(rows).SortDescriptions.Add(
+            new SortDescription(nameof(UsageRow.LastPlayedValue), ListSortDirection.Descending));
         LibraryChangeGrid.ItemsSource = libraryChanges.Select(entry => new LibraryChangeRow(entry)).ToList();
 
         var totalSeconds = entries.Sum(entry => entry.TotalPlayedSeconds);

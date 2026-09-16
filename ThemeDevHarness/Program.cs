@@ -8,11 +8,16 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using ZipMp3Player;
 
-internal static class Program
+internal static partial class Program
 {
     [STAThread]
     private static void Main()
     {
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_AUDIO_SETTINGS_TEST") == "1")
+        {
+            VerifyAudioSettingsRestart();
+            return;
+        }
         var archiveCheckPath = Environment.GetEnvironmentVariable("ZIPMP3PLAYER_ARCHIVE_CHECK");
         if (!string.IsNullOrWhiteSpace(archiveCheckPath))
         {

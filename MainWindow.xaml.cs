@@ -56,6 +56,7 @@ public partial class MainWindow : Window
     private bool _faithfulMode;
     private bool _faithfulExclusiveActive;
     private RemasterMode _remasterMode = RemasterMode.Off;
+    private bool _restoringSettings = true;
     private static readonly Dictionary<string, double[]> EqPresets = new()
     {
         ["Flat"] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -209,6 +210,7 @@ public partial class MainWindow : Window
         AlbumFilterTextBox.LostKeyboardFocus += (_, _) => { _albumSearchComposing = false; if (_albumSearchPending) ApplyAlbumSearch(); };
         Closed += (_, _) =>
         {
+            StopAutomaticArtwork();
             _albumSearchTimer.Stop();
             _libraryChangeTimer.Stop();
             _libraryDiscoveryTimer.Stop();
@@ -230,8 +232,12 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
-        LoadSettings();
-        ApplySavedAudioSettings();
+        try
+        {
+            LoadSettings();
+            ApplySavedAudioSettings();
+        }
+        finally { _restoringSettings = false; }
         await ShowLibraryLoadingAsync(
             LocalizationService.Select("音楽ファイルを読み込んでいます…", "Loading music files…"),
             LocalizationService.Select("保存済みライブラリを復元しています", "Restoring the saved library"));
@@ -242,7 +248,7 @@ public partial class MainWindow : Window
         else if (_folders.Count > 0 && (_albums.Count == 0 || _cacheNeedsRefresh))
         {
             await ScanFoldersAsync();
-            if (_cacheNeedsRefresh && _albums.Count > 0) RestoreLastSelection();
+            if (_albums.Count > 0) RestoreLastSelection();
         }
         else if (_albums.Count > 0) RestoreLastSelection();
 
@@ -253,6 +259,7 @@ public partial class MainWindow : Window
         // with the first rendered frame.
         ScheduleLibraryDiscovery(TimeSpan.FromSeconds(5));
         ScheduleRequested3dPreview(args);
+        ConfigureAutomaticArtwork();
     }
 
     private void StartCachedLibraryMaintenance()
@@ -488,7 +495,9 @@ public partial class MainWindow : Window
         SaveLibraryCache();
         var previousLanguage = _settings.DisplayLanguage;
         var dialog = new SettingsWindow(_folders, _disabledFolders, _settings.MinimizeOnClose,
-            DataDirectory, previousLanguage, _settings.TagBackupEnabled, _settings.TagBackupFolder) { Owner = this };
+            DataDirectory, previousLanguage, _settings.TagBackupEnabled, _settings.TagBackupFolder) { Owner = this,
+                AutomaticArtworkEnabled = _settings.AutomaticArtworkEnabled,
+                AutomaticArtworkPaused = _settings.AutomaticArtworkPaused };
         if (dialog.ShowDialog() != true)
         {
             LocalizationService.SetLanguage(previousLanguage);
@@ -499,6 +508,9 @@ public partial class MainWindow : Window
         _settings.DisplayLanguage = dialog.DisplayLanguage;
         _settings.TagBackupEnabled = dialog.TagBackupEnabled;
         _settings.TagBackupFolder = dialog.TagBackupFolder;
+        _settings.AutomaticArtworkEnabled = dialog.AutomaticArtworkEnabled;
+        _settings.AutomaticArtworkPaused = dialog.AutomaticArtworkPaused;
+        ConfigureAutomaticArtwork();
         LocalizationService.SetLanguage(_settings.DisplayLanguage);
         LocalizationService.Apply(this);
         _albumView.Refresh();
@@ -507,6 +519,7 @@ public partial class MainWindow : Window
         UpdateAlbumFilterResult();
         if (dialog.RestoreCompleted)
         {
+            StopAutomaticArtwork();
             _dataRestorePendingRestart = true;
             _cacheSaveTimer.Stop();
             _usageSaveTimer.Stop();
@@ -1683,7 +1696,14 @@ public partial class MainWindow : Window
         {
             await album.EnsureCaseArtworkLoadedAsync(width, cancellationToken);
             return CreateCaseItem();
-        }, album.IsFavorite, album.Album.Tracks.Count);
+        }, album.IsFavorite, album.Album.Tracks.Count)
+        {
+            LoadTileCover = token => Task.Run(() =>
+            {
+                token.ThrowIfCancellationRequested();
+                return album.LoadBrowserTileCover();
+            }, token)
+        };
     }
 
     private void AlbumList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -2020,6 +2040,12 @@ public partial class MainWindow : Window
         {
             if (File.Exists(SettingsPath))
                 _settings = JsonSerializer.Deserialize<PlayerSettings>(File.ReadAllText(SettingsPath)) ?? new PlayerSettings();
+            // Apply the new artwork-first default once; subsequent manual ratios remain saved.
+            if (_settings.ImageLyricsLayoutVersion < 1)
+            {
+                _settings.ImageLyricsRatio = 0.75;
+                _settings.ImageLyricsLayoutVersion = 1;
+            }
             LocalizationService.SetLanguage(_settings.DisplayLanguage);
             LocalizationService.Apply(this);
             foreach (var folder in _settings.MusicFolders)
@@ -2032,18 +2058,26 @@ public partial class MainWindow : Window
 
     private void SaveSettings()
     {
+        if (_restoringSettings) return;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
             _settings.MusicFolders = _folders.ToList();
             _settings.DisabledMusicFolders = _disabledFolders
                 .Where(folder => _folders.Contains(folder, StringComparer.OrdinalIgnoreCase)).ToList();
-            var lastAlbum = _playingAlbum ?? _album;
-            _settings.LastAlbumPath = lastAlbum?.Path;
-            _settings.LastTrackIndex = _playingAlbum is not null
-                ? Math.Max(0, _currentIndex)
-                : (TrackGrid.SelectedIndex >= 0 ? TrackGrid.SelectedIndex : 0);
-            _settings.LastPositionSeconds = _reader?.CurrentTime.TotalSeconds ?? PositionSlider.Value;
+            // Browsing another album without playing it must not replace the last playback target.
+            if (_playingAlbum is not null && _currentIndex >= 0 && _currentIndex < _playingAlbum.Tracks.Count)
+            {
+                _settings.LastAlbumPath = _playingAlbum.Path;
+                _settings.LastTrackIndex = _currentIndex;
+                _settings.LastTrackFileName = _playingAlbum.Tracks[_currentIndex].FileName;
+                _settings.LastPositionSeconds = _reader?.CurrentTime.TotalSeconds ?? PositionSlider.Value;
+            }
+            else if (string.IsNullOrWhiteSpace(_settings.LastAlbumPath) && _album is not null)
+            {
+                _settings.LastAlbumPath = _album.Path;
+                _settings.LastTrackIndex = Math.Max(0, TrackGrid.SelectedIndex);
+            }
             _settings.Volume = VolumeSlider.Value;
             _settings.PlaybackSpeed = _playbackSpeed;
             _settings.PreservePitch = _preservePitch;
@@ -2065,11 +2099,8 @@ public partial class MainWindow : Window
                 var imagePanelTotal = TrackContentRow.ActualHeight + ImageBottomRow.ActualHeight;
                 _settings.ImageBottomRatio = Math.Clamp(ImageBottomRow.ActualHeight / imagePanelTotal, 0.30, 0.75);
             }
-            if (_lyricsPanelExpanded)
-            {
-                var imageLyricsWidth = ArtworkColumn.ActualWidth + LyricsColumn.ActualWidth;
-                if (imageLyricsWidth > 0) _settings.ImageLyricsRatio = Math.Clamp(ArtworkColumn.ActualWidth / imageLyricsWidth, 0.15, 0.85);
-            }
+            // Preserve the selected proportion even when MinWidth constrains a small window.
+            // Only an explicit divider drag changes the stored proportion.
             _settings.LyricsPanelExpanded = _lyricsPanelExpanded;
             _settings.LyricsAutoScroll = LyricsAutoScrollCheck.IsChecked == true;
             _settings.ExtensionPanelExpanded = ExtensionPanel.Visibility == Visibility.Visible;
@@ -2286,21 +2317,42 @@ public partial class MainWindow : Window
 
     private void RestoreLastSelection()
     {
-        var enabledAlbums = _albums.Where(candidate => IsAlbumFolderEnabled(candidate.Album.Path)).ToList();
+        var enabledAlbums = _albums.Where(candidate => IsAlbumFolderEnabled(candidate.Album.Path)
+            && candidate.Album.Tracks.Count > 0).ToList();
         if (enabledAlbums.Count == 0) return;
         var item = enabledAlbums.FirstOrDefault(candidate => string.Equals(candidate.Album.Path, _settings.LastAlbumPath, StringComparison.OrdinalIgnoreCase))
             ?? enabledAlbums.First();
+        var sameAlbum = string.Equals(item.Album.Path, _settings.LastAlbumPath, StringComparison.OrdinalIgnoreCase);
+        var savedTrackIndex = sameAlbum && !string.IsNullOrEmpty(_settings.LastTrackFileName)
+            ? item.Album.Tracks.ToList().FindIndex(track => string.Equals(track.FileName, _settings.LastTrackFileName, StringComparison.OrdinalIgnoreCase)) : -1;
+        if (!MatchesAlbumFilter(item)) AlbumFilterTextBox.Clear();
         AlbumList.SelectedItem = item;
-        var trackIndex = Math.Clamp(_settings.LastTrackIndex, 0, item.Album.Tracks.Count - 1);
+        SetCurrentAlbum(item.Album);
+        if (_albumSortMode == AlbumSortMode.ArtistTree) SelectArtistTreeAlbum(item);
+        var trackIndex = savedTrackIndex >= 0 ? savedTrackIndex
+            : sameAlbum ? Math.Clamp(_settings.LastTrackIndex, 0, item.Album.Tracks.Count - 1) : 0;
+        if (savedTrackIndex >= 0) _settings.LastTrackIndex = savedTrackIndex;
         _currentIndex = trackIndex;
-        TrackGrid.SelectedIndex = trackIndex;
+        TrackGrid.SelectedItem = item.Album.Tracks[trackIndex];
         TrackGrid.ScrollIntoView(item.Album.Tracks[trackIndex]);
         var duration = item.Album.Tracks[trackIndex].Duration.TotalSeconds;
         PositionSlider.Maximum = Math.Max(0.1, duration);
-        PositionSlider.Value = string.Equals(item.Album.Path, _settings.LastAlbumPath, StringComparison.OrdinalIgnoreCase)
+        PositionSlider.Value = sameAlbum && (string.IsNullOrEmpty(_settings.LastTrackFileName) || savedTrackIndex >= 0)
             ? Math.Clamp(_settings.LastPositionSeconds, 0, duration) : 0;
         ElapsedText.Text = FormatTime(TimeSpan.FromSeconds(PositionSlider.Value));
         TotalText.Text = FormatTime(item.Album.Tracks[trackIndex].Duration);
+        // Wait until WPF has generated the row containers before scrolling/focusing.
+        Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
+        {
+            var track = item.Album.Tracks[trackIndex];
+            if (!ReferenceEquals(_album, item.Album) || !ReferenceEquals(TrackGrid.SelectedItem, track)) return;
+            AlbumList.ScrollIntoView(item);
+            TrackGrid.ScrollIntoView(track);
+            TrackGrid.UpdateLayout();
+            TrackGrid.Focus();
+            if (TrackGrid.ItemContainerGenerator.ContainerFromItem(track) is System.Windows.Controls.DataGridRow row)
+                row.Focus();
+        }));
     }
 
     private void PlayTrack(int index, TimeSpan? startAt = null, bool startPlaying = true)
@@ -3297,6 +3349,7 @@ public partial class MainWindow : Window
     private void EqEnabled_Changed(object sender, RoutedEventArgs e)
     {
         if (_equalizer is not null) _equalizer.Enabled = EqEnabledCheck.IsChecked == true;
+        if (IsLoaded) SaveSettings();
     }
 
     private void BassBoostEnabled_Changed(object sender, RoutedEventArgs e)
@@ -4961,11 +5014,6 @@ public partial class MainWindow : Window
 
     private void LyricsPanelToggle_Click(object sender, RoutedEventArgs e)
     {
-        if (_lyricsPanelExpanded)
-        {
-            var total = ArtworkColumn.ActualWidth + LyricsColumn.ActualWidth;
-            if (total > 0) _settings.ImageLyricsRatio = Math.Clamp(ArtworkColumn.ActualWidth / total, 0.15, 0.85);
-        }
         _lyricsPanelExpanded = !_lyricsPanelExpanded;
         _settings.LyricsPanelExpanded = _lyricsPanelExpanded;
         ApplyImageLyricsRatio();
@@ -4974,6 +5022,22 @@ public partial class MainWindow : Window
 
     private void ImageLyricsSplitter_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e)
     {
+        if (!e.Canceled && _lyricsPanelExpanded)
+        {
+            var total = ArtworkColumn.ActualWidth + LyricsColumn.ActualWidth;
+            if (total > 0) _settings.ImageLyricsRatio = Math.Clamp(ArtworkColumn.ActualWidth / total, 0.15, 0.85);
+        }
+        ApplyImageLyricsRatio();
+        if (IsLoaded) SaveSettings();
+    }
+
+    private void ImageLyricsPreset_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.MenuItem { Tag: string value }
+            || !double.TryParse(value, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var ratio)) return;
+        _settings.ImageLyricsRatio = Math.Clamp(ratio, 0.15, 0.85);
+        ApplyImageLyricsRatio();
         if (IsLoaded) SaveSettings();
     }
 
@@ -5274,8 +5338,6 @@ public partial class MainWindow : Window
             && _selectedAlbumImageIndex < _albumImages.Count;
         RotateAlbumImageLeftButton.IsEnabled = enabled;
         RotateAlbumImageRightButton.IsEnabled = enabled;
-        ResetAlbumImageRotationButton.IsEnabled = enabled
-            && _albumImages[_selectedAlbumImageIndex].RotationDegrees != 0;
     }
 
     private AlbumImageSource SetArtworkRotation(AlbumImageSource source, int degrees)
@@ -5314,12 +5376,6 @@ public partial class MainWindow : Window
         if (_selectedAlbumImageIndex < 0 || _selectedAlbumImageIndex >= _albumImages.Count) return;
         var source = _albumImages[_selectedAlbumImageIndex];
         SetArtworkRotation(source, source.RotationDegrees + 90);
-    }
-
-    private void ResetAlbumImageRotation_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedAlbumImageIndex < 0 || _selectedAlbumImageIndex >= _albumImages.Count) return;
-        SetArtworkRotation(_albumImages[_selectedAlbumImageIndex], 0);
     }
 
     private bool CanDeleteAlbumImage(int index)
@@ -5464,7 +5520,6 @@ public partial class MainWindow : Window
         DeleteAlbumImageButton.IsEnabled = false;
         RotateAlbumImageLeftButton.IsEnabled = false;
         RotateAlbumImageRightButton.IsEnabled = false;
-        ResetAlbumImageRotationButton.IsEnabled = false;
         AdjustSpineCardFoldsButton.IsEnabled = false;
         AdjustSpineCardFoldsButton.Visibility = Visibility.Collapsed;
         ArtworkRoleCombo.IsEnabled = false;
@@ -5613,6 +5668,10 @@ public partial class MainWindow : Window
 
     private sealed class PlayerSettings
     {
+        public bool AutomaticArtworkEnabled { get; set; }
+        public int AutomaticArtworkProviderVersion { get; set; }
+        public bool AutomaticArtworkPaused { get; set; }
+        public Dictionary<string, DateTimeOffset> AutomaticArtworkNextAttempts { get; set; } = new();
         public List<string> MusicFolders { get; set; } = [];
         public List<string> DisabledMusicFolders { get; set; } = [];
         public bool MinimizeOnClose { get; set; }
@@ -5621,6 +5680,7 @@ public partial class MainWindow : Window
         public string DisplayLanguage { get; set; } = LocalizationService.Japanese;
         public string? LastAlbumPath { get; set; }
         public int LastTrackIndex { get; set; }
+        public string? LastTrackFileName { get; set; }
         public double LastPositionSeconds { get; set; }
         public double Volume { get; set; } = 0.8;
         public double PlaybackSpeed { get; set; } = 1.0;
@@ -5638,7 +5698,8 @@ public partial class MainWindow : Window
         public string AlbumSort { get; set; } = "Artist";
         public string ImagePanelLayout { get; set; } = "Bottom";
         public double ImageBottomRatio { get; set; } = 0.56;
-        public double ImageLyricsRatio { get; set; } = 0.6;
+        public double ImageLyricsRatio { get; set; } = 0.75;
+        public int ImageLyricsLayoutVersion { get; set; }
         public bool LyricsPanelExpanded { get; set; } = true;
         public bool LyricsAutoScroll { get; set; } = true;
         public bool ExtensionPanelExpanded { get; set; } = true;
@@ -5987,7 +6048,10 @@ public partial class MainWindow : Window
             }
         }
 
-        private (BitmapSource? Image, string Description) LoadCoverThumbnail(string downloadedDirectory)
+        public BitmapSource? LoadBrowserTileCover() =>
+            LoadCoverThumbnail(GetDownloadedArtworkDirectory(Album.Path), 384).Image;
+
+        private (BitmapSource? Image, string Description) LoadCoverThumbnail(string downloadedDirectory, int pixels = 120)
         {
             var rotations = LoadArtworkRotations(Album.Path);
             var sources = GetCaseArtworkSources(Album, downloadedDirectory);
@@ -5998,8 +6062,11 @@ public partial class MainWindow : Window
             {
                 try
                 {
-                    return (LoadFrontSpreadThumbnail(Album.Path, frontSpread,
-                            GetEffectiveArtworkRole(frontSpread, roles)),
+                    var role = GetEffectiveArtworkRole(frontSpread, roles);
+                    var front = pixels == 120 ? LoadFrontSpreadThumbnail(Album.Path, frontSpread, role)
+                        : CropArtwork(LoadBitmap(frontSpread, role == "FrontSpreadVertical" ? pixels : pixels * 2),
+                            role == "FrontSpreadVertical" ? "TopHalf" : role == "FrontSpreadReversed" ? "LeftHalf" : "RightHalf");
+                    return (front,
                         $"{frontSpread.DisplayName}\n{frontSpread.Description}");
                 }
                 catch { }
@@ -6009,11 +6076,11 @@ public partial class MainWindow : Window
                 try
                 {
                     if (source.ZipEntry is not null)
-                        return (LoadBitmap(source, 120), $"ZIP内画像\n{source.ZipEntry.FileName}");
+                        return (LoadBitmap(source, pixels), $"ZIP内画像\n{source.ZipEntry.FileName}");
                     var path = source.FilePath!;
                     var managed = string.Equals(Path.GetDirectoryName(Path.GetFullPath(path)),
                         Path.GetFullPath(downloadedDirectory), StringComparison.OrdinalIgnoreCase);
-                    return (LoadBitmap(source, 120), managed
+                    return (LoadBitmap(source, pixels), managed
                         ? $"{GetManagedArtworkDisplayName(path)}\n{path}"
                         : $"アルバムフォルダ画像\n{path}");
                 }

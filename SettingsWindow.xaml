@@ -80,6 +80,9 @@
         </DockPanel>
         <CheckBox x:Name="MinimizeOnCloseCheck" Content="右上の×で終了せず、タスクバーへ最小化する"
                   Margin="0,7,0,0" ToolTip="再生を続けたまま最小化します。終了は設定画面の［アプリを終了］を使用します。"/>
+        <CheckBox x:Name="AutomaticArtworkCheck" Content="画像のないアルバムのジャケットを自動取得する" Margin="0,7,0,0"
+                  ToolTip="作品名・アーティスト名をMusicBrainzとTheAudioDBへ送信します。高解像度を優先し、600px未満は保存しません。音楽・ZIPは変更しません。"/>
+        <CheckBox x:Name="AutomaticArtworkPauseCheck" Content="自動取得を一時停止（保存して反映）" Margin="20,5,0,0"/>
       </StackPanel>
     </Border>
     <DockPanel Grid.Row="6">

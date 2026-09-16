@@ -16,10 +16,26 @@ public sealed record AlbumLibraryBrowserItem(JewelCaseCoverFlowItem CaseItem, Bi
     Func<int, CancellationToken, Task<JewelCaseCoverFlowItem>>? LoadCaseItem = null, bool IsFavorite = false,
     int TrackCount = 0)
 {
+    public BrowserTileArtwork TileArtwork { get; init; } = new(TileCover);
+    public Func<CancellationToken, Task<BitmapSource?>>? LoadTileCover { get; init; }
     public string Key => CaseItem.Key;
     public string Title => CaseItem.Title;
     public string Artist => CaseItem.Artist;
     public bool IsPlaying => CaseItem.IsPlaying;
+}
+
+public sealed class BrowserTileArtwork : INotifyPropertyChanged
+{
+    private readonly BitmapSource? _original;
+    private BitmapSource? _image;
+    public BrowserTileArtwork(BitmapSource? original) { _original = original; _image = original; }
+    public BitmapSource? Image => _image;
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public void SetImage(BitmapSource? image)
+    {
+        _image = image ?? _original;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Image)));
+    }
 }
 
 public sealed record AlbumBrowserPlaybackState(string TrackTitle, bool IsPlaying, bool HasTrack, double Volume);
@@ -108,6 +124,7 @@ public partial class AlbumLibraryBrowserWindow : Window
         ShowTiles();
         Loaded += (_, _) =>
         {
+            StartTileArtworkLoading();
             if (TileList.SelectedItem is not null) TileList.ScrollIntoView(TileList.SelectedItem);
             _tileScrollViewer = FindVisualChild<ScrollViewer>(TileList);
             _tileScrollTarget = _tileScrollViewer?.VerticalOffset ?? 0;
@@ -120,6 +137,7 @@ public partial class AlbumLibraryBrowserWindow : Window
         };
         Closed += (_, _) =>
         {
+            StopTileArtworkLoading();
             StopAttractMode();
             _playbackStateTimer.Stop();
             _tileScrollTimer.Stop();
@@ -484,6 +502,7 @@ public partial class AlbumLibraryBrowserWindow : Window
 
     private void TileList_ScrollChanged(object sender, ScrollChangedEventArgs e)
     {
+        _lastTileScrollUtc = DateTime.UtcNow;
         if (!_animatingTileScroll && !_tileScrollTimer.IsEnabled)
             _tileScrollTarget = e.VerticalOffset;
     }

@@ -64,7 +64,7 @@
     <Border Background="#1D2A35" BorderBrush="#36556F" BorderThickness="1" CornerRadius="7" Padding="14,10" Margin="0,0,0,10">
       <DockPanel>
         <StackPanel DockPanel.Dock="Left">
-          <TextBlock Text="再生履歴ダッシュボード" FontSize="20" FontWeight="SemiBold"/>
+          <TextBlock Text="再生履歴" FontSize="20" FontWeight="SemiBold"/>
           <TextBlock Text="これまでの再生記録を集計して表示します" Foreground="#9EABB8" FontSize="11" Margin="0,3,0,0"/>
         </StackPanel>
         <TextBlock x:Name="SummaryText" Foreground="#B8C2CE" HorizontalAlignment="Right" TextAlignment="Right" VerticalAlignment="Center"/>
@@ -134,7 +134,7 @@
         </ScrollViewer>
       </TabItem>
 
-      <TabItem Header="すべての履歴">
+      <TabItem Header="すべての履歴" IsSelected="True">
         <DataGrid x:Name="UsageGrid" AutoGenerateColumns="False" IsReadOnly="True"
                   SelectionMode="Single" SelectionUnit="FullRow" CanUserAddRows="False" CanUserDeleteRows="False"
                   MouseDoubleClick="UsageGrid_MouseDoubleClick"
@@ -148,7 +148,7 @@
             <DataGridTextColumn Header="再生回数" Binding="{Binding PlayCount}" Width="82"/>
             <DataGridTextColumn Header="累計再生時間" Binding="{Binding PlayedTime}" SortMemberPath="PlayedSeconds" Width="112"/>
             <DataGridTextColumn Header="曲の長さ" Binding="{Binding Duration}" SortMemberPath="DurationSeconds" Width="88"/>
-            <DataGridTextColumn Header="最終再生" Binding="{Binding LastPlayed}" SortMemberPath="LastPlayedValue" Width="135"/>
+            <DataGridTextColumn Header="最終再生" Binding="{Binding LastPlayed}" SortMemberPath="LastPlayedValue" SortDirection="Descending" Width="135"/>
           </DataGrid.Columns>
         </DataGrid>
       </TabItem>
