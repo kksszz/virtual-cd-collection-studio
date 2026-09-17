@@ -73,6 +73,38 @@ internal sealed partial class AlbumArtworkLookupService
     private static DateTime _lastMusicBrainzRequestUtc = DateTime.MinValue;
 
     public async Task<IReadOnlyList<AlbumArtworkCandidate>> SearchAsync(
+        string album, string artist, CancellationToken cancellationToken, Action<string>? fallbackStarted = null)
+    {
+        var results = await SearchOnceAsync(album, artist, cancellationToken);
+        if (results.Count != 0) return results;
+        var simplified = SimplifyManualSearchTitle(album);
+        if (string.IsNullOrWhiteSpace(simplified) || simplified == album) return results;
+        cancellationToken.ThrowIfCancellationRequested();
+        fallbackStarted?.Invoke(simplified);
+        return await SearchOnceAsync(simplified, artist, cancellationToken);
+    }
+
+    internal static string SimplifyManualSearchTitle(string album)
+    {
+        var title = album.TrimEnd();
+        // Remove only recognized trailing annotations, never arbitrary bracketed title text.
+        while (true)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(title,
+                @"\s*(?:\[(?<note>[^\[\]]+)\]|【(?<note>[^【】]+)】|\((?<note>[^()]+)\)|（(?<note>[^（）]+)）)$");
+            if (!match.Success) break;
+            var note = match.Groups["note"].Value.Normalize(NormalizationForm.FormKC).Trim();
+            if (!System.Text.RegularExpressions.Regex.IsMatch(note,
+                @"^(?:(?:disc|disk|cd)\s*[-#]?\s*\d+(?:\s*(?:/|of)\s*\d+)?|bonus\s+tracks?|ボーナス\s*トラック)$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant)) break;
+            var shorter = title[..match.Index].TrimEnd();
+            if (string.IsNullOrWhiteSpace(shorter)) break;
+            title = shorter;
+        }
+        return title == album.TrimEnd() ? album : title;
+    }
+
+    private async Task<IReadOnlyList<AlbumArtworkCandidate>> SearchOnceAsync(
         string album, string artist, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(album)) return [];

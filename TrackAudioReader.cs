@@ -22,6 +22,16 @@ internal sealed class TrackAudioReader : IDisposable
 
     private static TrackAudioReader OpenCore(ZipTrack track, bool trimGapless)
     {
+        if (track.AudioFormat == "CD-DA")
+        {
+            if (string.IsNullOrWhiteSpace(track.CuePath) || track.Size <= 0 || track.DataOffset < 0
+                || track.DataOffset % 2352 != 0 || track.Size % 2352 != 0
+                || new FileInfo(track.SourcePath).Length < track.DataOffset + track.Size)
+                throw new InvalidDataException("CD音声の範囲が不正です。再スキャンしてください。");
+            var raw = new BoundedFileStream(track.SourcePath, track.DataOffset, track.Size);
+            try { return new TrackAudioReader(new RawSourceWaveStream(raw, new WaveFormat(44100, 16, 2)), raw); }
+            catch { raw.Dispose(); throw; }
+        }
         // NAudio's ACM-backed Mp3FileReader recognizes MPEG Layer II headers but
         // returns zero decoded bytes for these files. Windows Media Foundation
         // decodes the same stream correctly, so route MP2 through it explicitly.

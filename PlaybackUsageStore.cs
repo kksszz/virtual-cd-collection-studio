@@ -60,8 +60,8 @@ internal sealed class PlaybackUsageStore
 
     public void RelocateTrack(ZipTrack track, string newSourcePath)
     {
-        var oldKey = CreateTrackKey(track.SourcePath, track.IsArchiveEntry, track.FileName);
-        var newKey = CreateTrackKey(newSourcePath, track.IsArchiveEntry, track.FileName);
+        var oldKey = CreateTrackKey(track.SourcePath, track.IsArchiveEntry || track.CuePath.Length > 0, track.FileName);
+        var newKey = CreateTrackKey(newSourcePath, track.IsArchiveEntry || track.CuePath.Length > 0, track.FileName);
         if (string.Equals(oldKey, newKey, StringComparison.Ordinal) || !_entries.TryGetValue(oldKey, out var oldEntry)) return;
         _entries.Remove(oldKey);
         if (_entries.TryGetValue(newKey, out var target))
@@ -103,7 +103,7 @@ internal sealed class PlaybackUsageStore
         }
     }
 
-    internal static string CreateTrackKey(ZipTrack track) => CreateTrackKey(track.SourcePath, track.IsArchiveEntry, track.FileName);
+    internal static string CreateTrackKey(ZipTrack track) => CreateTrackKey(track.SourcePath, track.IsArchiveEntry || track.CuePath.Length > 0, track.FileName);
 
     private static string CreateTrackKey(string sourcePath, bool isArchiveEntry, string fileName)
     {

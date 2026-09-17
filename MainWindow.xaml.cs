@@ -161,6 +161,7 @@ public partial class MainWindow : Window
     {
         LocalizationService.InitializeFromSettings(SettingsPath);
         InitializeComponent();
+        InitializeSeekTimePreview();
         LocalizationService.Apply(this);
         AlbumCoverFlow.PlaybackActiveProvider = IsAlbumActivelyPlaying;
         AlbumCoverFlow.PlaybackStateProvider = GetJewelCasePlaybackState;
@@ -199,6 +200,11 @@ public partial class MainWindow : Window
         _albumView = System.Windows.Data.CollectionViewSource.GetDefaultView(_albums);
         _albumView.Filter = item => item is AlbumListItem album && MatchesAlbumFilter(album);
         AlbumList.ItemsSource = _albumView;
+        AlbumList.IsKeyboardFocusWithinChanged += (_, _) =>
+        {
+            if (!AlbumList.IsKeyboardFocusWithin) _albumTypeNavigation.Reset();
+        };
+        AlbumList.PreviewMouseDown += (_, _) => _albumTypeNavigation.Reset();
         ArtistTree.ItemsSource = _artistTreeRoots;
         _albumSearchTimer.Tick += (_, _) => ApplyAlbumSearch();
         TextCompositionManager.AddPreviewTextInputStartHandler(AlbumFilterTextBox, (_, _) =>
@@ -308,7 +314,7 @@ public partial class MainWindow : Window
                     var exists = await Task.Run(() =>
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        return item.IsArchive ? File.Exists(item.Album.Path) : Directory.Exists(item.Album.Path);
+                        return item.IsArchive || CueAlbumReader.IsCue(item.Album.Path) ? File.Exists(item.Album.Path) : Directory.Exists(item.Album.Path);
                     }, cancellationToken);
                     if (!exists)
                     {
@@ -376,8 +382,8 @@ public partial class MainWindow : Window
         {
             Title = LocalizationService.Select("アルバムまたは音楽ファイルを開く", "Open an album or music file"),
             Filter = LocalizationService.Select(
-                "対応音楽ファイル (*.zip.mp3;*.zip;*.mp3;*.wav;*.flac;*.m4a)|*.zip.mp3;*.zip;*.mp3;*.wav;*.flac;*.m4a|すべてのファイル (*.*)|*.*",
-                "Supported music files (*.zip.mp3;*.zip;*.mp3;*.wav;*.flac;*.m4a)|*.zip.mp3;*.zip;*.mp3;*.wav;*.flac;*.m4a|All files (*.*)|*.*")
+                "対応音楽ファイル|*.zip.mp3;*.zip;*.mp3;*.wav;*.flac;*.m4a;*.cue;*.iso;*.bin|すべてのファイル (*.*)|*.*",
+                "Supported music files|*.zip.mp3;*.zip;*.mp3;*.wav;*.flac;*.m4a;*.cue;*.iso;*.bin|All files (*.*)|*.*")
         };
         if (dialog.ShowDialog(this) == true) await OpenAlbumAsync(dialog.FileName);
     }
@@ -390,6 +396,7 @@ public partial class MainWindow : Window
         try
         {
             StatusText.Text = "アルバムを解析しています…";
+            if (CueAlbumReader.IsImage(path)) path = CueAlbumReader.ResolveCue(path);
             var standardAudio = ZipAlbumReader.IsStandardAudioPath(path);
             var albumPath = standardAudio ? Path.GetDirectoryName(Path.GetFullPath(path))! : path;
             var album = await Task.Run(() => standardAudio
@@ -539,6 +546,9 @@ public partial class MainWindow : Window
         }
         var foldersChanged = !_folders.SequenceEqual(dialog.Folders, StringComparer.OrdinalIgnoreCase);
         var visibilityChanged = !_disabledFolders.SetEquals(dialog.DisabledFolders);
+        var priorityFolders = dialog.Folders.Where(folder =>
+            !_folders.Contains(folder, StringComparer.OrdinalIgnoreCase)
+            || (_disabledFolders.Contains(folder) && !dialog.DisabledFolders.Contains(folder, StringComparer.OrdinalIgnoreCase))).ToArray();
         _folders.Clear();
         foreach (var folder in dialog.Folders) _folders.Add(folder);
         _disabledFolders.Clear();
@@ -554,6 +564,13 @@ public partial class MainWindow : Window
             return;
         }
         if (dialog.RescanRequested || dialog.Relocations.Count > 0) await ScanFoldersAsync();
+        else if (priorityFolders.Length > 0)
+        {
+            // Probe added/enabled roots directly, without waiting behind older roots.
+            foreach (var folder in priorityFolders) _pendingLibraryChanges[folder] = 0;
+            _libraryChangeTimer.Stop();
+            _libraryChangeTimer.Start();
+        }
     }
 
     private void MigrateFolderData(FolderRelocation relocation)
@@ -584,8 +601,8 @@ public partial class MainWindow : Window
             {
                 var newSourcePath = TranslateFolderPath(track.SourcePath, relocation.OldPath, relocation.NewPath);
                 if (newSourcePath is null) continue;
-                var oldLyrics = GetSavedLyricsPathForIdentity(album.Path, track.SourcePath, track.FileName, track.IsArchiveEntry);
-                var newLyrics = GetSavedLyricsPathForIdentity(newAlbumPath, newSourcePath, track.FileName, track.IsArchiveEntry);
+                var oldLyrics = GetSavedLyricsPathForIdentity(album.Path, track.SourcePath, track.FileName, track.IsArchiveEntry || track.CuePath.Length > 0);
+                var newLyrics = GetSavedLyricsPathForIdentity(newAlbumPath, newSourcePath, track.FileName, track.IsArchiveEntry || track.CuePath.Length > 0);
                 if (File.Exists(oldLyrics) && !File.Exists(newLyrics))
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(newLyrics)!);
@@ -772,7 +789,7 @@ public partial class MainWindow : Window
         var foundMissing = false;
         try
         {
-            var roots = _folders.ToArray();
+            var roots = _folders.OrderBy(folder => _disabledFolders.Contains(folder)).ToArray();
             var knownPaths = _albums.Select(item => item.Album.Path).ToArray();
             var missing = await Task.Run(() => DiscoverUntrackedAlbums(roots, knownPaths, token), token);
             if (token.IsCancellationRequested || missing.Count == 0) return;
@@ -867,7 +884,7 @@ public partial class MainWindow : Window
         {
             token.ThrowIfCancellationRequested();
             string? candidate = null;
-            if (ZipAlbumReader.IsSupportedArchivePath(file)) candidate = file;
+            if (ZipAlbumReader.IsSupportedArchivePath(file) || CueAlbumReader.IsCue(file)) candidate = file;
             else if (ZipAlbumReader.IsStandardAudioPath(file)) candidate = directory;
             var normalized = candidate is null ? null : NormalizeLibraryPath(candidate);
             if (normalized is not null && !known.Contains(normalized)) return normalized;
@@ -985,8 +1002,14 @@ public partial class MainWindow : Window
         foreach (var changedPath in changes)
         {
             token.ThrowIfCancellationRequested();
-            if (ZipAlbumReader.IsSupportedArchivePath(changedPath))
+            if (ZipAlbumReader.IsSupportedArchivePath(changedPath) || CueAlbumReader.IsCue(changedPath))
                 candidates.Add(changedPath);
+            else if (CueAlbumReader.IsImage(changedPath))
+            {
+                var cueDirectory = Path.GetDirectoryName(changedPath);
+                if (cueDirectory is not null && Directory.Exists(cueDirectory))
+                    foreach (var cue in Directory.EnumerateFiles(cueDirectory, "*.cue")) candidates.Add(cue);
+            }
             else if (ZipAlbumReader.IsStandardAudioPath(changedPath))
             {
                 var parent = Path.GetDirectoryName(changedPath);
@@ -1017,7 +1040,7 @@ public partial class MainWindow : Window
                 foreach (var file in Directory.EnumerateFiles(scope, "*", options))
                 {
                     token.ThrowIfCancellationRequested();
-                    if (ZipAlbumReader.IsSupportedArchivePath(file)) candidates.Add(file);
+                    if (ZipAlbumReader.IsSupportedArchivePath(file) || CueAlbumReader.IsCue(file)) candidates.Add(file);
                     else if (ZipAlbumReader.IsStandardAudioPath(file))
                     {
                         var parent = Path.GetDirectoryName(file);
@@ -1038,7 +1061,7 @@ public partial class MainWindow : Window
             try
             {
                 ZipAlbum? album = null;
-                if (ZipAlbumReader.IsSupportedArchivePath(candidate))
+                if (ZipAlbumReader.IsSupportedArchivePath(candidate) || CueAlbumReader.IsCue(candidate))
                 {
                     if (File.Exists(candidate)) album = ZipAlbumReader.Open(candidate);
                 }
@@ -1161,6 +1184,7 @@ public partial class MainWindow : Window
     private static bool IsLibraryContentPath(string path)
     {
         if (ZipAlbumReader.IsSupportedArchivePath(path)
+            || CueAlbumReader.IsCue(path) || CueAlbumReader.IsImage(path)
             || ZipAlbumReader.IsStandardAudioPath(path)) return true;
         var extension = Path.GetExtension(path);
         return extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
@@ -1265,7 +1289,6 @@ public partial class MainWindow : Window
         {
             "Album" => AlbumSortMode.Album,
             "ArtistTree" => AlbumSortMode.ArtistTree,
-            "CoverFlow" => AlbumSortMode.CoverFlow,
             _ => AlbumSortMode.Artist
         };
         ApplyAlbumViewMode();
@@ -1356,7 +1379,8 @@ public partial class MainWindow : Window
         var enabled = _albums.Count(album => IsAlbumFolderEnabled(album.Album.Path));
         var visible = _albumView.Cast<object>().Count();
         AlbumFilterResultText.Text = string.IsNullOrWhiteSpace(AlbumFilterTextBox?.Text)
-            ? $"{enabled}件" : $"{visible}/{enabled}件";
+            ? LocalizationService.Select($"{enabled}件", $"{enabled} items")
+            : LocalizationService.Select($"{visible}/{enabled}件", $"{visible}/{enabled} items");
         QueueCoverFlowRefresh();
     }
 
@@ -1505,7 +1529,7 @@ public partial class MainWindow : Window
             if (!Directory.Exists(folder)) continue;
             foreach (var file in Directory.EnumerateFiles(folder, "*", options))
             {
-                if (ZipAlbumReader.IsSupportedArchivePath(file)) archivePaths.Add(file);
+                if (ZipAlbumReader.IsSupportedArchivePath(file) || CueAlbumReader.IsCue(file)) archivePaths.Add(file);
                 else if (ZipAlbumReader.IsStandardAudioPath(file)) albumFolders.Add(Path.GetDirectoryName(file)!);
             }
         }
@@ -2149,11 +2173,12 @@ public partial class MainWindow : Window
         _repeat = Enum.IsDefined(typeof(RepeatMode), _settings.RepeatMode) ? (RepeatMode)_settings.RepeatMode : RepeatMode.Off;
         RepeatButton.Content = _repeat switch { RepeatMode.All => "↻ 全曲", RepeatMode.One => "↻ 1曲", _ => "↻ OFF" };
         _albumSortMode = Enum.TryParse<AlbumSortMode>(_settings.AlbumSort, true, out var albumSort) ? albumSort : AlbumSortMode.Artist;
+        // The sidebar CoverFlow option was retired; retain the separate album browser's 3D modes.
+        if (_albumSortMode == AlbumSortMode.CoverFlow) _albumSortMode = AlbumSortMode.Artist;
         AlbumSortCombo.SelectedIndex = _albumSortMode switch
         {
             AlbumSortMode.Album => 1,
             AlbumSortMode.ArtistTree => 2,
-            AlbumSortMode.CoverFlow => 3,
             _ => 0
         };
         ApplyAlbumViewMode();
@@ -2460,7 +2485,7 @@ public partial class MainWindow : Window
             {
                 _timer.Stop(); PlayButton.Content = "▶ 再生"; PlaybackStatusText.Text = "一時停止"; PlaybackBadgeText.Text = "一時停止";
             }
-            Title = $"{track.Title} — {_applicationTitle}";
+            Title = FormatPlaybackWindowTitle(track);
         }
         catch (Exception ex)
         {
@@ -2752,6 +2777,11 @@ public partial class MainWindow : Window
 
         var album = _album;
         var selectedFileName = (TrackGrid.SelectedItem as ZipTrack)?.FileName;
+        if (CueAlbumReader.IsCue(album.Path))
+        {
+            MessageBox.Show(this, "CUE音源は元ファイルを書き換えません。右クリックの「CUEの曲情報を取得…」をご利用ください。", "CUE", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
         var dialog = new TagEditorWindow(album, selectedFileName) { Owner = this };
         if (dialog.ShowDialog() != true || dialog.EditedTracks.Count == 0) return;
         var selectedResultFileName = dialog.EditedTracks.FirstOrDefault(update =>
@@ -3492,7 +3522,7 @@ public partial class MainWindow : Window
         if (_reader is not null)
         {
             if (!_draggingPosition) PositionSlider.Value = Math.Min(PositionSlider.Maximum, _reader.CurrentTime.TotalSeconds);
-            ElapsedText.Text = FormatTime(_reader.CurrentTime);
+            ElapsedText.Text = FormatTime(_draggingPosition ? TimeSpan.FromSeconds(PositionSlider.Value) : _reader.CurrentTime);
             WaveformDisplay.SetSamples(_waveform?.GetSnapshot());
             SpectrumDisplay.SetBands(_spectrum?.GetSnapshot());
             UpdateLyricsAutoScroll(_reader.CurrentTime.TotalSeconds, _reader.TotalTime.TotalSeconds);
@@ -3555,7 +3585,7 @@ public partial class MainWindow : Window
         TotalText.Text = FormatTime(snapshot.Duration);
         ShowNowPlaying(snapshot.Entry.Track);
         StartUsageTracking(snapshot.Entry.Track, countAsNewSession: true);
-        Title = $"{snapshot.Entry.Track.Title} — {_applicationTitle}";
+        Title = FormatPlaybackWindowTitle(snapshot.Entry.Track);
         PlaybackStatusText.Text = _output?.PlaybackState == PlaybackState.Paused
             ? LocalizationService.Select("一時停止", "Paused")
             : LocalizationService.Select($"再生中: {snapshot.Entry.Track.Title}  •  ギャップレス",
@@ -3682,10 +3712,7 @@ public partial class MainWindow : Window
         SpectrumTitleText.Text = string.IsNullOrWhiteSpace(track.Title) ? track.FileName : track.Title;
         SpectrumArtistText.Text = artist;
         var album = string.IsNullOrWhiteSpace(track.Album) ? "アルバム不明" : track.Album;
-        var details = new List<string> { artist };
-        var selectedAlbumTitle = _album?.Tracks.FirstOrDefault()?.Album;
-        if (!AreDisplayValuesEquivalent(album, artist) && !AreDisplayValuesEquivalent(album, selectedAlbumTitle))
-            details.Add(album);
+        var details = new List<string> { artist, album };
         details.Add($"#{track.TrackNumber}");
         details.Add(track.DurationText);
         details.Add(track.AudioText);
@@ -3769,7 +3796,7 @@ public partial class MainWindow : Window
         if (!track.IsArchiveEntry)
         {
             var directory = Path.GetDirectoryName(track.SourcePath);
-            var baseName = Path.GetFileNameWithoutExtension(track.SourcePath);
+            var baseName = track.CuePath.Length > 0 ? track.FileName : Path.GetFileNameWithoutExtension(track.SourcePath);
             if (!string.IsNullOrWhiteSpace(directory))
             {
                 candidates.Add(Path.Combine(directory, baseName + ".lrc"));
@@ -3838,7 +3865,7 @@ public partial class MainWindow : Window
     }
 
     private static string GetSavedLyricsPath(ZipAlbum album, ZipTrack track) =>
-        GetSavedLyricsPathForIdentity(album.Path, track.SourcePath, track.FileName, track.IsArchiveEntry);
+        GetSavedLyricsPathForIdentity(album.Path, track.SourcePath, track.FileName, track.IsArchiveEntry || track.CuePath.Length > 0);
 
     private static void UpdateLyricsIndicators(ZipAlbum album)
     {
@@ -4279,6 +4306,14 @@ public partial class MainWindow : Window
         return match.Success && int.TryParse(match.Groups[1].Value, out var sequence) ? sequence : int.MaxValue;
     }
 
+    private static int GetFrontArtworkPriority(string role) => role switch
+    {
+        "FrontSpread" or "FrontSpreadReversed" => 0,
+        "Front" => 1,
+        "FrontSpreadVertical" => 2,
+        _ => int.MaxValue
+    };
+
     private static int GetDefaultAlbumImageIndex(IEnumerable<string> effectiveRoles)
     {
         var fallbackIndex = -1;
@@ -4288,13 +4323,7 @@ public partial class MainWindow : Window
         foreach (var role in effectiveRoles)
         {
             if (fallbackIndex < 0) fallbackIndex = index;
-            var priority = role switch
-            {
-                "FrontSpread" or "FrontSpreadReversed" => 0,
-                "Front" => 1,
-                "FrontSpreadVertical" => 2,
-                _ => int.MaxValue
-            };
+            var priority = GetFrontArtworkPriority(role);
             if (priority < preferredPriority)
             {
                 preferredIndex = index;
@@ -5864,10 +5893,10 @@ public partial class MainWindow : Window
         public bool IsPlaying => _isPlaying;
         public bool IsArchive => Album.Tracks.FirstOrDefault()?.IsArchiveEntry == true;
         public bool IsZipMp3 => IsArchive && Album.Path.EndsWith(".zip.mp3", StringComparison.OrdinalIgnoreCase);
-        public string SourceBadge => IsZipMp3 ? "ZIP.MP3" : IsArchive ? "ZIP" : "DIR";
+        public string SourceBadge => CueAlbumReader.IsCue(Album.Path) ? "CUE" : IsZipMp3 ? "ZIP.MP3" : IsArchive ? "ZIP" : "DIR";
         public string SourceDescription => LocalizationService.Select(
-            $"{Title}\n形式: {(IsZipMp3 ? "ZIP.MP3" : IsArchive ? "ZIP" : "音楽フォルダ")}\n場所: {Album.Path}",
-            $"{Title}\nType: {(IsZipMp3 ? "ZIP.MP3" : IsArchive ? "ZIP" : "Music folder")}\nLocation: {Album.Path}");
+            $"{Title}\n形式: {(CueAlbumReader.IsCue(Album.Path) ? "CUE / CD-DA" : IsZipMp3 ? "ZIP.MP3" : IsArchive ? "ZIP" : "音楽フォルダ")}\n場所: {Album.Path}",
+            $"{Title}\nType: {(CueAlbumReader.IsCue(Album.Path) ? "CUE / CD-DA" : IsZipMp3 ? "ZIP.MP3" : IsArchive ? "ZIP" : "Music folder")}\nLocation: {Album.Path}");
         public AlbumListItem(ZipAlbum album) : this(album, loadArtwork: true)
         {
         }
@@ -6053,28 +6082,22 @@ public partial class MainWindow : Window
 
         private (BitmapSource? Image, string Description) LoadCoverThumbnail(string downloadedDirectory, int pixels = 120)
         {
-            var rotations = LoadArtworkRotations(Album.Path);
             var sources = GetCaseArtworkSources(Album, downloadedDirectory);
             var roles = LoadArtworkRoles(Album.Path);
-            var frontSpread = sources.FirstOrDefault(source =>
-                GetEffectiveArtworkRole(source, roles) is "FrontSpread" or "FrontSpreadReversed" or "FrontSpreadVertical");
-            if (frontSpread is not null)
+            // Match the image panel's role priority for both list icons and browser tiles.
+            // Stable ordering preserves existing fallback behavior when no front is available.
+            foreach (var source in sources.OrderBy(source => GetFrontArtworkPriority(GetEffectiveArtworkRole(source, roles))))
             {
                 try
                 {
-                    var role = GetEffectiveArtworkRole(frontSpread, roles);
-                    var front = pixels == 120 ? LoadFrontSpreadThumbnail(Album.Path, frontSpread, role)
-                        : CropArtwork(LoadBitmap(frontSpread, role == "FrontSpreadVertical" ? pixels : pixels * 2),
-                            role == "FrontSpreadVertical" ? "TopHalf" : role == "FrontSpreadReversed" ? "LeftHalf" : "RightHalf");
-                    return (front,
-                        $"{frontSpread.DisplayName}\n{frontSpread.Description}");
-                }
-                catch { }
-            }
-            foreach (var source in sources)
-            {
-                try
-                {
+                    var role = GetEffectiveArtworkRole(source, roles);
+                    if (role is "FrontSpread" or "FrontSpreadReversed" or "FrontSpreadVertical")
+                    {
+                        var front = pixels == 120 ? LoadFrontSpreadThumbnail(Album.Path, source, role)
+                            : CropArtwork(LoadBitmap(source, role == "FrontSpreadVertical" ? pixels : pixels * 2),
+                                role == "FrontSpreadVertical" ? "TopHalf" : role == "FrontSpreadReversed" ? "LeftHalf" : "RightHalf");
+                        return (front, $"{source.DisplayName}\n{source.Description}");
+                    }
                     if (source.ZipEntry is not null)
                         return (LoadBitmap(source, pixels), $"ZIP内画像\n{source.ZipEntry.FileName}");
                     var path = source.FilePath!;

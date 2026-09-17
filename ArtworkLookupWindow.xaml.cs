@@ -47,13 +47,21 @@ public partial class ArtworkLookupWindow : Window
         _candidates.Clear();
         try
         {
-            var results = await _service.SearchAsync(AlbumTextBox.Text.Trim(), ArtistTextBox.Text.Trim(), _cancellation.Token);
+            string? fallbackTitle = null;
+            var results = await _service.SearchAsync(AlbumTextBox.Text.Trim(), ArtistTextBox.Text.Trim(), _cancellation.Token,
+                title =>
+                {
+                    fallbackTitle = title;
+                    StatusText.Text = LocalizationService.Select("補足を除いて再検索中…", "Retrying without annotations…");
+                });
             foreach (var result in results) _candidates.Add(new CandidateView(result, CreateBitmap(result.ImageBytes)));
             EmptyText.Visibility = results.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             EmptyText.Text = results.Count == 0 ? LocalizationService.Select(
                 "画像付きの候補が見つかりませんでした。検索条件を短くしてお試しください。",
                 "No candidates with artwork were found. Try a shorter search query.") : "";
             StatusText.Text = LocalizationService.Select($"候補 {results.Count}件", $"{results.Count} candidates");
+            StatusText.ToolTip = fallbackTitle is null ? null : LocalizationService.Select(
+                $"再検索したアルバム名: {fallbackTitle}", $"Retried album title: {fallbackTitle}");
             if (_candidates.Count > 0) CandidateList.SelectedIndex = 0;
         }
         catch (OperationCanceledException) { }

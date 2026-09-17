@@ -51,7 +51,7 @@ public sealed class JewelCaseVolumeChangedEventArgs(double volume) : EventArgs
     public double Volume { get; } = volume;
 }
 
-public sealed class JewelCaseCoverFlow : Grid
+public sealed partial class JewelCaseCoverFlow : Grid
 {
     private readonly Viewport3D _viewport = new();
     private readonly DxJewelCaseScene? _dxScene;
@@ -339,6 +339,24 @@ public sealed class JewelCaseCoverFlow : Grid
         };
         UpdateWrappingButton();
         overlay.Children.Add(_wrappingButton);
+
+        // Measure the toolbar as a single flowing row, rather than overlaying fixed offsets.
+        // Hidden controls release their space; narrow viewers wrap without collisions.
+        var toolbar = new WrapPanel { Orientation = Orientation.Horizontal };
+        foreach (var button in new[] { _fullScreenButton, _caseOpenButton, _discButton,
+            _bookletButton, _wrappingButton, _spineCardButton })
+        {
+            overlay.Children.Remove(button);
+            button.Margin = new Thickness(3, 0, 3, 4);
+            toolbar.Children.Add(button);
+        }
+        if (isFullScreen) InitializeIdleRotation(toolbar);
+        overlay.Children.Remove(_counterText);
+        var toolbarHeader = new DockPanel { LastChildFill = true, VerticalAlignment = VerticalAlignment.Top };
+        DockPanel.SetDock(_counterText, Dock.Right);
+        toolbarHeader.Children.Add(_counterText);
+        toolbarHeader.Children.Add(toolbar);
+        overlay.Children.Add(toolbarHeader);
 
         var previous = CreateNavigationButton("‹", HorizontalAlignment.Left);
         previous.Click += (_, _) => MoveSelection(-1);

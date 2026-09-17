@@ -7,7 +7,7 @@ namespace ZipMp3Player;
 internal static class AppDataBackupService
 {
     private static readonly string[] CoreFiles = ["settings.json", "library.json", "usage.json", "favorites.json", "library-events.json"];
-    private static readonly string[] CoreDirectories = ["artwork", "lyrics"];
+    private static readonly string[] CoreDirectories = ["artwork", "lyrics", "cue-metadata"];
 
     public static void CreateBackup(string dataDirectory, string destination)
     {

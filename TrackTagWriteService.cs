@@ -32,6 +32,8 @@ internal static class TrackTagWriteService
     {
         ArgumentNullException.ThrowIfNull(album);
         ArgumentNullException.ThrowIfNull(updates);
+        if (album.Tracks.Any(track => !string.IsNullOrEmpty(track.CuePath)))
+            throw new NotSupportedException("CUE音声イメージへのタグ書き込みは行いません。");
         backupOptions ??= new TrackTagBackupOptions(false, "");
         if (backupOptions.Enabled)
         {

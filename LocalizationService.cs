@@ -20,6 +20,10 @@ internal static class LocalizationService
         {
             ["ファイルを開く"] = "Open File", ["履歴"] = "History", ["設定"] = "Settings",
             ["◷ 履歴"] = "◷ History",
+            ["操作 ▾"] = "Actions ▾",
+            ["画像・歌詞の操作ボタンを表示／非表示"] = "Show or hide artwork and lyrics actions",
+            ["画像の操作ボタンを表示／非表示"] = "Show or hide artwork actions",
+            ["歌詞の操作ボタンを表示／非表示"] = "Show or hide lyrics actions",
             ["お気に入り"] = "Favorites", ["★ お気に入り"] = "★ Favorites",
             ["ライナーノーツ"] = "Liner Notes", ["Spine Card（帯）"] = "Spine Card (Obi)",
             ["PAGE（冊子ページ）"] = "PAGE (Booklet page)",
@@ -278,6 +282,7 @@ internal static class LocalizationService
     private static string TranslateDynamicToEnglish(string text)
     {
         var result = Regex.Replace(text, @"^(\d+)件$", "$1 items");
+        result = Regex.Replace(result, @"^(\d+)/(\d+)件$", "$1/$2 items");
         result = Regex.Replace(result, @"^候補 (\d+)件$", "$1 candidates");
         result = Regex.Replace(result, @"^(\d+)曲$", "$1 tracks");
         result = Regex.Replace(result, @"^表示 (\d+) / 登録 (\d+)フォルダ$", "Visible $1 / Registered $2 folders");
@@ -306,6 +311,7 @@ internal static class LocalizationService
     private static string TranslateDynamicToJapanese(string text)
     {
         var result = Regex.Replace(text, @"^(\d+) items$", "$1件");
+        result = Regex.Replace(result, @"^(\d+)/(\d+) items$", "$1/$2件");
         result = Regex.Replace(result, @"^(\d+) candidates$", "候補 $1件");
         result = Regex.Replace(result, @"^(\d+) tracks$", "$1曲");
         result = Regex.Replace(result, @"^Visible (\d+) / Registered (\d+) folders$", "表示 $1 / 登録 $2フォルダ");

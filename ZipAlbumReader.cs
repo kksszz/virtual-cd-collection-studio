@@ -27,6 +27,7 @@ public sealed class ZipTrack
     public int DiscCount { get; init; }
     public string AudioFormat { get; init; } = "MP3";
     public string SourcePath { get; init; } = "";
+    public string CuePath { get; init; } = "";
     public bool IsArchiveEntry { get; init; }
     public long DataOffset { get; init; }
     public long Size { get; init; }
@@ -44,7 +45,7 @@ public sealed class ZipTrack
     public string YearText => string.IsNullOrWhiteSpace(Year) ? "—" : Year;
     public string GenreText => string.IsNullOrWhiteSpace(Genre) ? "—" : Genre;
     public string DiscText => DiscNumber > 0 ? DiscCount > 0 ? $"{DiscNumber}/{DiscCount}" : DiscNumber.ToString() : "—";
-    public string AudioText => AudioFormat is "WAV" or "FLAC"
+    public string AudioText => AudioFormat is "WAV" or "FLAC" or "CD-DA"
         ? BitsPerSample > 0
             ? $"{AudioFormat} / {SampleRate / 1000.0:0.0} kHz / {BitsPerSample} bit"
             : $"{AudioFormat} / {SampleRate / 1000.0:0.0} kHz"
@@ -60,12 +61,12 @@ public sealed class ZipTrack
     private bool HasValidMp3Audio => (IsMp3Valid || IsCbr)
         && BitrateKbps > 0 && SampleRate > 0 && Duration > TimeSpan.Zero;
 
-    public bool IsSupported => AudioFormat is "WAV" or "FLAC" or "M4A"
+    public bool IsSupported => AudioFormat is "WAV" or "FLAC" or "M4A" or "CD-DA"
         ? !IsArchiveEntry && SampleRate > 0 && Duration > TimeSpan.Zero
         : CompressionMethod is 0 or 8 && !IsEncrypted && string.IsNullOrWhiteSpace(ReadError)
             && HasValidMp3Audio;
     public string SupportText => IsEncrypted ? LocalizationService.Select("暗号化", "Encrypted")
-        : AudioFormat is "WAV" or "FLAC" or "M4A" ? IsSupported
+        : AudioFormat is "WAV" or "FLAC" or "M4A" or "CD-DA" ? IsSupported
             ? LocalizationService.Select("再生可能", "Playable") : LocalizationService.Select("形式未判定", "Unknown format")
         : !string.IsNullOrWhiteSpace(ReadError) ? LocalizationService.Select("ZIP読込エラー", "ZIP read error")
         : CompressionMethod is not (0 or 8) ? LocalizationService.Select(
@@ -105,7 +106,15 @@ public sealed class ZipTrack
 public sealed class ZipAlbum
 {
     public string Path { get; init; } = "";
-    public IReadOnlyList<ZipTrack> Tracks { get; init; } = [];
+    private readonly IReadOnlyList<ZipTrack> _tracks = [];
+    public IReadOnlyList<ZipTrack> Tracks
+    {
+        get => _tracks;
+        // Keep display and playback in the same order, including deserialized older caches.
+        // Unknown disc/track numbers follow known numbers; equal keys retain source order.
+        init => _tracks = value.OrderBy(track => track.DiscNumber > 0 ? track.DiscNumber : int.MaxValue)
+            .ThenBy(track => track.TrackNumber > 0 ? track.TrackNumber : int.MaxValue).ToList();
+    }
     public IReadOnlyList<ZipImage> Images { get; init; } = [];
     public IReadOnlyList<ZipTextFile> TextFiles { get; init; } = [];
     public int ImageCount { get; init; }
@@ -141,6 +150,7 @@ public static class ZipAlbumReader
 
     public static ZipAlbum Open(string path)
     {
+        if (CueAlbumReader.IsCue(path) || CueAlbumReader.IsImage(path)) return CueAlbumReader.Open(path);
         // Library refreshes may overlap a verified atomic archive replacement.
         using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
         var (entryCount, centralOffset) = ReadEocd(file);
@@ -256,7 +266,7 @@ public static class ZipAlbumReader
         return new ZipAlbum
         {
             Path = path,
-            Tracks = tracks.OrderBy(t => t.TrackNumber).ToList(),
+            Tracks = tracks,
             Images = images.OrderBy(image => image.FileName, StringComparer.CurrentCultureIgnoreCase).ToList(),
             TextFiles = textFiles.OrderBy(text => text.FileName, StringComparer.CurrentCultureIgnoreCase).ToList(),
             ImageCount = images.Count + CountExternalImages(path, isFolderAlbum: false)
@@ -312,7 +322,7 @@ public static class ZipAlbumReader
         return new ZipAlbum
         {
             Path = folderPath,
-            Tracks = tracks.OrderBy(t => t.TrackNumber).ToList(),
+            Tracks = tracks,
             ImageCount = CountExternalImages(folderPath, isFolderAlbum: true)
         };
     }

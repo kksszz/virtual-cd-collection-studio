@@ -35,7 +35,7 @@ internal sealed class FavoritesStore
     }
 
     public bool IsAlbumFavorite(ZipAlbum album) => _albumKeys.Contains(CreateAlbumKey(album.Path));
-    public bool IsTrackFavorite(ZipTrack track) => _trackKeys.Contains(CreateTrackKey(track.SourcePath, track.IsArchiveEntry, track.FileName));
+    public bool IsTrackFavorite(ZipTrack track) => _trackKeys.Contains(CreateTrackKey(track.SourcePath, track.IsArchiveEntry || track.CuePath.Length > 0, track.FileName));
 
     public bool ToggleAlbum(ZipAlbum album)
     {
@@ -48,7 +48,7 @@ internal sealed class FavoritesStore
 
     public bool ToggleTrack(ZipTrack track)
     {
-        var key = CreateTrackKey(track.SourcePath, track.IsArchiveEntry, track.FileName);
+        var key = CreateTrackKey(track.SourcePath, track.IsArchiveEntry || track.CuePath.Length > 0, track.FileName);
         var enabled = !_trackKeys.Remove(key);
         if (enabled) _trackKeys.Add(key);
         IsDirty = true;
@@ -59,8 +59,8 @@ internal sealed class FavoritesStore
         Relocate(_albumKeys, CreateAlbumKey(album.Path), CreateAlbumKey(newAlbumPath));
 
     public void RelocateTrack(ZipTrack track, string newSourcePath) =>
-        Relocate(_trackKeys, CreateTrackKey(track.SourcePath, track.IsArchiveEntry, track.FileName),
-            CreateTrackKey(newSourcePath, track.IsArchiveEntry, track.FileName));
+        Relocate(_trackKeys, CreateTrackKey(track.SourcePath, track.IsArchiveEntry || track.CuePath.Length > 0, track.FileName),
+            CreateTrackKey(newSourcePath, track.IsArchiveEntry || track.CuePath.Length > 0, track.FileName));
 
     public void Save()
     {

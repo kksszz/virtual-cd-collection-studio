@@ -13,6 +13,56 @@ internal static partial class Program
     [STAThread]
     private static void Main()
     {
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_CUE_TEST") == "1")
+        {
+            VerifyCueSupport();
+            return;
+        }
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_IDLE_ROTATION_TEST") == "1")
+        {
+            var type = typeof(JewelCaseCoverFlow).Assembly.GetType("ZipMp3Player.IdleRotationClock")!;
+            var clock = Activator.CreateInstance(type)!;
+            var reset = type.GetMethod("Reset", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var step = type.GetMethod("Step", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            void Check(long now, bool eligible, double expected)
+            {
+                var actual = (double)step.Invoke(clock, [now, eligible])!;
+                if (Math.Abs(actual - expected) > 0.00001) throw new Exception($"Idle rotation at {now}: {actual} != {expected}");
+                Console.WriteLine($"PASS idle rotation {now}, eligible={eligible}: {actual}");
+            }
+            reset.Invoke(clock, [1000L]);
+            Check(30999, true, 0);
+            Check(31000, true, 0);
+            Check(31033, true, 0.297);
+            Check(32000, true, 0.9); // Long stalls cannot cause a sudden turn.
+            Check(32001, false, 0);
+            Check(62000, true, 0);
+            Check(62034, true, 0.297);
+            reset.Invoke(clock, [62035L]); // User input stops and restarts the idle countdown.
+            Check(62068, true, 0);
+            Check(92068, true, 0.297);
+            foreach (var frameMs in new[] { 8, 16, 33 })
+            {
+                reset.Invoke(clock, [0L]);
+                var total = 0.0;
+                for (var time = 30000; time < 31000; time += frameMs)
+                    total += (double)step.Invoke(clock, [(long)time, true])!;
+                total += (double)step.Invoke(clock, [31000L, true])!;
+                if (Math.Abs(total - 9) > 0.00001) throw new Exception("Frame-dependent rotation speed");
+                Console.WriteLine($"PASS frame interval {frameMs}ms: 9 degrees per second");
+            }
+            return;
+        }
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_FRONT_ICON_TEST") == "1")
+        {
+            VerifyFrontIconPriority();
+            return;
+        }
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_TRACK_ORDER_TEST") == "1")
+        {
+            VerifyDiscTrackOrder();
+            return;
+        }
         if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_AUDIO_SETTINGS_TEST") == "1")
         {
             VerifyAudioSettingsRestart();

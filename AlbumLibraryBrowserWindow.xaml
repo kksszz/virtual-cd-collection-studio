@@ -26,9 +26,9 @@
         </Grid.ColumnDefinitions>
         <TextBlock Text="ALBUM BROWSER" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,16,0"/>
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-          <Button x:Name="TileModeButton" Content="▦  タイル" Padding="11,7" Margin="0,0,5,0" Click="TileMode_Click"/>
-          <Button x:Name="CoverFlowModeButton" Content="◫  3D CoverFlow" Padding="11,7" Margin="0,0,5,0" Click="CoverFlowMode_Click"/>
-          <Button x:Name="RackModeButton" Content="▥  CDラック" Padding="11,7" Click="RackMode_Click"/>
+          <Button x:Name="TileModeButton" Content="▦  タイル" Width="116" Height="32" Padding="6,0" Margin="0,0,5,0" Click="TileMode_Click"/>
+          <Button x:Name="CoverFlowModeButton" Content="◫  3D CoverFlow" Width="116" Height="32" Padding="6,0" Margin="0,0,5,0" Click="CoverFlowMode_Click"/>
+          <Button x:Name="RackModeButton" Content="▥  CDラック" Width="116" Height="32" Padding="6,0" Margin="0" Click="RackMode_Click"/>
         </StackPanel>
         <StackPanel x:Name="TileSizePanel" Grid.Column="2" Orientation="Horizontal"
                     HorizontalAlignment="Right" VerticalAlignment="Center" Margin="12,0,0,0">

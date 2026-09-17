@@ -54,6 +54,7 @@ internal static class Program
         catch (OperationCanceledException) { Check(handler.Requests == before, "cancellation prevents requests"); }
         Console.WriteLine("All artwork checks passed (fake HTTP only; no album/settings writes).");
         await ProviderTests.RunAsync(high, low);
+        await ManualSearchTests.RunAsync(high);
     }
 
     private static void Check(bool condition, string label)

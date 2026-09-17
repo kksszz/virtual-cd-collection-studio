@@ -6,6 +6,7 @@
         Background="#15171B" Foreground="#F2F3F5" AllowDrop="True"
         Drop="Window_Drop" DragOver="Window_DragOver" KeyDown="Window_KeyDown" Closing="Window_Closing">
   <Window.Resources>
+    <BooleanToVisibilityConverter x:Key="ToolbarVisibilityConverter"/>
     <Style TargetType="Button">
       <Setter Property="Background" Value="#2C313A"/><Setter Property="Foreground" Value="White"/>
       <Setter Property="BorderBrush" Value="#454C58"/><Setter Property="Padding" Value="14,7"/>
@@ -227,32 +228,33 @@
       </Grid.ColumnDefinitions>
       <Border Grid.Column="0" Grid.RowSpan="3" Background="#1E2127" BorderBrush="#353B45" BorderThickness="1">
         <DockPanel>
-          <Grid x:Name="AlbumToolbar" DockPanel.Dock="Top" Margin="12,7">
+          <Grid x:Name="AlbumToolbar" DockPanel.Dock="Top" Margin="8,7">
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
               <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Text="アルバム" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center"/>
-            <TextBox x:Name="AlbumFilterTextBox" Grid.Column="1" Height="27" MinWidth="48" Padding="7,3" Margin="9,0,0,0"
+            <TextBlock Text="アルバム" Width="60" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center"/>
+            <TextBox x:Name="AlbumFilterTextBox" Grid.Column="1" Height="27" MinWidth="48" Padding="5,3" Margin="4,0,0,0"
                      Background="#F3F4F6" Foreground="#18202A" BorderBrush="#4A5260"
                      TextChanged="AlbumFilter_TextChanged" ToolTip="アルバム名・アーティスト名・ファイル名・曲名で絞り込み"/>
             <Button Grid.Column="2" Content="×" Width="26" Height="27" Padding="0" Margin="4,0,0,0"
                     Click="ClearAlbumFilter_Click" ToolTip="検索をクリア"/>
             <TextBlock x:Name="AlbumFilterResultText" Grid.Column="3" Text="0件" Foreground="#8F9AA7"
-                       FontSize="11" MinWidth="38" Margin="6,0,0,0" TextAlignment="Right" VerticalAlignment="Center"/>
-            <ComboBox x:Name="AlbumSortCombo" Grid.Column="4" Width="108" Margin="7,0,0,0"
+                       FontSize="11" Width="64" Margin="4,0,0,0" TextAlignment="Right" VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis" ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
+            <ComboBox x:Name="AlbumSortCombo" Grid.Column="4" Width="84" Margin="4,0,0,0"
                       SelectedIndex="0" SelectionChanged="AlbumSort_Changed"
                       Background="#F3F4F6" Foreground="#18202A" ToolTip="アルバム一覧の並び順">
               <ComboBoxItem Content="アーティスト順" Tag="Artist"/>
               <ComboBoxItem Content="アルバム名順" Tag="Album"/>
               <ComboBoxItem Content="アーティストツリー" Tag="ArtistTree"/>
-              <ComboBoxItem Content="カバーフロー" Tag="CoverFlow"/>
             </ComboBox>
           </Grid>
           <Grid>
           <ListBox x:Name="AlbumList" Background="Transparent" Foreground="White" BorderThickness="0"
                    SelectionChanged="AlbumList_SelectionChanged" PreviewMouseRightButtonDown="AlbumList_RightButtonDown"
                    MouseDoubleClick="AlbumList_MouseDoubleClick"
+                   IsTextSearchEnabled="False" PreviewTextInput="AlbumList_PreviewTextInput"
                    ClipToBounds="True" HorizontalContentAlignment="Stretch"
                    ScrollViewer.CanContentScroll="True"
                    VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
@@ -448,6 +450,7 @@
       <DataGrid.ContextMenu>
         <ContextMenu Opened="TrackContextMenu_Opened">
           <MenuItem Header="アルバムのタグを編集…" Click="EditTrackTags_Click" InputGestureText="Ctrl+E"/>
+          <MenuItem Header="CUEの曲情報を取得…" Click="ImportCueMetadata_Click"/>
           <Separator/>
           <MenuItem x:Name="TrackPropertiesMenuItem" Header="プロパティ" Click="TrackProperties_Click"/>
         </ContextMenu>
@@ -517,18 +520,24 @@
           </Grid.ColumnDefinitions>
           <Grid Grid.Column="0">
             <Grid.RowDefinitions><RowDefinition x:Name="ArtworkToolbarRow" Height="Auto" SharedSizeGroup="ImageLyricsToolbar"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-            <WrapPanel Margin="2,0,0,8" VerticalAlignment="Center">
+            <StackPanel Margin="2,0,0,8" VerticalAlignment="Center">
+              <WrapPanel>
               <TextBlock Text="アルバム画像" FontWeight="SemiBold" FontSize="15" Margin="0,0,8,0"/>
+              <ToggleButton x:Name="ImageLyricsActionsToggle" Content="操作 ▾" IsChecked="False" Padding="8,3"
+                            ToolTip="画像の操作ボタンを表示／非表示"/>
+              <Button x:Name="Album3DViewButton" Content="3Dビュー" Margin="6,0,0,0" Padding="10,3"
+                      Click="ShowAlbum3DFullScreen_Click"
+                      ToolTip="選択アルバムの3D CDケースをフルスクリーンで表示"/>
+              </WrapPanel>
+              <WrapPanel Margin="0,4,0,0" Visibility="{Binding IsChecked, ElementName=ImageLyricsActionsToggle, Converter={StaticResource ToolbarVisibilityConverter}}">
               <Button Content="Google画像" Margin="1" Padding="9,4"
                       Click="GoogleImageSearch_Click" ToolTip="選択アルバムをGoogle画像検索で開く"/>
               <Button Content="画像を追加" Margin="1" Padding="9,4"
                       Click="ImportAlbumArtwork_Click" ToolTip="保存したJPGまたはPNG画像をこのアルバムへ追加"/>
               <Button x:Name="ArtworkSearchButton" Content="画像を検索" Margin="1" Padding="10,4"
                       Click="DownloadAlbumArtwork_Click" ToolTip="MusicBrainzからアルバム画像を検索"/>
-              <Button x:Name="Album3DViewButton" Content="3Dビュー" Margin="1" Padding="10,4"
-                      Click="ShowAlbum3DFullScreen_Click"
-                      ToolTip="選択アルバムの3D CDケースをフルスクリーンで表示"/>
-            </WrapPanel>
+              </WrapPanel>
+            </StackPanel>
             <Border x:Name="AlbumImageViewport" Grid.Row="1" Background="#15171B" BorderBrush="#414957"
                     BorderThickness="1" CornerRadius="3" SizeChanged="AlbumImageViewport_SizeChanged">
               <Grid>
@@ -606,13 +615,13 @@
                   Click="LyricsPanelToggle_Click" ToolTip="歌詞欄を折りたたむ"/>
           <Grid x:Name="LyricsContent" Grid.Column="2" Margin="4,0,0,0">
             <Grid.RowDefinitions><RowDefinition x:Name="LyricsToolbarRow" Height="Auto" SharedSizeGroup="ImageLyricsToolbar"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-            <DockPanel Margin="2,0,0,8">
-              <TextBlock DockPanel.Dock="Left" Text="歌詞" FontWeight="SemiBold" FontSize="15" Margin="0,0,8,0"/>
-              <CheckBox x:Name="LyricsAutoScrollCheck" DockPanel.Dock="Right" Content="自動スクロール" IsChecked="True"
-                        Margin="8,0,0,0" VerticalAlignment="Center"
-                        Checked="LyricsAutoScroll_Changed" Unchecked="LyricsAutoScroll_Changed"
-                        ToolTip="LRCは時刻同期、通常歌詞は再生位置から推定して追従"/>
-              <WrapPanel HorizontalAlignment="Right">
+            <StackPanel Margin="2,0,0,8" VerticalAlignment="Center">
+              <WrapPanel>
+                <TextBlock Text="歌詞" FontWeight="SemiBold" FontSize="15" Margin="0,0,8,0"/>
+                <ToggleButton x:Name="LyricsActionsToggle" Content="操作 ▾" IsChecked="False" Padding="8,3"
+                              ToolTip="歌詞の操作ボタンを表示／非表示"/>
+              </WrapPanel>
+              <WrapPanel Margin="0,4,0,0" Visibility="{Binding IsChecked, ElementName=LyricsActionsToggle, Converter={StaticResource ToolbarVisibilityConverter}}">
                 <Button x:Name="LyricsOcrButton" Content="OCR ▾" Padding="6,4" Click="LyricsOcrMenu_Click"
                         AutomationProperties.Name="画像から歌詞を認識"
                         ToolTip="表示画像・Snipping Tool・画像ファイルから日本語歌詞を認識">
@@ -628,8 +637,12 @@
                         ToolTip="アーティスト名・曲名・アルバム名を使ってGoogleで歌詞検索"/>
                 <Button Content="保存" Padding="6,4" Click="SaveLyrics_Click" Background="#276E9F"
                         ToolTip="歌詞を保存" AutomationProperties.Name="歌詞を保存"/>
+                <CheckBox x:Name="LyricsAutoScrollCheck" Content="自動スクロール" IsChecked="True"
+                          Margin="8,0,0,0" VerticalAlignment="Center"
+                          Checked="LyricsAutoScroll_Changed" Unchecked="LyricsAutoScroll_Changed"
+                          ToolTip="LRCは時刻同期、通常歌詞は再生位置から推定して追従"/>
               </WrapPanel>
-            </DockPanel>
+            </StackPanel>
             <Grid Grid.Row="1">
               <TextBox x:Name="LyricsTextBox" AcceptsReturn="True" AcceptsTab="True" TextWrapping="Wrap"
                        VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
@@ -652,12 +665,17 @@
     </Grid>
 
     <Grid Grid.Row="5" Margin="0,6,0,5">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/><ColumnDefinition Width="2*"/><ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+      <Grid Grid.Column="1">
       <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
       <TextBlock x:Name="ElapsedText" Text="0:00" Width="48"/>
       <Slider x:Name="PositionSlider" Grid.Column="1" Minimum="0" Maximum="1" Margin="8,0"
               PreviewMouseLeftButtonDown="PositionSlider_DragStarted"
               PreviewMouseLeftButtonUp="PositionSlider_DragCompleted"/>
       <TextBlock x:Name="TotalText" Grid.Column="2" Text="0:00" Width="48" TextAlignment="Right"/>
+      </Grid>
     </Grid>
 
     <Grid Grid.Row="6">
@@ -679,7 +697,7 @@
         <Button x:Name="RepeatButton" Content="↻ OFF" Click="Repeat_Click" Width="76" ToolTip="リピート範囲を切り替え"/>
         <Border Width="1" Height="27" Background="#46505C" Margin="7,0"/>
         <Button x:Name="PreviousButton" Content="◀ 前へ" Click="Previous_Click" Width="80"/>
-        <Button x:Name="PlayButton" Content="▶ 再生" Click="PlayPause_Click" Width="90"/>
+        <Button x:Name="PlayButton" Content="▶ 再生" Click="PlayPause_Click" Width="90" Padding="6,7"/>
         <Button x:Name="StopButton" Content="■ 停止" Click="Stop_Click" Width="70"/>
         <Button x:Name="NextButton" Content="次へ ▶" Click="Next_Click" Width="72"/>
         <Border Width="1" Height="27" Background="#46505C" Margin="10,0"/>
