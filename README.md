@@ -33,7 +33,7 @@ Android 10以上向けの音楽プレーヤーです。現在は **試作版0.7.
 
 圧縮された音声エントリー、暗号化ZIP、ZIP64、分割ZIP、CUE／ISOはAndroid版では未対応です。タグ編集や画像の加工・用途設定はWindows版で行います。初回のタグ取得にはSDカードや曲数に応じた時間がかかり、キャッシュはアプリのプロセスが終了すると失われます。
 
-Android版は現時点ではソースとデバッグ用の試作段階で、公開配布用APKのリリースはありません。Windows用のダウンロードとは別に、Androidプロジェクトをビルドしてください。
+Android版は [0.7.1プレリリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/android-v0.7.1) からAPKを入手できます。Android 10以上向けの試作・デバッグ署名版で、Windows用の配布物とは別です。導入方法・更新時の注意点はリリースページを確認してください。ソースからのビルドも可能です。
 
 - [Android版の説明・ビルド手順](android-player/README.md)
 - [Windowsからの3Dデータ出力](MOBILE_3D.md)
