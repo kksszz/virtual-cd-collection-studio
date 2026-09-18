@@ -1,0 +1,18 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'jp.virtualcd.player'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'jp.virtualcd.player'
+        minSdk 29
+        targetSdk 35
+        versionCode 18
+        versionName '0.7.1'
+        testInstrumentationRunner 'jp.virtualcd.player.DeviceSmokeTest'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+dependencies {
+    implementation 'androidx.media3:media3-exoplayer:1.9.4'
+    implementation 'androidx.media3:media3-session:1.9.4'
+}

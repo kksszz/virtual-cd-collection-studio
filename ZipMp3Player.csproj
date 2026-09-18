@@ -41,6 +41,8 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Remove="AiDevHarness\**\*.cs" />
+    <Compile Remove="android-player\**\*.cs" />
+    <None Remove="android-player\**\*" />
     <Compile Remove="KeyboardDevHarness\**\*.cs" />
     <None Remove="KeyboardDevHarness\**\*" />
     <Compile Remove="ArtworkDevHarness\**\*.cs" />

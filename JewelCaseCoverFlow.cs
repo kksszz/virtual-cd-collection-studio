@@ -351,6 +351,28 @@ public sealed partial class JewelCaseCoverFlow : Grid
             toolbar.Children.Add(button);
         }
         if (isFullScreen) InitializeIdleRotation(toolbar);
+        var exportMobile = new Button
+        {
+            Content = LocalizationService.Select("モバイル3D出力", "Export mobile 3D"),
+            Height = 25, Padding = new Thickness(8, 0, 8, 0), Margin = new Thickness(3, 0, 3, 4),
+            Foreground = Brushes.White, Background = _discButton.Background, BorderBrush = _discButton.BorderBrush,
+            ToolTip = "現在の画像・帯の折り位置を .vcd3d に書き出します（音源・元画像は変更しません）。2枚目のCDは未対応です。"
+        };
+        exportMobile.Click += (_, _) =>
+        {
+            if (_selectedIndex < 0 || _selectedIndex >= _items.Count) return;
+            var item = _items[_selectedIndex];
+            var safeName = string.Concat(item.Title.Select(c => System.IO.Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
+            var save = new Microsoft.Win32.SaveFileDialog { Filter = "Mobile 3D case (*.vcd3d)|*.vcd3d", DefaultExt = ".vcd3d", AddExtension = true, FileName = safeName, OverwritePrompt = true };
+            if (save.ShowDialog(Window.GetWindow(this)) != true) return;
+            try
+            {
+                MobileCaseExporter.Export(item, save.FileName);
+                MessageBox.Show(Window.GetWindow(this), "3Dデータを書き出しました。Androidで対象アルバムの3D画面から取り込んでください。\n音楽ファイルは含まれません。", "モバイル3D出力");
+            }
+            catch (Exception ex) { MessageBox.Show(Window.GetWindow(this), "書き出せませんでした: " + ex.Message, "モバイル3D出力"); }
+        };
+        toolbar.Children.Add(exportMobile);
         overlay.Children.Remove(_counterText);
         var toolbarHeader = new DockPanel { LastChildFill = true, VerticalAlignment = VerticalAlignment.Top };
         DockPanel.SetDock(_counterText, Dock.Right);
