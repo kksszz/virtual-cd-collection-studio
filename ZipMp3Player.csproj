@@ -13,11 +13,11 @@
     <Copyright>Copyright (C) 2026 kksszz</Copyright>
     <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
-    <Version>0.81.0</Version>
-    <InformationalVersion>0.81.0</InformationalVersion>
+    <Version>0.82.0</Version>
+    <InformationalVersion>0.82.0</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <AssemblyVersion>0.81.0.0</AssemblyVersion>
-    <FileVersion>0.81.0.0</FileVersion>
+    <AssemblyVersion>0.82.0.0</AssemblyVersion>
+    <FileVersion>0.82.0.0</FileVersion>
   </PropertyGroup>
   <ItemGroup>
     <Resource Include="Assets\AppIcon.ico" />
@@ -32,6 +32,8 @@
     <None Update="LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="README.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="RELEASE_NOTES_v0.81.0.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="RELEASE_NOTES_v0.82.0.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="FOLDER_ZIP_CONVERSION.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="CUE_SUPPORT.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="AUTOMATIC_ARTWORK.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

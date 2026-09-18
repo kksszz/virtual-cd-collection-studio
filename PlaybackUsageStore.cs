@@ -85,6 +85,17 @@ internal sealed class PlaybackUsageStore
         .Select(entry => entry.Clone())
         .ToList();
 
+    internal void CopyTrackHistory(ZipTrack source, ZipTrack destination)
+    {
+        if (!_entries.TryGetValue(CreateTrackKey(source), out var original)) { RemoveTrackHistory(destination); return; }
+        var key = CreateTrackKey(destination);
+        var copy = original.Clone(); copy.Key = key;
+        _entries[key] = copy; IsDirty = true;
+    }
+
+    internal void RemoveTrackHistory(ZipTrack track)
+    { if (_entries.Remove(CreateTrackKey(track))) IsDirty = true; }
+
     public void Save()
     {
         if (!IsDirty) return;

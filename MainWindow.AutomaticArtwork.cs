@@ -48,6 +48,8 @@ public partial class MainWindow
             && (!_settings.AutomaticArtworkNextAttempts.TryGetValue(candidate.Album.Path, out var next)
                 || next <= DateTimeOffset.UtcNow));
         if (item is null) return;
+        using var dataOperation = _dataOperations.Begin();
+        if (dataOperation is null) return;
         _automaticArtworkBusy = true;
         string? temporary = null;
         var saved = false;

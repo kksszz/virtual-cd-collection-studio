@@ -17,6 +17,8 @@ public partial class MainWindow
             var disc = await Task.Run(() => CueAlbumReader.Read(album.Path));
             var dialog = new CueMetadataWindow(disc) { Owner = this };
             if (dialog.ShowDialog() != true || dialog.SelectedMetadata is not { } metadata) return;
+            using var dataOperation = _dataOperations.Begin();
+            if (dataOperation is null) return;
             var refreshed = await Task.Run(() =>
             {
                 var current = CueAlbumReader.Read(album.Path);

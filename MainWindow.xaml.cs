@@ -233,6 +233,7 @@ public partial class MainWindow : Window
         UpdateAlbumFilterResult();
         EqPresetCombo.SelectedIndex = 0;
         Application.Current.SessionEnding += (_, _) => _forceClose = true;
+        InitializeDataOperationProtection();
         Loaded += MainWindow_Loaded;
     }
 
@@ -1775,6 +1776,9 @@ public partial class MainWindow : Window
             "無圧縮ZIP.MP3へ変換", MessageBoxButton.YesNo, MessageBoxImage.Question);
         if (confirmation != MessageBoxResult.Yes) return;
 
+        using var dataOperation = _dataOperations.Begin();
+        if (dataOperation is null) return;
+
         var album = item.Album;
         var selectedFileName = (TrackGrid.SelectedItem as ZipTrack)?.FileName;
         if (_playingAlbum is not null && string.Equals(_playingAlbum.Path, album.Path, StringComparison.OrdinalIgnoreCase))
@@ -1790,7 +1794,7 @@ public partial class MainWindow : Window
             ReplaceLibraryAlbum(album, refreshed, selectedFileName);
             SaveLibraryCache();
             StatusText.Text = "無圧縮ZIP.MP3への変換が完了しました";
-            MessageBox.Show(this,
+            if (!_dataOperations.CloseRequested) MessageBox.Show(this,
                 LocalizationService.Select(
                     $"無圧縮ZIP.MP3へ変換しました。\n収録物: {result.EntryCount}件\n変換前: {FormatStorageSize(result.OriginalSize)}\n変換後: {FormatStorageSize(result.ConvertedSize)}\n\n元ファイルのバックアップ:\n{result.BackupPath}",
                     $"Converted to an uncompressed ZIP.MP3.\nEntries: {result.EntryCount}\nBefore: {FormatStorageSize(result.OriginalSize)}\nAfter: {FormatStorageSize(result.ConvertedSize)}\n\nOriginal-file backup:\n{result.BackupPath}"),
@@ -1899,9 +1903,9 @@ public partial class MainWindow : Window
         var selected = GetSelectedAlbumItem();
         foreach (var menuItem in menu.Items.OfType<System.Windows.Controls.MenuItem>())
         {
-            if (Equals(menuItem.Tag, "AlbumProperties") || Equals(menuItem.Tag, "WikipediaAlbum"))
+            if (Equals(menuItem.Tag, "AlbumProperties") || Equals(menuItem.Tag, "WikipediaAlbum") || Equals(menuItem.Tag, "WikipediaAlbumEn"))
                 menuItem.IsEnabled = selected is not null;
-            else if (Equals(menuItem.Tag, "WikipediaArtist"))
+            else if (Equals(menuItem.Tag, "WikipediaArtist") || Equals(menuItem.Tag, "WikipediaArtistEn"))
                 menuItem.IsEnabled = selected is not null && IsKnownArtist(selected.Artist);
         }
     }
@@ -1923,7 +1927,7 @@ public partial class MainWindow : Window
                 "Wikipedia", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
-        OpenWikipediaSearch(item.Artist, item.Artist);
+        OpenWikipediaSearch(item.Artist, item.Artist, sender is System.Windows.Controls.MenuItem { Tag: "WikipediaArtistEn" });
     }
 
     private void WikipediaAlbumSearch_Click(object sender, RoutedEventArgs e)
@@ -1933,16 +1937,16 @@ public partial class MainWindow : Window
         var query = IsKnownArtist(item.Artist)
             ? $"{item.Artist} {item.Title}"
             : item.Title;
-        OpenWikipediaSearch(query, item.Title);
+        OpenWikipediaSearch(query, item.Title, sender is System.Windows.Controls.MenuItem { Tag: "WikipediaAlbumEn" });
     }
 
-    private void OpenWikipediaSearch(string query, string displayName)
+    private void OpenWikipediaSearch(string query, string displayName, bool english = false)
     {
         try
         {
             Process.Start(new ProcessStartInfo
             {
-                FileName = BuildWikipediaSearchUrl(query),
+                FileName = BuildWikipediaSearchUrl(query, english),
                 UseShellExecute = true
             });
             StatusText.Text = LocalizationService.Select(
@@ -1957,8 +1961,8 @@ public partial class MainWindow : Window
         }
     }
 
-    internal static string BuildWikipediaSearchUrl(string query)
-        => "https://ja.wikipedia.org/w/index.php?search=" + Uri.EscapeDataString(query.Trim());
+    internal static string BuildWikipediaSearchUrl(string query, bool english = false)
+        => $"https://{(english ? "en" : "ja")}.wikipedia.org/w/index.php?search=" + Uri.EscapeDataString(query.Trim());
 
     private static bool IsKnownArtist(string? artist)
         => !string.IsNullOrWhiteSpace(artist)
@@ -2035,6 +2039,12 @@ public partial class MainWindow : Window
                 playPauseRequested: () => PlayPause_Click(this, new RoutedEventArgs()),
                 nextTrackRequested: () => Next_Click(this, new RoutedEventArgs()),
                 volumeChangedRequested: value => VolumeSlider.Value = value);
+            // ShowItemFullScreen is modal: returning means the viewer has closed.
+            // Keep any newer scan/error message produced while it was open.
+            if (StatusText.Text == $"3Dケースを表示しています: {item.Title}"
+                || StatusText.Text == $"Viewing 3D case: {item.Title}")
+                StatusText.Text = LocalizationService.Select(
+                    "3Dビューを閉じました", "3D view closed");
         }
         catch (Exception ex)
         {
@@ -2784,6 +2794,8 @@ public partial class MainWindow : Window
         }
         var dialog = new TagEditorWindow(album, selectedFileName) { Owner = this };
         if (dialog.ShowDialog() != true || dialog.EditedTracks.Count == 0) return;
+        using var dataOperation = _dataOperations.Begin();
+        if (dataOperation is null) return;
         var selectedResultFileName = dialog.EditedTracks.FirstOrDefault(update =>
             string.Equals(update.FileName, selectedFileName, StringComparison.Ordinal))?.EffectiveTargetFileName ?? selectedFileName;
 
@@ -2810,7 +2822,7 @@ public partial class MainWindow : Window
                 1 => $"\n\nバックアップ:\n{result.BackupPaths[0]}",
                 _ => $"\n\nバックアップ: {result.BackupPaths.Count}個\n保存先: {_settings.TagBackupFolder}"
             };
-            MessageBox.Show(this,
+            if (!_dataOperations.CloseRequested) MessageBox.Show(this,
                 $"{dialog.EditedTracks.Count}曲のタグ・ファイル名の変更を保存しました。\n音声データは再エンコードしていません。{backupMessage}",
                 "タグ編集完了", MessageBoxButton.OK, MessageBoxImage.Information);
         }
@@ -4357,6 +4369,8 @@ public partial class MainWindow : Window
         {
             var lookup = new ArtworkLookupWindow(item.Title, item.Artist) { Owner = this };
             if (lookup.ShowDialog() != true || lookup.SelectedCandidate is not { } selected) return;
+            using var dataOperation = _dataOperations.Begin();
+            if (dataOperation is null) return;
 
             var directory = GetDownloadedArtworkDirectory(item.Album.Path);
             Directory.CreateDirectory(directory);
@@ -5445,6 +5459,8 @@ public partial class MainWindow : Window
 
         var album = _album;
         var deletedIndex = _selectedAlbumImageIndex;
+        using var dataOperation = _dataOperations.Begin();
+        if (dataOperation is null) return;
         var selectedTrackFileName = (TrackGrid.SelectedItem as ZipTrack)?.FileName;
         if (isArchiveImage && _playingAlbum is not null
             && string.Equals(_playingAlbum.Path, album.Path, StringComparison.OrdinalIgnoreCase))
@@ -5660,6 +5676,12 @@ public partial class MainWindow : Window
 
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
+        if (_dataOperations.ActiveCount > 0)
+        {
+            e.Cancel = true;
+            DeferCloseForDataOperations();
+            return;
+        }
         if (_dataRestorePendingRestart)
         {
             _cacheSaveTimer.Stop();

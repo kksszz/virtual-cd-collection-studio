@@ -268,11 +268,15 @@
                 <MenuItem Header="エクスプローラーで場所を開く" Click="OpenAlbumInExplorer_Click"/>
                 <MenuItem Header="インターネットからアルバム画像を取得" Click="DownloadAlbumArtwork_Click"/>
                 <Separator/>
-                <MenuItem Header="Wikipediaでアーティストを検索" Tag="WikipediaArtist" Click="WikipediaArtistSearch_Click"/>
-                <MenuItem Header="Wikipediaでアルバムを検索" Tag="WikipediaAlbum" Click="WikipediaAlbumSearch_Click"/>
+                <MenuItem Header="Wikipediaでアーティストを検索（日本語）" Tag="WikipediaArtist" Click="WikipediaArtistSearch_Click"/>
+                <MenuItem Header="Wikipediaでアーティストを検索（英語）" Tag="WikipediaArtistEn" Click="WikipediaArtistSearch_Click"/>
+                <MenuItem Header="Wikipediaでアルバムを検索（日本語）" Tag="WikipediaAlbum" Click="WikipediaAlbumSearch_Click"/>
+                <MenuItem Header="Wikipediaでアルバムを検索（英語）" Tag="WikipediaAlbumEn" Click="WikipediaAlbumSearch_Click"/>
                 <Separator/>
                 <MenuItem x:Name="ConvertToStoredZipMenuItem" Header="無圧縮ZIP.MP3へ変換…" Click="ConvertToStoredZip_Click"
                           ToolTip="音声を再エンコードせず、ZIP内の全収録物をStore方式へ変換"/>
+                <MenuItem Header="DIRをZIP.MP3に変換…" Click="ConvertFolderToZip_Click"/>
+                <MenuItem Header="ZIP.MP3をDIRに変換…" Click="ConvertZipToFolder_Click"/>
                 <Separator/>
                 <MenuItem Header="リストから削除" Click="RemoveAlbumFromList_Click"/>
                 <Separator/>
@@ -371,8 +375,10 @@
                 <MenuItem Header="エクスプローラーで場所を開く" Click="OpenAlbumInExplorer_Click"/>
                 <MenuItem Header="インターネットからアルバム画像を取得" Click="DownloadAlbumArtwork_Click"/>
                 <Separator/>
-                <MenuItem Header="Wikipediaでアーティストを検索" Tag="WikipediaArtist" Click="WikipediaArtistSearch_Click"/>
-                <MenuItem Header="Wikipediaでアルバムを検索" Tag="WikipediaAlbum" Click="WikipediaAlbumSearch_Click"/>
+                <MenuItem Header="Wikipediaでアーティストを検索（日本語）" Tag="WikipediaArtist" Click="WikipediaArtistSearch_Click"/>
+                <MenuItem Header="Wikipediaでアーティストを検索（英語）" Tag="WikipediaArtistEn" Click="WikipediaArtistSearch_Click"/>
+                <MenuItem Header="Wikipediaでアルバムを検索（日本語）" Tag="WikipediaAlbum" Click="WikipediaAlbumSearch_Click"/>
+                <MenuItem Header="Wikipediaでアルバムを検索（英語）" Tag="WikipediaAlbumEn" Click="WikipediaAlbumSearch_Click"/>
                 <Separator/>
                 <MenuItem Header="リストから削除" Click="RemoveAlbumFromList_Click"/>
                 <Separator/>

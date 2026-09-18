@@ -13,6 +13,10 @@ internal static partial class Program
     [STAThread]
     private static void Main()
     {
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_SHUTDOWN_TEST") == "1")
+        { VerifyDataOperationGate(); return; }
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_FOLDER_ZIP_TEST") == "1")
+        { VerifyFolderZip(); return; }
         if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_CUE_TEST") == "1")
         {
             VerifyCueSupport();
