@@ -13,14 +13,22 @@
       <Setter Property="Margin" Value="3"/>
     </Style>
   </Window.Resources>
+  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
   <Grid Margin="18">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <StackPanel Margin="2,0,0,12">
       <TextBlock Text="音楽ライブラリ" FontSize="20" FontWeight="SemiBold"/>
+      <DockPanel Margin="0,6,0,0">
+        <Button x:Name="LibrarySizeRefreshButton" Content="容量を再計算" DockPanel.Dock="Right" Click="LibrarySizeRefresh_Click" Padding="8,3" VerticalAlignment="Top"/>
+        <StackPanel>
+          <TextBlock x:Name="LibrarySizeText" TextWrapping="Wrap"/>
+          <TextBlock x:Name="LibrarySizeScopeText" Foreground="#A9B3C0" FontSize="11" TextWrapping="Wrap" Margin="0,3,8,0"/>
+        </StackPanel>
+      </DockPanel>
       <TextBlock Text="チェックを外したフォルダは登録を残したままアルバム一覧から非表示になります。登録解除しても元のファイルは削除されません。"
                  Foreground="#A9B3C0" Margin="0,5,0,0" TextWrapping="Wrap"/>
     </StackPanel>
-    <Border Grid.Row="1" Background="#1E2127" BorderBrush="#3E4652" BorderThickness="1" CornerRadius="4">
+    <Border Grid.Row="1" MinHeight="100" MaxHeight="180" Background="#1E2127" BorderBrush="#3E4652" BorderThickness="1" CornerRadius="4">
       <ListBox x:Name="FolderList" Background="Transparent" Foreground="White" BorderThickness="0"
                SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Auto">
         <ListBox.ItemTemplate>
@@ -92,4 +100,5 @@
       <Button Content="保存して再スキャン" Click="SaveAndRescan_Click" DockPanel.Dock="Right" Background="#3A7048"/>
     </DockPanel>
   </Grid>
+  </ScrollViewer>
 </Window>

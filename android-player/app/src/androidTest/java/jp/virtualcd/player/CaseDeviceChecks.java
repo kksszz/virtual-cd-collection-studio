@@ -13,6 +13,34 @@ import static android.opengl.EGL14.*;
 import static android.opengl.GLES20.*;
 
 final class CaseDeviceChecks {
+    static void runGlb(Instrumentation test)throws Exception {
+        runGlb(test,false);
+    }
+    static void runGlb(Instrumentation test,boolean real)throws Exception {
+        byte[] legacy,glb;try(var input=real?new FileInputStream(new File(test.getTargetContext().getCacheDir(),"glb-check.vcd3d")):test.getContext().getAssets().open("case3d-standard.vcd3d")){legacy=CasePackage.readBytes(input,CasePackage.MAX_BYTES);}
+        try(var input=real?new FileInputStream(new File(test.getTargetContext().getCacheDir(),"glb-check.glb")):test.getContext().getAssets().open("case3d-standard.glb")){glb=CasePackage.readBytes(input,CasePackage.MAX_BYTES);}
+        try(CasePackage old=CasePackage.parse(legacy);CasePackage standard=CasePackage.parse(glb)){
+            if(!old.title.equals(standard.title)||!old.artist.equals(standard.artist)||old.images.size()!=standard.images.size())throw new AssertionError("GLB metadata/images");
+            int[][] before=render(test,old),after=render(test,standard);
+            for(int pose=0;pose<before.length;pose++){long delta=0;for(int i=0;i<before[pose].length;i++)for(int shift:new int[]{0,8,16})delta+=Math.abs(((before[pose][i]>>shift)&255)-((after[pose][i]>>shift)&255));
+                double mean=delta/(before[pose].length*3.0);if(mean>1.0)throw new AssertionError("GLB visual difference pose="+pose+" mean="+mean);
+            }
+        }
+        byte[] broken=glb.clone();broken[8]=0;reject(broken);reject(Arrays.copyOf(glb,glb.length-4));
+        for(String mode:new String[]{"range","count","uri","profile","required"})reject(breakGlb(glb,mode));
+        if(!real)try(var input=test.getContext().getAssets().open("case3d-standard.empty.glb");CasePackage empty=CasePackage.parse(CasePackage.readBytes(input,CasePackage.MAX_BYTES))){if(!empty.images.isEmpty()||empty.hasObi||empty.wrapped)throw new AssertionError("Empty artwork GLB");render(test,empty);}
+    }
+    private static byte[] breakGlb(byte[] glb,String mode)throws Exception {
+        ByteBuffer input=ByteBuffer.wrap(glb).order(ByteOrder.LITTLE_ENDIAN);int size=input.getInt(12);
+        JSONObject root=new JSONObject(new String(glb,20,size,java.nio.charset.StandardCharsets.UTF_8));
+        if(mode.equals("range"))root.getJSONArray("bufferViews").getJSONObject(0).put("byteOffset",Integer.MAX_VALUE);
+        if(mode.equals("count"))root.getJSONArray("accessors").getJSONObject(0).put("count",Integer.MAX_VALUE);
+        if(mode.equals("uri"))root.getJSONArray("images").getJSONObject(0).put("uri","https://invalid.example/should-not-fetch.png");
+        if(mode.equals("profile"))root.getJSONObject("extras").getJSONObject("virtualCd").put("profile","unknown");
+        if(mode.equals("required"))root.put("extensionsRequired",new org.json.JSONArray().put("UNSUPPORTED_test"));
+        byte[] json=root.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);int padded=(json.length+3)&~3;int length=20+padded+glb.length-20-size;
+        ByteBuffer output=ByteBuffer.allocate(length).order(ByteOrder.LITTLE_ENDIAN);output.putInt(0x46546c67).putInt(2).putInt(length).putInt(padded).putInt(0x4e4f534a).put(json);while(output.position()<20+padded)output.put((byte)32);output.put(glb,20+size,glb.length-20-size);return output.array();
+    }
     static void run(Instrumentation test)throws Exception {
         runPackage(test,"case3d-test.vcd3d",false);
         runPackage(test,"case3d-v2-test.vcd3d",true);
@@ -47,7 +75,7 @@ final class CaseDeviceChecks {
             if(mode.equals("unknown")){zip.putNextEntry(new ZipEntry("../unexpected"));zip.write(0);zip.closeEntry();}
         }return output.toByteArray();
     }
-    private static void render(Instrumentation test,CasePackage data)throws Exception {
+    private static int[][] render(Instrumentation test,CasePackage data)throws Exception {
         EGLDisplay display=eglGetDisplay(EGL_DEFAULT_DISPLAY);int[] version=new int[2];if(!eglInitialize(display,version,0,version,1))throw new AssertionError("EGL init");
         EGLConfig[] configs=new EGLConfig[1];int[] count=new int[1];eglChooseConfig(display,new int[]{EGL_RENDERABLE_TYPE,EGL_OPENGL_ES2_BIT,EGL_SURFACE_TYPE,EGL_PBUFFER_BIT,EGL_RED_SIZE,8,EGL_GREEN_SIZE,8,EGL_BLUE_SIZE,8,EGL_DEPTH_SIZE,16,EGL_NONE},0,configs,0,1,count,0);
         EGLContext context=eglCreateContext(display,configs[0],EGL_NO_CONTEXT,new int[]{EGL_CONTEXT_CLIENT_VERSION,2,EGL_NONE},0);EGLSurface surface=eglCreatePbufferSurface(display,configs[0],new int[]{EGL_WIDTH,512,EGL_HEIGHT,512,EGL_NONE},0);
@@ -78,6 +106,20 @@ final class CaseDeviceChecks {
             test.runOnMainSync(()->wheel(view,-100));barrier(view);if(value(view,"zoom")!=.5f)throw new AssertionError("Mouse wheel lower bound");
             view.reset();barrier(view);settle(view);
             test.runOnMainSync(()->{
+                view.layout(0,0,512,512);long t=android.os.SystemClock.uptimeMillis()+1000;
+                fingers(view,t,0,new float[]{100},new float[]{100});
+                fingers(view,t+20,261,new float[]{100,300},new float[]{100,100});
+                fingers(view,t+40,2,new float[]{150,350},new float[]{130,130});
+            });barrier(view);
+            if(Math.abs(value(view,"panX")-50f/512)>.001f||Math.abs(value(view,"panY")-30f/512)>.001f||value(view,"yaw")!=-20||value(view,"zoom")!=1)throw new AssertionError("Two finger pan without rotation/scale");
+            test.runOnMainSync(()->{long t=android.os.SystemClock.uptimeMillis()+1100;
+                fingers(view,t,6,new float[]{150,350},new float[]{130,130});
+                fingers(view,t+20,2,new float[]{350},new float[]{130});
+                fingers(view,t+40,1,new float[]{350},new float[]{130});
+            });barrier(view);
+            if(value(view,"yaw")!=-20||value(view,"pitch")!=12)throw new AssertionError("Pointer zero lift must not jump");
+            view.reset();barrier(view);if(value(view,"panX")!=0||value(view,"panY")!=0)throw new AssertionError("Pan reset");
+            test.runOnMainSync(()->{
                 var art=new jp.virtualcd.player.library.ZoomArtworkView(test.getTargetContext());art.layout(0,0,512,512);art.setImageBitmap(data.images.get("front"));
                 try{var z=art.getClass().getDeclaredField("zoom");z.setAccessible(true);wheel(art,1);if(z.getFloat(art)<=1)throw new AssertionError("Artwork wheel in");wheel(art,-1);if(Math.abs(z.getFloat(art)-1)>.001f)throw new AssertionError("Artwork wheel out");wheel(art,100);if(z.getFloat(art)!=5)throw new AssertionError("Artwork upper bound");wheel(art,-100);if(z.getFloat(art)!=1)throw new AssertionError("Artwork lower bound");}catch(ReflectiveOperationException error){throw new AssertionError(error);}
             });
@@ -86,9 +128,16 @@ final class CaseDeviceChecks {
             view.onSurfaceChanged(null,512,256);view.onDrawFrame(null);if(glGetError()!=GL_NO_ERROR)throw new AssertionError("Landscape GL error");
             // Simulate context recreation: textures must be rebuilt from retained bitmaps.
             view.onSurfaceCreated(null,null);view.onSurfaceChanged(null,256,512);view.onDrawFrame(null);if(glGetError()!=GL_NO_ERROR)throw new AssertionError("Context restore");
+            return new int[][]{closed,opened,removed};
         }finally{if(renderer[0]!=null)test.runOnMainSync(()->renderer[0].onPause());eglMakeCurrent(display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT);eglDestroySurface(display,surface);eglDestroyContext(display,context);eglTerminate(display);}
     }
     private static float value(CaseSurface view,String name)throws Exception {var field=CaseSurface.class.getDeclaredField(name);field.setAccessible(true);return field.getFloat(view);}
+    private static void fingers(CaseSurface view,long time,int action,float[] xs,float[] ys){
+        var props=new android.view.MotionEvent.PointerProperties[xs.length];var coords=new android.view.MotionEvent.PointerCoords[xs.length];
+        for(int i=0;i<xs.length;i++){props[i]=new android.view.MotionEvent.PointerProperties();props[i].id=i;props[i].toolType=1;coords[i]=new android.view.MotionEvent.PointerCoords();coords[i].x=xs[i];coords[i].y=ys[i];coords[i].pressure=1;coords[i].size=1;}
+        var event=android.view.MotionEvent.obtain(time-100,time,action,xs.length,props,coords,0,0,1,1,0,0,android.view.InputDevice.SOURCE_TOUCHSCREEN,0);
+        try{view.onTouchEvent(event);}finally{event.recycle();}
+    }
     private static void wheel(android.view.View view,float scroll){
         var props=new android.view.MotionEvent.PointerProperties();props.id=0;props.toolType=android.view.MotionEvent.TOOL_TYPE_MOUSE;
         var coords=new android.view.MotionEvent.PointerCoords();coords.x=256;coords.y=256;coords.setAxisValue(android.view.MotionEvent.AXIS_VSCROLL,scroll);

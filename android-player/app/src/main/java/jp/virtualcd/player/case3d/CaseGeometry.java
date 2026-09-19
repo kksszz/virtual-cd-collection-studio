@@ -21,7 +21,7 @@ final class CaseGeometry {
     }
     private final List<Mesh> meshes=new ArrayList<>();
     private int part,finish;
-    static List<Mesh> build(CasePackage data){CaseGeometry g=new CaseGeometry();g.buildCase(data);return g.compact();}
+    static List<Mesh> build(CasePackage data){if(data.geometry!=null)return data.geometry;CaseGeometry g=new CaseGeometry();g.buildCase(data);return g.compact();}
     private List<Mesh> compact(){
         List<Mesh> result=new ArrayList<>();Map<String,List<Mesh>> groups=new LinkedHashMap<>();
         for(Mesh mesh:meshes){if(mesh.color[3]<1||mesh.part>=OBI){result.add(mesh);continue;}

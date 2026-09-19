@@ -64,14 +64,14 @@ internal static class CueAlbumReader
             var file = Regex.Match(line, "^FILE\\s+\"([^\"]+)\"\\s+(\\S+)$", RegexOptions.IgnoreCase);
             if (Regex.IsMatch(line, @"^FILE\s", RegexOptions.IgnoreCase))
             {
-                if (!file.Success || image is not null || !file.Groups[2].Value.Equals("BINARY", StringComparison.OrdinalIgnoreCase))
+                if (!file.Success || image is not null || !(file.Groups[2].Value.Equals("BINARY", StringComparison.OrdinalIgnoreCase)||file.Groups[2].Value.Equals("WAVE",StringComparison.OrdinalIgnoreCase)))
                     throw new NotSupportedException("1つのBINARY音声ファイルを参照するCUEのみ対応しています。");
                 var relative = file.Groups[1].Value;
                 // Do not follow arbitrary absolute/traversal paths embedded in a CUE.
                 if (Path.IsPathRooted(relative) || relative.Contains(':')) throw new InvalidDataException("CUEの参照先は同じフォルダー内にしてください。");
                 var root = Path.GetDirectoryName(path)! + Path.DirectorySeparatorChar;
                 image = Path.GetFullPath(Path.Combine(root, relative));
-                if (!image.StartsWith(root, StringComparison.OrdinalIgnoreCase) || !IsImage(image))
+                if (!image.StartsWith(root, StringComparison.OrdinalIgnoreCase) || !(IsImage(image)&&file.Groups[2].Value.Equals("BINARY",StringComparison.OrdinalIgnoreCase)||image.EndsWith(".flac",StringComparison.OrdinalIgnoreCase)&&file.Groups[2].Value.Equals("WAVE",StringComparison.OrdinalIgnoreCase)))
                     throw new InvalidDataException("CUEの参照先が対応するISO/BINではありません。");
                 continue;
             }
@@ -108,9 +108,11 @@ internal static class CueAlbumReader
         }
         if (image is null || entries.Count == 0) throw new InvalidDataException("CUEに音声トラックがありません。");
         var imageInfo = new FileInfo(image);
-        if (!imageInfo.Exists || imageInfo.Length == 0 || imageInfo.Length % 2352 != 0)
+        bool flac=image.EndsWith(".flac",StringComparison.OrdinalIgnoreCase);
+        if (!imageInfo.Exists || imageInfo.Length == 0 || (!flac&&imageInfo.Length % 2352 != 0))
             throw new InvalidDataException("音声イメージが見つからないか、2352バイト単位のCD音声ではありません。");
         var total = imageInfo.Length / 2352;
+        if(flac){using var audio=new NAudio.Wave.MediaFoundationReader(image);total=(long)Math.Ceiling(audio.TotalTime.TotalSeconds*75);}
         long previous = -1;
         foreach (var entry in entries)
         {
@@ -126,6 +128,8 @@ internal static class CueAlbumReader
     {
         var disc = Read(path);
         var metadata = CueMetadataStore.Load(disc);
+        bool flac=disc.ImagePath.EndsWith(".flac",StringComparison.OrdinalIgnoreCase);
+        using var decoded=flac?new NAudio.Wave.MediaFoundationReader(disc.ImagePath):null;
         return new ZipAlbum
         {
             Path = disc.CuePath,
@@ -137,7 +141,8 @@ internal static class CueAlbumReader
                 DiscCount = metadata?.DiscCount ?? 0,
                 Title = metadata?.Tracks[n].Title ?? entry.Title,
                 Artist = metadata?.Tracks[n].Artist ?? entry.Artist, Album = metadata?.Album ?? disc.Album,
-                Year = metadata?.Year ?? "", AudioFormat = "CD-DA", SampleRate = 44100, BitsPerSample = 16,
+                Year = metadata?.Year ?? "", AudioFormat = flac?"FLAC":"CD-DA", SampleRate = decoded?.WaveFormat.SampleRate??44100, BitsPerSample = decoded?.WaveFormat.BitsPerSample??16,
+                CueStartFrame=entry.Frame,
                 DataOffset = entry.Frame * 2352,
                 Size = ((n + 1 < disc.Tracks.Count ? disc.Tracks[n + 1].Frame : disc.Frames) - entry.Frame) * 2352,
                 Duration = TimeSpan.FromSeconds(((n + 1 < disc.Tracks.Count ? disc.Tracks[n + 1].Frame : disc.Frames) - entry.Frame) / 75.0)

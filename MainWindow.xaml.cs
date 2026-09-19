@@ -33,6 +33,7 @@ public partial class MainWindow : Window
     private EqualizerSampleProvider? _equalizer;
     private BassBoostSampleProvider? _bassBoost;
     private LowVolumeClaritySampleProvider? _lowVolumeClarity;
+    private NormalizationSampleProvider? _normalization;
     private NAudio.Wave.SampleProviders.VolumeSampleProvider? _volumeGain;
     private WaveformCaptureSampleProvider? _waveform;
     private SpectrumCaptureSampleProvider? _spectrum;
@@ -259,6 +260,7 @@ public partial class MainWindow : Window
         }
         else if (_albums.Count > 0) RestoreLastSelection();
 
+        if (args.Contains("--convert-compressed-confirmed")) await ConvertAllCompressedZipAsync(confirm: false);
         ConfigureLibraryWatchers();
         if (_hasCompleteLibraryCache && !_cacheNeedsRefresh) StartCachedLibraryMaintenance();
         // Give the selected album and the window first access to the network;
@@ -321,6 +323,17 @@ public partial class MainWindow : Window
                     {
                         QueueLibraryChange(item.Album.Path);
                         continue;
+                    }
+
+                    if(item.Album.Tracks.Count==1&&item.Album.Tracks[0].AudioFormat=="FLAC"&&string.IsNullOrEmpty(item.Album.Tracks[0].CuePath)){
+                        var expanded=await Task.Run(()=>{
+                            if(!Directory.Exists(item.Album.Path)||!Directory.EnumerateFiles(item.Album.Path,"*.cue").Any())return null;
+                            return ZipAlbumReader.OpenFolder(item.Album.Path);
+                        },cancellationToken);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if(expanded!=null&&expanded.Tracks.Any(t=>t.CuePath.Length>0)&&_albums.Contains(item)){
+                            ApplyIncrementalLibraryRefresh(new IncrementalLibraryResult(new[]{new AlbumListItem(expanded)},new HashSet<string>(),new HashSet<string>()));
+                        }
                     }
 
                     if (!item.ArtworkSummaryLoaded)
@@ -504,6 +517,7 @@ public partial class MainWindow : Window
         var previousLanguage = _settings.DisplayLanguage;
         var dialog = new SettingsWindow(_folders, _disabledFolders, _settings.MinimizeOnClose,
             DataDirectory, previousLanguage, _settings.TagBackupEnabled, _settings.TagBackupFolder) { Owner = this,
+                LibraryAlbums = _albums.Select(item => item.Album).ToArray(),
                 AutomaticArtworkEnabled = _settings.AutomaticArtworkEnabled,
                 AutomaticArtworkPaused = _settings.AutomaticArtworkPaused };
         if (dialog.ShowDialog() != true)
@@ -1768,53 +1782,7 @@ public partial class MainWindow : Window
     private async void ConvertToStoredZip_Click(object sender, RoutedEventArgs e)
     {
         var item = GetSelectedAlbumItem();
-        if (item?.IsArchive != true) return;
-        var confirmation = MessageBox.Show(this,
-            LocalizationService.Select(
-                $"「{item.Title}」を無圧縮ZIP.MP3へ変換します。\n\n音声は再エンコードしません。変換後は容量が少し増える場合があります。\n元のZIP.MP3は同じフォルダへバックアップします。続行しますか？",
-                $"Convert “{item.Title}” to an uncompressed ZIP.MP3?\n\nAudio will not be re-encoded. The converted file may be slightly larger.\nThe original ZIP.MP3 will be backed up in the same folder."),
-            "無圧縮ZIP.MP3へ変換", MessageBoxButton.YesNo, MessageBoxImage.Question);
-        if (confirmation != MessageBoxResult.Yes) return;
-
-        using var dataOperation = _dataOperations.Begin();
-        if (dataOperation is null) return;
-
-        var album = item.Album;
-        var selectedFileName = (TrackGrid.SelectedItem as ZipTrack)?.FileName;
-        if (_playingAlbum is not null && string.Equals(_playingAlbum.Path, album.Path, StringComparison.OrdinalIgnoreCase))
-            StopPlayback(resetPosition: false);
-        AlbumList.IsEnabled = false;
-        TrackGrid.IsEnabled = false;
-        Mouse.OverrideCursor = Cursors.Wait;
-        StatusText.Text = "無圧縮ZIP.MP3へ変換・検証しています…";
-        try
-        {
-            var result = await Task.Run(() => ZipStorageConversionService.ConvertToStored(album.Path));
-            var refreshed = ZipAlbumReader.Open(album.Path);
-            ReplaceLibraryAlbum(album, refreshed, selectedFileName);
-            SaveLibraryCache();
-            StatusText.Text = "無圧縮ZIP.MP3への変換が完了しました";
-            if (!_dataOperations.CloseRequested) MessageBox.Show(this,
-                LocalizationService.Select(
-                    $"無圧縮ZIP.MP3へ変換しました。\n収録物: {result.EntryCount}件\n変換前: {FormatStorageSize(result.OriginalSize)}\n変換後: {FormatStorageSize(result.ConvertedSize)}\n\n元ファイルのバックアップ:\n{result.BackupPath}",
-                    $"Converted to an uncompressed ZIP.MP3.\nEntries: {result.EntryCount}\nBefore: {FormatStorageSize(result.OriginalSize)}\nAfter: {FormatStorageSize(result.ConvertedSize)}\n\nOriginal-file backup:\n{result.BackupPath}"),
-                "変換完了", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = "無圧縮ZIP.MP3へ変換できませんでした";
-            MessageBox.Show(this,
-                LocalizationService.Select(
-                    $"変換を完了できませんでした。検証に合格するまでは元ファイルを置換しません。\n\n理由: {ex.Message}",
-                    $"The conversion could not be completed. The source is not replaced until verification succeeds.\n\nReason: {ex.Message}"),
-                "ZIP変換エラー", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-        finally
-        {
-            Mouse.OverrideCursor = null;
-            AlbumList.IsEnabled = true;
-            TrackGrid.IsEnabled = true;
-        }
+        if (item?.IsArchive == true) await ConvertAllCompressedZipAsync(true, item.Album);
     }
 
     private static string FormatStorageSize(long bytes)
@@ -2122,6 +2090,7 @@ public partial class MainWindow : Window
             _settings.BassBoostEnabled = BassBoostEnabledCheck.IsChecked == true;
             _settings.BassBoostAmount = BassBoostSlider.Value;
             _settings.LowVolumeClarityEnabled = LowVolumeClarityCheck.IsChecked == true;
+            _settings.NormalizationEnabled = NormalizationCheck.IsChecked == true;
             _settings.RemasterMode = _remasterMode.ToString();
             _settings.Shuffle = _shuffle;
             _settings.RepeatMode = (int)_repeat;
@@ -2160,6 +2129,7 @@ public partial class MainWindow : Window
         BassBoostEnabledCheck.IsChecked = _settings.BassBoostEnabled;
         BassBoostSlider.Value = Math.Clamp(_settings.BassBoostAmount, 0, 100);
         LowVolumeClarityCheck.IsChecked = _settings.LowVolumeClarityEnabled;
+        NormalizationCheck.IsChecked = _settings.NormalizationEnabled;
         _remasterMode = Enum.TryParse<RemasterMode>(_settings.RemasterMode, true, out var remasterMode)
             ? remasterMode : RemasterMode.Off;
         RemasterModeCombo.SelectedItem = RemasterModeCombo.Items.OfType<System.Windows.Controls.ComboBoxItem>()
@@ -2464,7 +2434,8 @@ public partial class MainWindow : Window
                 };
                 _bassBoost = new BassBoostSampleProvider(_equalizer, BassBoostEnabledCheck.IsChecked == true, BassBoostSlider.Value);
                 _lowVolumeClarity = new LowVolumeClaritySampleProvider(_bassBoost, LowVolumeClarityCheck.IsChecked == true);
-                _volumeGain = new NAudio.Wave.SampleProviders.VolumeSampleProvider(_lowVolumeClarity) { Volume = (float)VolumeSlider.Value };
+                _normalization = new NormalizationSampleProvider(_lowVolumeClarity, NormalizationCheck.IsChecked == true);
+                _volumeGain = new NAudio.Wave.SampleProviders.VolumeSampleProvider(_normalization) { Volume = (float)VolumeSlider.Value };
                 _waveform = new WaveformCaptureSampleProvider(new SoftLimiterSampleProvider(_volumeGain));
                 _spectrum = new SpectrumCaptureSampleProvider(_waveform);
                 var waveOut = new WaveOutEvent { DesiredLatency = 150, NumberOfBuffers = 3, Volume = 1.0f };
@@ -3405,6 +3376,12 @@ public partial class MainWindow : Window
     {
         if (BassBoostValueText is not null) BassBoostValueText.Text = $"{e.NewValue:0}%";
         _bassBoost?.SetAmount(e.NewValue);
+        if (IsLoaded) SaveSettings();
+    }
+
+    private void Normalization_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_normalization is not null) _normalization.Enabled = NormalizationCheck.IsChecked == true;
         if (IsLoaded) SaveSettings();
     }
 
@@ -5065,13 +5042,18 @@ public partial class MainWindow : Window
 
     private void ImageLyricsSplitter_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e)
     {
-        if (!e.Canceled && _lyricsPanelExpanded)
+        if (e.Canceled || !_lyricsPanelExpanded) return;
+        // Preview resizing commits column widths before layout updates ActualWidth.
+        // Reading the old ActualWidth here and reapplying it undoes the user's drag.
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
         {
+            if (!_lyricsPanelExpanded || !IsLoaded) return;
+            ImageLyricsSplitter.UpdateLayout();
             var total = ArtworkColumn.ActualWidth + LyricsColumn.ActualWidth;
             if (total > 0) _settings.ImageLyricsRatio = Math.Clamp(ArtworkColumn.ActualWidth / total, 0.15, 0.85);
-        }
-        ApplyImageLyricsRatio();
-        if (IsLoaded) SaveSettings();
+            ApplyImageLyricsRatio();
+            SaveSettings();
+        }));
     }
 
     private void ImageLyricsPreset_Click(object sender, RoutedEventArgs e)
@@ -5601,7 +5583,7 @@ public partial class MainWindow : Window
         _output?.Dispose(); _gapless?.Dispose(); _trackReader?.Dispose();
         _gapless = null;
         _output = null; _reader = null; _trackReader = null; _remaster = null; _equalizer = null;
-        _bassBoost = null; _lowVolumeClarity = null; _volumeGain = null; _waveform = null; _spectrum = null;
+        _bassBoost = null; _lowVolumeClarity = null; _normalization = null; _volumeGain = null; _waveform = null; _spectrum = null;
         _faithfulExclusiveActive = false;
         WaveformDisplay.SetSamples(null);
         SpectrumDisplay.SetBands(null);
@@ -5743,6 +5725,7 @@ public partial class MainWindow : Window
         public bool BassBoostEnabled { get; set; }
         public double BassBoostAmount { get; set; } = 60;
         public bool LowVolumeClarityEnabled { get; set; }
+        public bool NormalizationEnabled { get; set; }
         public string RemasterMode { get; set; } = "Off";
         public bool Shuffle { get; set; }
         public int RepeatMode { get; set; }
@@ -5915,7 +5898,12 @@ public partial class MainWindow : Window
         public bool IsPlaying => _isPlaying;
         public bool IsArchive => Album.Tracks.FirstOrDefault()?.IsArchiveEntry == true;
         public bool IsZipMp3 => IsArchive && Album.Path.EndsWith(".zip.mp3", StringComparison.OrdinalIgnoreCase);
-        public string SourceBadge => CueAlbumReader.IsCue(Album.Path) ? "CUE" : IsZipMp3 ? "ZIP.MP3" : IsArchive ? "ZIP" : "DIR";
+        public bool IsCompressedArchive => Album.HasCompressedArchiveContent;
+        public string CompressionDescription => LocalizationService.Select(
+            "圧縮された収録物があります。アルバムを右クリックして「無圧縮ZIP.MP3へ変換…」を選択できます。PCでは対応形式をそのまま再生できます。",
+            "Contains compressed entries. Right-click the album and choose Convert to Uncompressed ZIP.MP3. Supported formats can still play on this PC.");
+        public string SourceBadge => (CueAlbumReader.IsCue(Album.Path) ? "CUE" : IsZipMp3 ? "ZIP.MP3" : IsArchive ? "ZIP" : "DIR")
+            + (IsCompressedArchive ? LocalizationService.Select(" 圧縮", " COMP") : "");
         public string SourceDescription => LocalizationService.Select(
             $"{Title}\n形式: {(CueAlbumReader.IsCue(Album.Path) ? "CUE / CD-DA" : IsZipMp3 ? "ZIP.MP3" : IsArchive ? "ZIP" : "音楽フォルダ")}\n場所: {Album.Path}",
             $"{Title}\nType: {(CueAlbumReader.IsCue(Album.Path) ? "CUE / CD-DA" : IsZipMp3 ? "ZIP.MP3" : IsArchive ? "ZIP" : "Music folder")}\nLocation: {Album.Path}");

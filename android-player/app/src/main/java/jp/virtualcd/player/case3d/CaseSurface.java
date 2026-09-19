@@ -16,6 +16,13 @@ public final class CaseSurface extends GLSurfaceView implements GLSurfaceView.Re
     private final ScaleGestureDetector pinch;
     private final GestureDetector taps;
     private boolean resetGesture;
+    private volatile boolean sideFacing;
+    private boolean hingeGesture,hingeTriggered;
+    private float hingeSpan;
+    private final DiscPullGesture discPull=new DiscPullGesture();
+    private volatile float[] discHitInverse;
+    private float panX,panY,lastFocusX,lastFocusY;
+    private int lastPointerCount;
     private float yaw=-20,pitch=12,zoom=1,open,targetOpen,discRemoved,targetDisc,obiRemoved,targetObi,wrapRemoved,targetWrap,aspect=1,lastX,lastY;
     private long lastFrame;
     private int program,position,uv,normal,mvpUniform,modelUniform,colorUniform,textureUniform,finishUniform;
@@ -23,18 +30,18 @@ public final class CaseSurface extends GLSurfaceView implements GLSurfaceView.Re
     private static final class Draw {final CaseGeometry.Mesh mesh;final float[] model=new float[16];float alpha,depth;Draw(CaseGeometry.Mesh mesh){this.mesh=mesh;}}
     public CaseSurface(Context context,CasePackage data){super(context);this.data=data;obiRemoved=targetObi=data.hasObi?0:1;wrapRemoved=targetWrap=data.wrapped?0:1;
         setEGLContextClientVersion(2);setEGLConfigChooser(8,8,8,0,24,0);setRenderer(this);setRenderMode(RENDERMODE_WHEN_DIRTY);
-        setContentDescription("3D CDケース。ドラッグで回転、2本指またはマウスホイールで拡大縮小、ダブルタップ・ダブルクリックで初期表示へ戻る");
+        setContentDescription("3D CDケース。1本指で回転、2本指のスライドで移動。開いたCDの中心を押さえ、もう1本の指で外周を引くとCDを取り出します。ピンチまたはマウスホイールで拡大縮小、ダブルタップで初期表示");
         taps=new GestureDetector(context,new GestureDetector.SimpleOnGestureListener(){
             @Override public boolean onDown(MotionEvent event){return true;}
             @Override public boolean onDoubleTap(MotionEvent event){resetGesture=true;reset();return true;}
         });taps.setIsLongpressEnabled(false);
-        pinch=new ScaleGestureDetector(context,new ScaleGestureDetector.SimpleOnScaleGestureListener(){@Override public boolean onScale(ScaleGestureDetector detector){float factor=detector.getScaleFactor();queueEvent(()->{zoom=Math.max(.5f,Math.min(3f,zoom*factor));requestRender();});return true;}});
+        pinch=new ScaleGestureDetector(context,new ScaleGestureDetector.SimpleOnScaleGestureListener(){@Override public boolean onScale(ScaleGestureDetector detector){if(hingeGesture)return true;float factor=detector.getScaleFactor();queueEvent(()->{zoom=Math.max(.5f,Math.min(3f,zoom*factor));requestRender();});return true;}});
     }
     public void toggleOpen(){queueEvent(()->{if(targetOpen>0){targetOpen=0;targetDisc=0;}else{targetOpen=1;targetObi=1;targetWrap=1;}wake();});}
     public void toggleDisc(){queueEvent(()->{targetDisc=targetDisc==0?1:0;if(targetDisc>0){targetOpen=1;targetObi=1;targetWrap=1;}wake();});}
     public void toggleObi(){if(!data.hasObi)return;queueEvent(()->{targetObi=targetObi==0?1:0;targetWrap=1;if(targetObi==0){targetOpen=0;targetDisc=0;}wake();});}
     public void toggleWrapping(){queueEvent(()->{targetWrap=targetWrap==0?1:0;if(targetWrap==0){targetOpen=0;targetDisc=0;targetObi=data.hasObi?0:1;}wake();});}
-    public void reset(){queueEvent(()->{yaw=-20;pitch=12;zoom=1;targetOpen=0;targetDisc=0;targetObi=data.hasObi?0:1;targetWrap=data.wrapped?0:1;wake();});}
+    public void reset(){queueEvent(()->{yaw=-20;pitch=12;zoom=1;panX=panY=0;targetOpen=0;targetDisc=0;targetObi=data.hasObi?0:1;targetWrap=data.wrapped?0:1;wake();});}
     private void wake(){lastFrame=0;requestRender();}
     @Override public boolean onGenericMotionEvent(MotionEvent event){
         if(event.getActionMasked()==MotionEvent.ACTION_SCROLL&&event.isFromSource(InputDevice.SOURCE_CLASS_POINTER)){
@@ -43,9 +50,53 @@ public final class CaseSurface extends GLSurfaceView implements GLSurfaceView.Re
                 queueEvent(()->{zoom=Math.max(.5f,Math.min(3f,zoom*factor));requestRender();});return true;}
         }return super.onGenericMotionEvent(event);
     }
-    @Override public boolean onTouchEvent(MotionEvent event){if(event.getActionMasked()==MotionEvent.ACTION_DOWN)resetGesture=false;taps.onTouchEvent(event);pinch.onTouchEvent(event);float x=event.getX(),y=event.getY();
-        if(event.getActionMasked()==MotionEvent.ACTION_MOVE&&event.getPointerCount()==1&&!pinch.isInProgress()&&!resetGesture){float dx=x-lastX,dy=y-lastY;queueEvent(()->{yaw+=dx*.3f;pitch=Math.max(-85,Math.min(85,pitch+dy*.3f));requestRender();});}
-        lastX=x;lastY=y;return true;
+    @Override public boolean onTouchEvent(MotionEvent event){
+        int action=event.getActionMasked();
+        if(action==MotionEvent.ACTION_DOWN){discPull.reset();hingeGesture=false;hingeTriggered=false;}
+        if(action==MotionEvent.ACTION_POINTER_DOWN&&event.getPointerCount()==2&&!discPull.captured()){
+            float[] inverse=discHitInverse;
+            if(inverse!=null&&discPull.begin(event.getPointerId(0),event.getX(0),event.getY(0),discRadius(inverse,event.getX(0),event.getY(0)),event.getPointerId(1),event.getX(1),event.getY(1),discRadius(inverse,event.getX(1),event.getY(1)))){
+                MotionEvent cancel=MotionEvent.obtain(event);cancel.setAction(MotionEvent.ACTION_CANCEL);taps.onTouchEvent(cancel);pinch.onTouchEvent(cancel);cancel.recycle();
+            }
+        }
+        if(discPull.captured()){
+            if(action==MotionEvent.ACTION_MOVE&&event.getPointerCount()==2&&discHitInverse!=null){
+                if(discPull.move(event.getPointerId(0),event.getX(0),event.getY(0),event.getPointerId(1),event.getX(1),event.getY(1),getResources().getDisplayMetrics().density))queueEvent(()->{if(targetOpen==1&&open>.98f&&targetDisc==0){targetDisc=1;wake();}});
+            }else if(event.getPointerCount()!=2||action==MotionEvent.ACTION_POINTER_UP||discHitInverse==null)discPull.cancel();
+            if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){discPull.reset();lastPointerCount=0;hingeGesture=false;}
+            return true;
+        }
+        if(action==MotionEvent.ACTION_POINTER_DOWN&&event.getPointerCount()==2){hingeGesture=sideFacing;hingeTriggered=false;hingeSpan=Math.abs(event.getX(1)-event.getX(0));}
+        if(action==MotionEvent.ACTION_DOWN){resetGesture=false;lastPointerCount=0;}
+        taps.onTouchEvent(event);pinch.onTouchEvent(event);
+        // Rebase whenever fingers enter/leave, excluding the lifted pointer. This avoids
+        // jumps when pointer zero lifts or a pinch becomes a one-finger rotation.
+        int skip=action==MotionEvent.ACTION_POINTER_UP?event.getActionIndex():-1;
+        int count=event.getPointerCount()-(skip>=0?1:0),first=skip==0?1:0;
+        float x=event.getX(first),y=event.getY(first),fx=0,fy=0;
+        for(int i=0;i<event.getPointerCount();i++)if(i!=skip){fx+=event.getX(i);fy+=event.getY(i);}
+        fx/=count;fy/=count;
+        if(action==MotionEvent.ACTION_MOVE&&count==lastPointerCount&&!resetGesture){
+            if(count==2){
+                if(hingeGesture&&!hingeTriggered){float span=Math.abs(event.getX(1)-event.getX(0));float delta=span-hingeSpan;
+                    if(Math.abs(delta)>48*getResources().getDisplayMetrics().density&&Math.abs(event.getY(1)-event.getY(0))<span){hingeTriggered=true;boolean opening=delta>0;queueEvent(()->{targetOpen=opening?1:0;if(opening){targetObi=targetWrap=1;}else targetDisc=0;wake();});}
+                }
+                float dx=(fx-lastFocusX)/Math.max(1,getWidth()),dy=(fy-lastFocusY)/Math.max(1,getHeight());
+                queueEvent(()->{panX=Math.max(-1,Math.min(1,panX+dx));panY=Math.max(-1,Math.min(1,panY+dy));requestRender();});
+            }else if(count==1&&!pinch.isInProgress()){float dx=x-lastX,dy=y-lastY;queueEvent(()->{yaw+=dx*.3f;pitch=Math.max(-85,Math.min(85,pitch+dy*.3f));requestRender();});}
+        }
+        lastX=x;lastY=y;lastFocusX=fx;lastFocusY=fy;lastPointerCount=count;
+        if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){lastPointerCount=0;hingeGesture=false;hingeTriggered=false;}
+        return true;
+    }
+    private float discRadius(float[] inverse,float x,float y){
+        float nx=x/Math.max(1,getWidth())*2-1,ny=1-y/Math.max(1,getHeight())*2;
+        float[] a=new float[4],b=new float[4];Matrix.multiplyMV(a,0,inverse,0,new float[]{nx,ny,-1,1},0);Matrix.multiplyMV(b,0,inverse,0,new float[]{nx,ny,1,1},0);
+        if(Math.abs(a[3])<.00001f||Math.abs(b[3])<.00001f)return Float.NaN;
+        for(int i=0;i<3;i++){a[i]/=a[3];b[i]/=b[3];}
+        float dz=b[2]-a[2];if(dz>=-.0001f)return Float.NaN;
+        float t=(.012f-a[2])/dz;if(t<0||t>1)return Float.NaN;
+        return (float)Math.hypot(a[0]+t*(b[0]-a[0])-.06f,a[1]+t*(b[1]-a[1]))/.60f;
     }
     private static float approach(float value,float target,float step){return value+Math.signum(target-value)*Math.min(Math.abs(target-value),step);}
     private boolean advance(float seconds){float step=seconds*2.4f;
@@ -74,7 +125,10 @@ public final class CaseSurface extends GLSurfaceView implements GLSurfaceView.Re
         glClearColor(.055f,.075f,.095f,1);glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);glUseProgram(program);
         Matrix.perspectiveM(projection,0,42,aspect,.5f,30);float distance=(3.0f+2.5f*open+.35f*discRemoved)*Math.max(1,.8f/aspect);
         Matrix.setLookAtM(view,0,0,0,distance,0,0,0,0,1,0);Matrix.multiplyMM(vp,0,projection,0,view,0);
-        Matrix.setIdentityM(root,0);Matrix.scaleM(root,0,zoom,zoom,zoom);Matrix.rotateM(root,0,pitch,1,0,0);Matrix.rotateM(root,0,yaw,0,1,0);Matrix.translateM(root,0,.55f*open,0,0);
+        float visibleHeight=2*distance*(float)Math.tan(Math.toRadians(21));
+        sideFacing=Math.abs(Math.cos(Math.toRadians(yaw)))<.55&&Math.abs(pitch)<55;
+        Matrix.setIdentityM(root,0);Matrix.translateM(root,0,panX*visibleHeight*aspect,-panY*visibleHeight,0);Matrix.scaleM(root,0,zoom,zoom,zoom);Matrix.rotateM(root,0,pitch,1,0,0);Matrix.rotateM(root,0,yaw,0,1,0);Matrix.translateM(root,0,.55f*open,0,0);
+        if(open>.98f&&targetOpen==1&&discRemoved<.01f&&targetDisc==0){float[] transform=new float[16],inverse=new float[16];Matrix.multiplyMM(transform,0,vp,0,root,0);discHitInverse=Matrix.invertM(inverse,0,transform,0)?inverse:null;}else discHitInverse=null;
         glUniform1i(textureUniform,0);glActiveTexture(GL_TEXTURE0);glEnableVertexAttribArray(position);glEnableVertexAttribArray(uv);glEnableVertexAttribArray(normal);
         opaque.clear();transparent.clear();for(Draw draw:draws){CaseGeometry.Mesh mesh=draw.mesh;float visibility=mesh.part==CaseGeometry.OBI?1-obiRemoved:mesh.part>=CaseGeometry.FILM_TOP?1-wrapRemoved:1;if(visibility<=.001f)continue;draw.alpha=mesh.color[3]*visibility;
             System.arraycopy(root,0,draw.model,0,16);float[] model=draw.model;

@@ -9,5 +9,6 @@
     <PackageReference Include="NAudio" Version="2.2.1" />
     <Compile Include="..\LowVolumeClaritySampleProvider.cs" Link="LowVolumeClaritySampleProvider.cs" />
     <Compile Include="..\SoftLimiterSampleProvider.cs" Link="SoftLimiterSampleProvider.cs" />
+    <Compile Include="..\NormalizationSampleProvider.cs" Link="NormalizationSampleProvider.cs" />
   </ItemGroup>
 </Project>

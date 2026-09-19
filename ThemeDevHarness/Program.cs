@@ -13,6 +13,45 @@ internal static partial class Program
     [STAThread]
     private static void Main()
     {
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_EXTERNAL_STORE_TEST") == "1")
+        { VerifyExternalStore(); return; }
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_COMPRESSION_BADGE_TEST") == "1")
+        {
+            ZipAlbum Sample(int method, bool archive = true, int imageMethod = 0, bool? storedFlag = null) => new()
+            {
+                Path = "test.zip.mp3", ArchiveHasCompressedEntries = storedFlag,
+                Tracks = [new() { IsArchiveEntry = archive, CompressionMethod = method }],
+                Images = [new() { CompressionMethod = imageMethod }]
+            };
+            if (Sample(0).HasCompressedArchiveContent || !Sample(8).HasCompressedArchiveContent
+                || !Sample(0, imageMethod: 8).HasCompressedArchiveContent
+                || Sample(8, archive: false).HasCompressedArchiveContent
+                || !Sample(0, storedFlag: true).HasCompressedArchiveContent
+                || Sample(8, storedFlag: false).HasCompressedArchiveContent)
+                throw new Exception("Compression badge classification failed");
+            var modelType = typeof(MainWindow).GetNestedType("AlbumListItem", BindingFlags.NonPublic)!;
+            foreach (var method in new[] { 0, 8 })
+            {
+                var model = Activator.CreateInstance(modelType, [Sample(method), false])!;
+                var flag = (bool)modelType.GetProperty("IsCompressedArchive")!.GetValue(model)!;
+                var label = (string)modelType.GetProperty("SourceBadge")!.GetValue(model)!;
+                if (flag != (method == 8) || (method == 8 && !label.Contains("圧縮")))
+                    throw new Exception("Compression badge binding failed");
+            }
+            Console.WriteLine("PASS compressed audio/image, stored ZIP, DIR, converted metadata and badge bindings");
+            var probe = Environment.GetEnvironmentVariable("ZIPMP3PLAYER_COMPRESSION_BADGE_PROBE");
+            if (!string.IsNullOrEmpty(probe))
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(probe));
+                var albums = System.Text.Json.JsonSerializer.Deserialize<List<ZipAlbum>>(doc.RootElement.GetProperty("Albums").GetRawText())!;
+                Console.WriteLine($"READ-ONLY cached library: {albums.Count(a => a.HasCompressedArchiveContent)} red indicators");
+            }
+            return;
+        }
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_LIBRARY_SIZE_TEST") == "1")
+        { VerifyLibrarySize(); return; }
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_LYRICS_SPLITTER_TEST") == "1")
+        { VerifyLyricsSplitter(); return; }
         if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_SHUTDOWN_TEST") == "1")
         { VerifyDataOperationGate(); return; }
         if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_FOLDER_ZIP_TEST") == "1")

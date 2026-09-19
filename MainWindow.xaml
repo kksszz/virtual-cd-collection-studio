@@ -69,16 +69,17 @@
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
         <StackPanel.Resources>
           <Style x:Key="HeaderNavigationButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Width" Value="132"/>
+            <Setter Property="MinWidth" Value="56"/>
             <Setter Property="Height" Value="36"/>
             <Setter Property="Margin" Value="3,0"/>
-            <Setter Property="Padding" Value="6,0"/>
+            <Setter Property="Padding" Value="8,0"/>
             <Setter Property="HorizontalContentAlignment" Value="Center"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
           </Style>
         </StackPanel.Resources>
         <Button Content="◷ 履歴" Click="Usage_Click" Style="{StaticResource HeaderNavigationButton}" ToolTip="再生履歴・Usageを表示"/>
         <Button Content="★ お気に入り" Click="Favorites_Click" Style="{StaticResource HeaderNavigationButton}" ToolTip="お気に入りの曲・アルバムを一覧から連続再生"/>
+        <Button Content="⇄ モバイル同期(_M)" Click="MobileSync_Click" Style="{StaticResource HeaderNavigationButton}" ToolTip="アルバムを選択して音楽・画像・3Dを一括転送"/>
         <Button x:Name="AlbumBrowserButton" Content="▦ アルバムブラウザー" Click="OpenAlbumBrowser_Click"
                 Style="{StaticResource HeaderNavigationButton}" ToolTip="アルバムブラウザー・3D CoverFlow・CDラック・Attractモード"/>
         <Button Content="⚙" Width="40" Height="36" Margin="3,0" Padding="0" FontSize="16"
@@ -138,6 +139,9 @@
                 <ComboBoxItem Content="標準" Tag="Standard"/><ComboBoxItem Content="強め" Tag="Strong"/>
                 <ComboBoxItem Content="劇的（強調）" Tag="Dramatic"/><ComboBoxItem Content="HDR風（実験）" Tag="AudioHdr"/>
               </ComboBox>
+              <CheckBox x:Name="NormalizationCheck" Content="音量ノーマライズ" Margin="1,8,0,0"
+                        Checked="Normalization_Changed" Unchecked="Normalization_Changed"
+                        ToolTip="再生中の平均音量をゆっくり揃えます。補正には数秒かかります。元ファイルは変更しません。原音忠実モードでは無効です。"/>
               <CheckBox x:Name="LowVolumeClarityCheck" Content="小音量クリア" Margin="1,8,0,0"
                         Checked="LowVolumeClarity_Changed" Unchecked="LowVolumeClarity_Changed"
                         ToolTip="音量を上げにくい環境向け。低音・声・アタックを聴き取りやすくし、急な大音量を抑えます"/>
@@ -275,7 +279,9 @@
                 <Separator/>
                 <MenuItem x:Name="ConvertToStoredZipMenuItem" Header="無圧縮ZIP.MP3へ変換…" Click="ConvertToStoredZip_Click"
                           ToolTip="音声を再エンコードせず、ZIP内の全収録物をStore方式へ変換"/>
+                <MenuItem Header="モバイル同期（選択して転送）…" Click="MobileSync_Click"/>
                 <MenuItem Header="DIRをZIP.MP3に変換…" Click="ConvertFolderToZip_Click"/>
+                <MenuItem Header="圧縮ZIPを一括で無圧縮ZIP.MP3へ変換…" Click="ConvertAllCompressedZip_Click"/>
                 <MenuItem Header="ZIP.MP3をDIRに変換…" Click="ConvertZipToFolder_Click"/>
                 <Separator/>
                 <MenuItem Header="リストから削除" Click="RemoveAlbumFromList_Click"/>
@@ -349,7 +355,13 @@
                       <Border.Style>
                         <Style TargetType="Border">
                           <Setter Property="Background" Value="#315F82"/>
-                          <Style.Triggers><DataTrigger Binding="{Binding IsArchive}" Value="False"><Setter Property="Background" Value="#3E7048"/></DataTrigger></Style.Triggers>
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsArchive}" Value="False"><Setter Property="Background" Value="#3E7048"/></DataTrigger>
+                            <DataTrigger Binding="{Binding IsCompressedArchive}" Value="True">
+                              <Setter Property="Background" Value="#B73535"/>
+                              <Setter Property="ToolTip" Value="{Binding CompressionDescription}"/>
+                            </DataTrigger>
+                          </Style.Triggers>
                         </Style>
                       </Border.Style>
                       <TextBlock Text="{Binding SourceBadge}" Foreground="White" FontSize="9" FontWeight="Bold"/>
@@ -415,7 +427,13 @@
                       <Style TargetType="TextBlock">
                         <Setter Property="Foreground" Value="#F2F3F5"/>
                         <Setter Property="FontWeight" Value="Normal"/>
-                        <Style.Triggers><DataTrigger Binding="{Binding IsGroup}" Value="True"><Setter Property="FontWeight" Value="SemiBold"/></DataTrigger></Style.Triggers>
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding IsGroup}" Value="True"><Setter Property="FontWeight" Value="SemiBold"/></DataTrigger>
+                          <DataTrigger Binding="{Binding AlbumItem.IsCompressedArchive}" Value="True">
+                            <Setter Property="Foreground" Value="#FF8585"/>
+                            <Setter Property="ToolTip" Value="{Binding AlbumItem.CompressionDescription}"/>
+                          </DataTrigger>
+                        </Style.Triggers>
                       </Style>
                     </TextBlock.Style>
                   </TextBlock>
@@ -604,7 +622,7 @@
                        TextAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
           </Grid>
           <GridSplitter x:Name="ImageLyricsSplitter" Grid.Column="1" Width="8" HorizontalAlignment="Stretch" Background="#252A31"
-                        ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" ShowsPreview="True"
+                        ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" ShowsPreview="True" Cursor="SizeWE"
                         DragCompleted="ImageLyricsSplitter_DragCompleted"
                         ToolTip="ドラッグで幅を調整／右クリックで割合テンプレート">
             <GridSplitter.ContextMenu>

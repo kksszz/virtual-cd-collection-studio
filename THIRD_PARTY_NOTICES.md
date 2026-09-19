@@ -4,6 +4,27 @@ Virtual CD Collection Studio's original source code is licensed under
 GNU General Public License version 3 only. The components and assets below
 remain subject to their respective licenses.
 
+## QRCoder 1.7.0
+
+- Project: https://github.com/Shane32/QRCoder
+- Copyright © 2013-2025 Raffael Herrmann; © 2024-2025 Shane Krueger.
+- License: MIT; included text: `THIRD_PARTY_LICENSES/QRCoder-MIT.txt`.
+- Used for offline connection QR generation on Windows.
+
+## ZXing Android Embedded 4.3.0 / ZXing Core 3.4.1
+
+- Projects: https://github.com/journeyapps/zxing-android-embedded and https://github.com/zxing/zxing
+- License: Apache License 2.0; https://github.com/journeyapps/zxing-android-embedded/blob/v4.3.0/COPYING
+- Used for on-device QR decoding and camera lifecycle; no camera images are uploaded by the sync feature.
+
+## FLAC CUE playback: FlakeNAudioAdapter 1.0.2 / CUETools.Codecs.FLAKE-Reloaded 1.0.1
+
+- Adapter: https://github.com/teekay/FlakeNAudioAdapter, Copyright (c) 2022 Tomáš Kohl.
+- Adapter license: MIT, `THIRD_PARTY_LICENSES/FlakeNAudioAdapter-MIT.txt`.
+- Decoder source: https://github.com/teekay/FLACTools, Copyright 2008–2010 Grigory Chudov, 2022 Tomáš Kohl.
+- Decoder license: LGPL 2.1, `THIRD_PARTY_LICENSES/CUETools-FLAKE-LGPL-2.1.txt`.
+- Unmodified dynamically linked assemblies used for sample-accurate FLAC CUE seeking.
+
 ## NAudio 2.2.1
 
 - Project: https://github.com/naudio/NAudio

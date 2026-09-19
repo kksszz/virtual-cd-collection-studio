@@ -16,7 +16,8 @@ public final class CasePackage implements AutoCloseable {
     public final boolean hasObi,wrapped;
     public final float obiFrontWidth,obiBackWidth;
     public final Map<String,Bitmap> images=new HashMap<>();
-    private CasePackage(JSONObject manifest)throws Exception {
+    List<CaseGeometry.Mesh> geometry;
+    CasePackage(JSONObject manifest)throws Exception {
         title=manifest.optString("title","");artist=manifest.optString("artist","");tray=manifest.optString("tray","Black");
         JSONObject obi=manifest.optJSONObject("obi");hasObi=obi!=null;wrapped=manifest.optBoolean("wrapped",false);
         obiFrontWidth=hasObi?width(obi,"frontWidthMm"):0;obiBackWidth=hasObi?width(obi,"backWidthMm"):0;
@@ -28,6 +29,7 @@ public final class CasePackage implements AutoCloseable {
     }
     public static CasePackage parse(byte[] data)throws Exception {
         if(data.length>MAX_BYTES)throw new IOException("パッケージが大きすぎます");
+        if(data.length>=4&&data[0]=='g'&&data[1]=='l'&&data[2]=='T'&&data[3]=='F')return GlbCaseReader.read(data);
         Map<String,byte[]> entries=new HashMap<>();int total=0;
         try(ZipInputStream zip=new ZipInputStream(new ByteArrayInputStream(data))){ZipEntry entry;
             while((entry=zip.getNextEntry())!=null){String name=entry.getName();
@@ -58,6 +60,10 @@ public final class CasePackage implements AutoCloseable {
             }
             return result;
         }catch(Exception ex){result.close();throw ex;}
+    }
+    public static byte[] frontImage(byte[] data)throws Exception {
+        if(data.length>=4&&data[0]=='g'&&data[1]=='l'&&data[2]=='T'&&data[3]=='F')return GlbCaseReader.frontImage(data);
+        try(var parsed=parse(data)){Bitmap front=parsed.images.get("front");if(front==null)return null;var out=new ByteArrayOutputStream();front.compress(Bitmap.CompressFormat.PNG,100,out);return out.toByteArray();}
     }
     public static String hash(byte[] bytes)throws Exception {byte[] digest=MessageDigest.getInstance("SHA-256").digest(bytes);StringBuilder s=new StringBuilder();for(byte b:digest)s.append(String.format(java.util.Locale.ROOT,"%02x",b&255));return s.toString();}
     @Override public void close(){for(Bitmap image:images.values())image.recycle();images.clear();}

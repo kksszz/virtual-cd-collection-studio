@@ -16,15 +16,18 @@ public final class ListeningState {
     public ListeningState(Context context,String namespace){prefs=context.getSharedPreferences(namespace,Context.MODE_PRIVATE);}
     public static JSONObject encode(MediaItem item)throws JSONException{
         var m=item.mediaMetadata;var out=new JSONObject().put("id",item.mediaId);
+        if(m.extras!=null&&m.extras.containsKey(CueTracks.START)){out.put("cueStart",m.extras.getString(CueTracks.START));out.put("cueEnd",m.extras.getString(CueTracks.END));out.put("cueUri",m.extras.getString(CueTracks.URI));}
         if(item.localConfiguration!=null){out.put("uri",item.localConfiguration.uri.toString());out.put("mime",item.localConfiguration.mimeType);}
         else out.put("uri",item.mediaId); // MediaController may omit localConfiguration; our media IDs are source URIs.
         out.put("title",m.title==null?"":m.title.toString()).put("artist",m.artist==null?"":m.artist.toString()).put("album",m.albumTitle==null?"":m.albumTitle.toString());
         out.put("track",m.trackNumber).put("disc",m.discNumber);out.put("source",m.extras==null?"":m.extras.getString(ALBUM_URI,""));return out;
     }
     public static MediaItem decode(JSONObject value)throws JSONException{
-        Uri uri=Uri.parse(value.getString("uri"));if(!"content".equals(uri.getScheme())&&!"zipmp3".equals(uri.getScheme()))throw new JSONException("Unsupported URI");
+        Uri uri=Uri.parse(value.optString("cueUri",value.getString("uri")));if(!"content".equals(uri.getScheme())&&!"zipmp3".equals(uri.getScheme()))throw new JSONException("Unsupported URI");
         var extras=new Bundle();extras.putString(ALBUM_URI,value.optString("source"));
-        return new MediaItem.Builder().setMediaId(value.getString("id")).setUri(uri).setMimeType(value.optString("mime",null))
+        if(value.has("cueStart")){extras.putString(CueTracks.START,value.getString("cueStart"));extras.putString(CueTracks.END,value.getString("cueEnd"));extras.putString(CueTracks.URI,uri.toString());}
+          return new MediaItem.Builder().setMediaId(value.getString("id")).setUri(uri).setMimeType(value.optString("mime",null))
+            .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setStartPositionMs(value.optLong("cueStart",0)).setEndPositionMs(value.optLong("cueEnd",C.TIME_END_OF_SOURCE)).build())
             .setMediaMetadata(new MediaMetadata.Builder().setTitle(value.optString("title")).setArtist(value.optString("artist"))
                 .setAlbumTitle(value.optString("album")).setTrackNumber(value.optInt("track")>0?value.optInt("track"):null)
                 .setDiscNumber(value.optInt("disc")>0?value.optInt("disc"):null).setExtras(extras).build()).build();

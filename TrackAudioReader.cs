@@ -22,6 +22,7 @@ internal sealed class TrackAudioReader : IDisposable
 
     private static TrackAudioReader OpenCore(ZipTrack track, bool trimGapless)
     {
+        if(track.CuePath.Length>0&&track.AudioFormat=="FLAC")return new TrackAudioReader(new CueFlacStream(track));
         if (track.AudioFormat == "CD-DA")
         {
             if (string.IsNullOrWhiteSpace(track.CuePath) || track.Size <= 0 || track.DataOffset < 0
@@ -72,8 +73,8 @@ internal sealed class TrackAudioReader : IDisposable
         if (track.AudioFormat.Equals("WAV", StringComparison.OrdinalIgnoreCase))
             return new TrackAudioReader(new WaveFileReader(track.SourcePath));
 
-        if (track.AudioFormat.Equals("FLAC", StringComparison.OrdinalIgnoreCase)
-            || track.AudioFormat.Equals("M4A", StringComparison.OrdinalIgnoreCase))
+        if(track.AudioFormat.Equals("FLAC",StringComparison.OrdinalIgnoreCase))return new TrackAudioReader(new ThreadedFlacReader(track.SourcePath));
+        if (track.AudioFormat.Equals("M4A", StringComparison.OrdinalIgnoreCase))
             return new TrackAudioReader(new MediaFoundationReader(track.SourcePath));
 
         throw new NotSupportedException($"{track.AudioFormat}形式の再生には対応していません。");

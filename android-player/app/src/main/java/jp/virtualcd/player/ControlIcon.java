@@ -27,6 +27,10 @@ public final class ControlIcon extends Drawable {
         c.save();c.translate(getBounds().exactCenterX()-12*density,getBounds().exactCenterY()-12*density);c.scale(density,density);
         paint.setColor(!enabled?0xff657181:selected?0xff091820:0xffdce6ee);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.7f);paint.setStrokeCap(Paint.Cap.ROUND);paint.setStrokeJoin(Paint.Join.ROUND);
         switch(kind){
+            case "page-previous":lines(c,15,4,7,12,15,20);break;
+            case "page-next":lines(c,9,4,17,12,9,20);break;
+            case "orientation":c.save();c.rotate(-35,12,12);c.drawRoundRect(7,4,17,20,1.5f,1.5f,paint);lines(c,11,17,13,17);c.restore();c.drawArc(1,1,23,23,190,65,false,paint);lines(c,5,2,9,1,8,5);c.drawArc(1,1,23,23,10,65,false,paint);lines(c,19,22,15,23,16,19);break;
+            case "sort":lines(c,5,3,5,21);lines(c,2,17,5,21,8,17);lines(c,11,5,22,5);lines(c,11,11,19,11);lines(c,11,17,16,17);break;
             case "close":lines(c,5,5,19,19);lines(c,19,5,5,19);break;
             case "import":lines(c,12,2,12,15);lines(c,7,10,12,15,17,10);lines(c,3,15,3,21,21,21,21,15);break;
             case "case-open":lines(c,3,12,14,12,21,18,10,18,3,12,3,3,14,3,14,12);lines(c,10,18,10,21,21,21,21,18);break;

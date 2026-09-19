@@ -24,6 +24,7 @@ internal static partial class Program
                 {
                     RemasterMode = mode, EqGains = gains, EqEnabled = false,
                     BassBoostEnabled = true, BassBoostAmount = 83, LowVolumeClarityEnabled = true,
+                    NormalizationEnabled = true,
                     Volume = 0.43, PlaybackSpeed = 1.25, PreservePitch = false,
                     MusicFolders = Array.Empty<string>(), AutomaticArtworkEnabled = false
                 }));
@@ -41,6 +42,8 @@ internal static partial class Program
                         if (!window.IsLoaded) throw new Exception("Window did not load");
                         var selected = ((ComboBox)window.FindName("RemasterModeCombo")).SelectedItem as ComboBoxItem;
                         if ((string?)selected?.Tag != mode) throw new Exception("Mode reset: " + mode);
+                        if (((CheckBox)window.FindName("NormalizationCheck")).IsChecked != true)
+                            throw new Exception("Normalization reset");
                         for (var i = 0; i < gains.Length; i++)
                             if (((Slider)window.FindName("Eq" + i)).Value != gains[i]) throw new Exception("EQ reset");
                     }
@@ -52,6 +55,7 @@ internal static partial class Program
                         || !root.GetProperty("BassBoostEnabled").GetBoolean()
                         || root.GetProperty("BassBoostAmount").GetDouble() != 83
                         || !root.GetProperty("LowVolumeClarityEnabled").GetBoolean()
+                        || !root.GetProperty("NormalizationEnabled").GetBoolean()
                         || root.GetProperty("Volume").GetDouble() != 0.43
                         || root.GetProperty("PlaybackSpeed").GetDouble() != 1.25
                         || root.GetProperty("PreservePitch").GetBoolean()

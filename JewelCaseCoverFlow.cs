@@ -356,14 +356,14 @@ public sealed partial class JewelCaseCoverFlow : Grid
             Content = LocalizationService.Select("モバイル3D出力", "Export mobile 3D"),
             Height = 25, Padding = new Thickness(8, 0, 8, 0), Margin = new Thickness(3, 0, 3, 4),
             Foreground = Brushes.White, Background = _discButton.Background, BorderBrush = _discButton.BorderBrush,
-            ToolTip = "現在の画像・帯の折り位置を .vcd3d に書き出します（音源・元画像は変更しません）。2枚目のCDは未対応です。"
+            ToolTip = "現在の画像・帯の折り位置を標準GLBまたは従来の.vcd3dに書き出します（音源・元画像は変更しません）。2枚目のCDは未対応です。"
         };
         exportMobile.Click += (_, _) =>
         {
             if (_selectedIndex < 0 || _selectedIndex >= _items.Count) return;
             var item = _items[_selectedIndex];
             var safeName = string.Concat(item.Title.Select(c => System.IO.Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
-            var save = new Microsoft.Win32.SaveFileDialog { Filter = "Mobile 3D case (*.vcd3d)|*.vcd3d", DefaultExt = ".vcd3d", AddExtension = true, FileName = safeName, OverwritePrompt = true };
+            var save = new Microsoft.Win32.SaveFileDialog { Filter = "glTF 2.0 binary (*.glb)|*.glb|Legacy mobile case (*.vcd3d)|*.vcd3d", DefaultExt = ".glb", AddExtension = true, FileName = safeName, OverwritePrompt = true };
             if (save.ShowDialog(Window.GetWindow(this)) != true) return;
             try
             {
@@ -444,6 +444,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
         ToolTip = LocalizationService.Select(
             "左ドラッグ: 回転（取り出したCD・帯の上では個別に移動） ／ ディスクをダブルクリック: アルバム再生 ／ 中央ボタンドラッグ: 全体を移動 ／ R: 位置を戻す",
             "Left drag: rotate (drag an extracted CD or obi to move it) / Double-click disc: play album / Middle drag: move all / R: reset position");
+        InitializeHingeGestures();
         PreviewMouseDown += OnDiscDragStarted;
         PreviewMouseUp += OnDiscDragEnded;
         MouseMove += OnDiscDragMoved;

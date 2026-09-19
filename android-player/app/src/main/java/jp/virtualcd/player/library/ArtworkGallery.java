@@ -8,6 +8,7 @@ import android.widget.*;
 import java.util.*;
 import java.util.concurrent.*;
 import jp.virtualcd.player.archive.StoredZipIndex;
+import jp.virtualcd.player.ControlIcon;
 
 /** One bounded image at a time; closing the viewer does not affect audio playback. */
 public final class ArtworkGallery {
@@ -34,14 +35,14 @@ public final class ArtworkGallery {
         caption=new TextView(activity);caption.setTextColor(0xffeef4fa);caption.setTextSize(14);caption.setGravity(Gravity.CENTER);caption.setMaxLines(2);caption.setBackgroundColor(0xbb15191f);
         caption.setPadding(12,8,12,8);root.addView(caption,new FrameLayout.LayoutParams(-1,-2,Gravity.TOP));
         var controls=new LinearLayout(activity);controls.setBackgroundColor(0xbb15191f);root.addView(controls,new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM));
-        previous=button(controls,"前へ",()->turn(-1));next=button(controls,"次へ",()->turn(1));
-        button(controls,"横／縦",()->activity.setRequestedOrientation(activity.getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        previous=button(controls,"page-previous","前の画像",()->turn(-1));next=button(controls,"page-next","次の画像",()->turn(1));
+        button(controls,"orientation","画面の横向き・縦向きを切り替え",()->activity.setRequestedOrientation(activity.getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE
             ?android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT:android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE));
-        button(controls,"閉じる",()->dialog.dismiss());
+        button(controls,"close","ジャケットビューアーを閉じる",()->dialog.dismiss());
         image.setActions(()->{int visibility=controls.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE;controls.setVisibility(visibility);caption.setVisibility(visibility);},this::turn);
         dialog.setContentView(root);dialog.setOnDismissListener(d->{closed=true;worker.shutdownNow();handler.removeCallbacksAndMessages(null);image.setImageDrawable(null);activity.setRequestedOrientation(originalOrientation);});
     }
-    private Button button(LinearLayout row,String text,Runnable action){var b=new Button(activity);b.setText(text);row.addView(b,new LinearLayout.LayoutParams(0,-2,1));b.setOnClickListener(v->action.run());return b;}
+    private Button button(LinearLayout row,String icon,String label,Runnable action){var b=new Button(activity);row.addView(b,new LinearLayout.LayoutParams(0,-2,1));ControlIcon.button(b,icon,label);b.setOnClickListener(v->action.run());return b;}
     private void open(){
         dialog.show();dialog.getWindow().setLayout(-1,-1);
         dialog.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_LAYOUT_STABLE);

@@ -1393,6 +1393,20 @@ internal sealed class DxJewelCaseScene : IDisposable
         return true;
     }
 
+    public double SeatedDiscTouchRadius(System.Windows.Point position)
+    {
+        if(_discRemoved||Viewport.Camera is not DxPerspectiveCamera camera)return double.NaN;
+        var transform=_caseTransform.Value;
+        if(!transform.HasInverse)return double.NaN;
+        var normal=transform.Transform(new Vector3D(0,0,1));
+        if(Vector3D.DotProduct(camera.LookDirection,normal)>=0)return double.NaN;
+        var center=new Point3D(.044,.004,-StandardCaseDepth*.136+.010);
+        var point=Viewport.UnProjectOnPlane(position,transform.Transform(center),normal);
+        if(point is not { } hit)return double.NaN;
+        transform.Invert();var local=transform.Transform(hit);
+        return Math.Sqrt(Math.Pow(local.X-center.X,2)+Math.Pow(local.Y-center.Y,2))/1.018;
+    }
+
     public void DragDiscTo(System.Windows.Point position)
     {
         if (!_discRemoved || _discDragPoint is not { } previous) return;

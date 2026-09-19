@@ -9,6 +9,10 @@ public partial class SettingsWindow : Window
 {
     private readonly ObservableCollection<MusicFolderOption> _folders;
     private readonly string _dataDirectory;
+    internal IReadOnlyList<ZipAlbum> LibraryAlbums { get; init; } = [];
+    private readonly CancellationTokenSource _sizeCancellation = new();
+    private LibrarySizeSummary? _sizeSummary;
+    private bool _sizeCalculating;
     private readonly List<FolderRelocation> _relocations = [];
     public IReadOnlyList<string> Folders => _folders.Select(folder => folder.Path).ToList();
     public IReadOnlyList<string> DisabledFolders => _folders.Where(folder => !folder.IsEnabled).Select(folder => folder.Path).ToList();
@@ -52,6 +56,46 @@ public partial class SettingsWindow : Window
         LocalizationService.SetLanguage(displayLanguage);
         LocalizationService.Apply(this);
         UpdateCount();
+        Loaded += async (_, _) => await RefreshLibrarySizeAsync();
+        Closed += (_, _) => _sizeCancellation.Cancel();
+    }
+
+    private async void LibrarySizeRefresh_Click(object sender, RoutedEventArgs e) => await RefreshLibrarySizeAsync();
+
+    private async Task RefreshLibrarySizeAsync()
+    {
+        if (_sizeCalculating || _sizeCancellation.IsCancellationRequested) return;
+        _sizeCalculating = true;
+        LibrarySizeRefreshButton.IsEnabled = false;
+        LibrarySizeText.Text = LocalizationService.Select("ライブラリ容量を集計中…", "Calculating library size…");
+        UpdateLibrarySizeScope();
+        try
+        {
+            _sizeSummary = await Task.Run(() => LibrarySizeSummary.Calculate(LibraryAlbums, _sizeCancellation.Token));
+            if (!_sizeCancellation.IsCancellationRequested) ShowLibrarySize();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (!_sizeCancellation.IsCancellationRequested)
+                LibrarySizeText.Text = LocalizationService.Select("容量を集計できません: ", "Unable to calculate size: ") + ex.Message;
+        }
+        finally { _sizeCalculating = false; LibrarySizeRefreshButton.IsEnabled = true; }
+    }
+
+    private void UpdateLibrarySizeScope() => LibrarySizeScopeText.Text = LocalizationService.Select(
+        "設定を開いた時点の登録アルバム（非表示を含む）。保存容量はZIP・ISOとアルバムフォルダ内の全ファイル。音声容量は登録情報による展開後の概算で、画像・変換後の増減は含みません。アプリ側の追加画像・バックアップ等は対象外です。",
+        "Registered albums when opened, including hidden albums. Stored size includes ZIP/ISO and all album-folder files. Audio size is the cached, unpacked estimate, excluding artwork and conversion overhead. App-managed artwork and backups are excluded.");
+
+    private void ShowLibrarySize()
+    {
+        UpdateLibrarySizeScope();
+        if (_sizeSummary is not { } size) return;
+        LibrarySizeText.Text = LocalizationService.Select(
+            $"{size.Albums:N0}アルバム / {size.Tracks:N0}曲\n保存容量: {LibrarySizeSummary.Format(size.StoredBytes)}\n音声のみ（展開後・概算）: {LibrarySizeSummary.Format(size.AudioBytes)}",
+            $"{size.Albums:N0} albums / {size.Tracks:N0} tracks\nStored: {LibrarySizeSummary.Format(size.StoredBytes)}\nAudio only (unpacked estimate): {LibrarySizeSummary.Format(size.AudioBytes)}")
+            + (size.Unreadable > 0 ? LocalizationService.Select($"\n未集計: {size.Unreadable:N0}件（未接続・読取不可・リンク等）。保存容量は一部のみです。",
+                $"\nNot counted: {size.Unreadable:N0} (offline, unreadable or links). Stored total is incomplete.") : "");
     }
 
     public SettingsWindow(IEnumerable<string> folders, IEnumerable<string> disabledFolders, string dataDirectory)
@@ -227,6 +271,7 @@ public partial class SettingsWindow : Window
         LocalizationService.SetLanguage(DisplayLanguage);
         LocalizationService.Apply(this);
         UpdateCount();
+        ShowLibrarySize();
     }
 
     private void UpdateCount() => FolderCountText.Text = LocalizationService.T(

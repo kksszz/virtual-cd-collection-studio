@@ -13,7 +13,18 @@ import java.util.zip.*;
 /** Small thumbnails only. Never extracts to the card; never decodes full-resolution images. */
 public final class ArtworkLoader {
     private static final int LIMIT=8*1024*1024;
+    private static File caseFile(Context c,AlbumLibrary.Album album)throws Exception{return new File(new File(c.getFilesDir(),"cases3d"),jp.virtualcd.player.case3d.CasePackage.hash(album.uri.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))+".vcd3d");}
+    public static String frontStamp(Context c,AlbumLibrary.Album album){try{var file=caseFile(c,album);return file.lastModified()+"|"+file.length();}catch(Exception ex){return "";}}
+    private static Bitmap windowsFront(Context c,AlbumLibrary.Album album){
+        try(var input=new android.util.AtomicFile(caseFile(c,album)).openRead()){
+            var bytes=jp.virtualcd.player.case3d.CasePackage.readBytes(input,jp.virtualcd.player.case3d.CasePackage.MAX_BYTES);
+            var front=jp.virtualcd.player.case3d.CasePackage.frontImage(bytes);
+            // Windows has already cropped the Front texture. Do not crop the spread again.
+            return front==null?null:thumbnail(front,"full");
+        }catch(Exception ex){return null;}
+    }
     public static Bitmap load(Context context,AlbumLibrary.Album album,String mode) {
+        Bitmap defined=windowsFront(context,album);if(defined!=null)return defined;
         try {
             if(album.directory||!AudioFormats.archive(album.name)){
                 var pictures=listImages(context,album);pictures.sort(Comparator.comparingInt((ImageRef r)->score(r.name)).thenComparing(r->r.name));
@@ -63,10 +74,11 @@ public final class ArtworkLoader {
         for(var file:AlbumLibrary.children(context,folder)){
             String lower=file.name.toLowerCase(Locale.ROOT);
             if(file.directory){
-                if(depth<2&&(lower.contains("ジャケ")||lower.contains("jacket")||lower.contains("歌詞")||lower.contains("art")||lower.contains("cover")||lower.contains("scan")||lower.contains("booklet")))collectImages(context,file.uri,result,depth+1,prefix+file.name+"/");
+                if(depth<2&&imageFolder(lower))collectImages(context,file.uri,result,depth+1,prefix+file.name+"/");
             }else if(lower.endsWith(".jpg")||lower.endsWith(".jpeg")||lower.endsWith(".png")||lower.endsWith(".webp"))result.add(new ImageRef(file.uri,prefix+file.name,null));
         }
     }
+    public static boolean imageFolder(String name){String lower=name.toLowerCase(Locale.ROOT);return lower.contains("ジャケ")||lower.contains("jacket")||lower.contains("歌詞")||lower.contains("art")||lower.contains("cover")||lower.contains("scan")||lower.contains("booklet")||lower.equals("image")||lower.equals("images")||lower.equals("画像");}
     private static byte[] readDocument(Context context,android.net.Uri uri)throws IOException{
         try(var input=context.getContentResolver().openInputStream(uri);var output=new ByteArrayOutputStream()){
             if(input==null)throw new IOException("画像を開けません");byte[] chunk=new byte[8192];int n;

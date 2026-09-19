@@ -20,10 +20,90 @@ public final class DeviceSmokeTest extends Instrumentation {
     private boolean stateOnly;
     private boolean caseOnly;
     private boolean loadingOnly;
-    @Override public void onCreate(Bundle args){super.onCreate(args);stateOnly="state".equals(args.getString("mode"));caseOnly="case3d".equals(args.getString("mode"));loadingOnly="loading".equals(args.getString("mode"));start();}
+    private String testMode;
+    private String syncAddress;
+    @Override public void onCreate(Bundle args){super.onCreate(args);syncAddress=args.getString("address","");testMode=args.getString("mode","");stateOnly="state".equals(testMode);caseOnly="case3d".equals(testMode);loadingOnly="loading".equals(testMode);start();}
     @Override public void onStart(){
         Bundle result=new Bundle();
         try{
+            if(testMode.equals("imageFolder")){
+                if(!ArtworkLoader.imageFolder("Images")||!ArtworkLoader.imageFolder("IMAGE")||ArtworkLoader.imageFolder("Music"))throw new AssertionError("Folder rules");
+                var c=getTargetContext();var root=Uri.parse("content://com.android.externalstorage.documents/tree/6264-6230%3AMusic/document/6264-6230%3AMusic");
+                var album=MobileSync.cached(c,root).stream().filter(a->a.name.contains("Pimp Your Past")).findFirst().orElseThrow();
+                var pictures=ArtworkLoader.listImages(c,album);if(pictures.size()!=20)throw new AssertionError("Expected 20 images, got "+pictures.size());
+                var cover=ArtworkLoader.load(c,album,"auto");if(cover==null)throw new AssertionError("Cover decode");
+                var file=new java.io.File(new java.io.File(c.getFilesDir(),"cases3d"),jp.virtualcd.player.case3d.CasePackage.hash(album.uri.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))+".vcd3d");
+                byte[] bytes;try(var input=new java.io.FileInputStream(file)){bytes=jp.virtualcd.player.case3d.CasePackage.readBytes(input,jp.virtualcd.player.case3d.CasePackage.MAX_BYTES);}
+                var front=jp.virtualcd.player.case3d.CasePackage.frontImage(bytes);if(front==null)throw new AssertionError("Windows front absent");
+                var thumbnail=ArtworkLoader.class.getDeclaredMethod("thumbnail",byte[].class,String.class);thumbnail.setAccessible(true);
+                var expected=(android.graphics.Bitmap)thumbnail.invoke(null,front,"full");if(!cover.sameAs(expected))throw new AssertionError("Cover did not prioritize Windows Front");expected.recycle();cover.recycle();
+                var page=ArtworkLoader.galleryImage(c,pictures.get(4));if(page==null)throw new AssertionError("Gallery decode");page.recycle();
+                result.putString("imageFolder","PASS Pimp Your Past: exact Windows Front thumbnail, 20 images and booklet decoded");finish(-1,result);return;
+            }
+            if(testMode.equals("discPull")){
+                var g=new jp.virtualcd.player.case3d.DiscPullGesture();
+                if(!g.begin(7,100,100,0,9,200,100,1))throw new AssertionError("Hub/edge grab");
+                if(g.move(9,210,100,7,102,100,1))throw new AssertionError("Jitter triggered");
+                if(!g.move(9,232,100,7,102,100,1)||g.move(9,250,100,7,102,100,1))throw new AssertionError("One extraction per grab");
+                if(!g.begin(9,200,100,1,7,100,100,0))throw new AssertionError("Reverse finger order");
+                if(g.move(7,125,100,9,240,100,1)||g.move(7,100,100,9,240,100,1))throw new AssertionError("Moving hub cancels");
+                if(g.begin(7,100,100,.5f,9,200,100,1)||g.begin(7,100,100,Float.NaN,9,200,100,1))throw new AssertionError("Non-disc pinch captured");
+                g.begin(7,100,100,0,9,200,100,1);g.cancel();if(g.move(7,100,100,9,240,100,1))throw new AssertionError("Cancelled touch");g.reset();if(g.captured())throw new AssertionError("Reset");
+                result.putString("discPull","PASS hub/edge, either order, jitter, one-shot, cancellation and ordinary pinch exclusion");finish(-1,result);return;
+            }
+            if(testMode.equals("cueFlac")){
+                String cue="PERFORMER \"Frozen Crown\"\nTITLE \"The Fallen King\"\nFILE \"test.flac\" WAVE\nTRACK 01 AUDIO\nTITLE \"Fail No More\"\nINDEX 01 00:00:00\nTRACK 02 AUDIO\nTITLE \"To Infinity\"\nINDEX 01 04:09:70\n";
+                var album=CueTracks.parse(cue);if(album.tracks.size()!=2||!album.tracks.get(1).title.equals("To Infinity"))throw new AssertionError("Cue tags");
+                var t=album.tracks.get(1);t.uri=Uri.parse("content://test/album.flac");t.properties.putString(CueTracks.END,"500000");t.properties.putString(CueTracks.URI,t.uri.toString());
+                var item=t.item();var restored=ListeningState.decode(ListeningState.encode(item));
+                if(item.clippingConfiguration.startPositionMs!=249933||restored.clippingConfiguration.startPositionMs!=249933||restored.clippingConfiguration.endPositionMs!=500000||!restored.localConfiguration.uri.equals(t.uri))throw new AssertionError("Clip restoration");
+                for(String invalid:new String[]{cue.replace("test.flac","../test.flac"),cue.replace("04:09:70","00:00:00"),cue.replace("INDEX 01 04:09:70","")}){boolean rejected=false;try{CueTracks.parse(invalid);}catch(Exception e){rejected=true;}if(!rejected)throw new AssertionError("Invalid CUE accepted");}
+                result.putString("cueFlac","PASS metadata, 75-fps boundaries, clipping persistence and invalid path/boundary rejection");finish(-1,result);return;
+            }
+            if(testMode.equals("syncProgress")){
+                var meter=new SyncProgress(4*1048576L,2,s->{});meter.reused(1048576L);meter.received(1048576L,"test.mp3");
+                String half=meter.text("転送中","");if(!half.contains("50%")||!half.contains("2.0 MiB / 4.0 MiB")||!half.contains("受信 1.0 MiB")||!half.contains("再利用 1.0 MiB"))throw new AssertionError(half);
+                meter.received(2*1048576L,"test.mp3");meter.completed();String full=meter.text("転送完了","");if(!full.contains("100%")||!full.contains("2 / 2ファイル"))throw new AssertionError(full);
+                if(!new SyncProgress(0,0,s->{}).text("完了","").contains("100%"))throw new AssertionError("Zero byte total");
+                if(!SyncProgress.size(3L*1024*1024*1024).equals("3.00 GiB"))throw new AssertionError("Large size");
+                result.putString("syncProgress","PASS bytes, percentage, reused vs received, file count, zero total and GiB");finish(-1,result);return;
+            }
+            if(testMode.equals("syncRace")){
+                var empty=new ArrayList<String>();var restored=new ArrayList<String>();
+                for(int i=0;i<122;i++)restored.add("album-"+i);
+                if(MainActivity.canApplyLibrarySync(empty,empty,true,false))throw new AssertionError("Sync during restore");
+                if(MainActivity.canApplyLibrarySync(empty,restored,false,false))throw new AssertionError("Stale empty snapshot accepted");
+                if(MainActivity.canApplyLibrarySync(restored,new ArrayList<>(restored),false,false))throw new AssertionError("Replaced snapshot accepted");
+                if(MainActivity.canApplyLibrarySync(restored,restored,false,true))throw new AssertionError("Sync during scan");
+                if(!MainActivity.canApplyLibrarySync(restored,restored,false,false))throw new AssertionError("Current snapshot rejected");
+                result.putString("syncRace","PASS restore/scan gates and stale snapshot rejection, including 122-album restore");finish(-1,result);return;
+            }
+            if(testMode.equals("qr")){
+                android.graphics.Bitmap bitmap;try(var stream=getContext().getAssets().open("sync-qr.png")){bitmap=android.graphics.BitmapFactory.decodeStream(stream);}
+                int width=bitmap.getWidth(),height=bitmap.getHeight();int[] pixels=new int[width*height];bitmap.getPixels(pixels,0,width,0,0,width,height);bitmap.recycle();
+                var image=new com.google.zxing.BinaryBitmap(new com.google.zxing.common.HybridBinarizer(new com.google.zxing.RGBLuminanceSource(width,height,pixels)));
+                String decoded=new com.google.zxing.qrcode.QRCodeReader().decode(image).getText();
+                String expected="http://192.168.11.63:50703/0123456789abcdef0123456789abcdef0123456789abcdef/";
+                if(!decoded.equals(expected)||!SyncDownload.validateAddress(decoded).equals(expected))throw new AssertionError("QR round trip");
+                for(String bad:new String[]{"https://example.com/","http://8.8.8.8/"+"a".repeat(48)+"/","javascript:alert(1)","http://192.168.1.1/invalid"}){boolean rejected=false;try{SyncDownload.validateAddress(bad);}catch(Exception ex){rejected=true;}if(!rejected)throw new AssertionError("Unsafe QR accepted");}
+                result.putString("qr","PASS Windows QRCoder -> Android ZXing exact URL, LAN validation and non-sync QR rejection (camera optics not tested)");finish(-1,result);return;
+            }
+            if(testMode.equals("sync")){SyncDeviceChecks.run(getTargetContext(),syncAddress);result.putString("sync","PASS LAN download, checksum, unchanged skip, automatic GLB binding and incomplete-transfer rejection");finish(-1,result);return;}
+            if(testMode.equals("glb")||testMode.equals("glbReal")){CaseDeviceChecks.runGlb(this,testMode.equals("glbReal"));result.putString("glb","PASS legacy/GLB image comparison closed/open/disc, controls, reset, context restore and malformed GLB rejection");finish(-1,result);return;}
+            if(testMode.equals("albumOrder")){testAlbumOrder();result.putString("albumOrder","PASS album/artist order, artist ties, unknown last, filter and persisted choice");finish(-1,result);return;}
+            if(testMode.equals("nowPlayingLabel")){
+                var m=new MediaMetadata.Builder().setTitle("Erotomania").setArtist("Dream Theater").setAlbumArtist("Various Artists").build();
+                if(!MainActivity.nowPlayingLabel(m,false).equals("Erotomania\nDream Theater")||!MainActivity.nowPlayingLabel(m,true).equals("Erotomania · Dream Theater"))throw new AssertionError("Artist and orientation");
+                m=m.buildUpon().setArtist(" ").build();if(!MainActivity.nowPlayingLabel(m,false).equals("Erotomania\nVarious Artists"))throw new AssertionError("Album artist fallback");
+                m=m.buildUpon().setAlbumArtist(null).build();if(!MainActivity.nowPlayingLabel(m,false).equals("Erotomania"))throw new AssertionError("Missing artist");
+                if(!MainActivity.nowPlayingLabel(MediaMetadata.EMPTY,false).equals("停止中"))throw new AssertionError("Empty metadata");
+                result.putString("nowPlayingLabel","PASS artist, album artist fallback, portrait/landscape, empty metadata");finish(-1,result);return;
+            }
+            if(testMode.equals("caseLayout")){testCaseLayout();result.putString("caseLayout","PASS landscape full-height viewport and portrait restoration");finish(-1,result);return;}
+            if(testMode.equals("layout")){testLayout(result);finish(-1,result);return;}
+            if(testMode.equals("timer")){testTimer(result);finish(-1,result);return;}
+            if(testMode.equals("cacheWrite")||testMode.equals("cacheRead")){TagCacheChecks.run(getTargetContext(),testMode.equals("cacheWrite"));result.putString("cache","PASS "+testMode+" pid="+android.os.Process.myPid());finish(-1,result);return;}
+            if(testMode.equals("resumeUi")){testResumeUi(result);finish(-1,result);return;}
             if(loadingOnly){testAlbumLoading(result);finish(-1,result);return;}
             if(caseOnly){CaseDeviceChecks.run(this);result.putString("case3d","PASS Windows export round-trip, schema/hash/path/size rejection, GPU closed/open/rotation/landscape/context recreation");finish(-1,result);return;}
             SoundDeviceChecks.run(getTargetContext());result.putString("sound","PASS settings persistence, PCM bypass/live switch, limiter, EOS, format change");
@@ -54,6 +134,41 @@ public final class DeviceSmokeTest extends Instrumentation {
             result.putString("stream","PASS: folder scan + FLAC/MP3/ZIP decode and seek; muted; source files unchanged\n");finish(-1,result);
         }catch(Throwable e){result.putString("stream","FAIL: "+e+"\n");finish(0,result);}
     }
+    private void testAlbumOrder(){runOnMainSync(()->{
+        var context=getTargetContext();var pref=context.getSharedPreferences("album-order",0);boolean had=pref.contains("artist"),old=pref.getBoolean("artist",false);
+        var index=context.getSharedPreferences("album-artist-index",0);
+        var a=new AlbumLibrary.Album(Uri.parse("content://sort-test/a"),"Beta.zip.mp3",1,1);
+        var b=new AlbumLibrary.Album(Uri.parse("content://sort-test/b"),"Alpha.zip.mp3",1,1);
+        var c=new AlbumLibrary.Album(Uri.parse("content://sort-test/c"),"Gamma.zip.mp3",1,1);
+        var d=new AlbumLibrary.Album(Uri.parse("content://sort-test/d"),"Delta.zip.mp3",1,1);
+        index.edit().putString(a.key(),"Artist A").putString(b.key(),"Artist Z").putString(c.key(),"Artist A").putString(d.key(),"アーティスト情報なし").commit();
+        AlbumAdapter adapter=new AlbumAdapter(context);
+        try{
+            adapter.setAlbums(java.util.Arrays.asList(d,c,b,a),"");adapter.setArtistOrder(false);
+            if(adapter.getItem(0)!=b||adapter.getItem(1)!=a)throw new AssertionError("Album order");
+            adapter.setArtistOrder(true);
+            if(adapter.getItem(0)!=a||adapter.getItem(1)!=c||adapter.getItem(2)!=b||adapter.getItem(3)!=d)throw new AssertionError("Artist order/ties/unknown");
+            adapter.filter("alpha");if(adapter.getCount()!=1||adapter.getItem(0)!=b)throw new AssertionError("Sort filter");
+            adapter.filter("");if(adapter.getItem(0)!=a)throw new AssertionError("Filter reset");
+            try(AlbumAdapter restored=new AlbumAdapter(context)){if(!restored.isArtistOrder())throw new AssertionError("Saved order");}
+            adapter.setArtistOrder(false);if(adapter.getItem(0)!=b)throw new AssertionError("Switch back");
+        }finally{adapter.close();var edit=pref.edit();if(had)edit.putBoolean("artist",old);else edit.remove("artist");edit.commit();index.edit().remove(a.key()).remove(b.key()).remove(c.key()).remove(d.key()).commit();}
+    });}
+    private void testCaseLayout()throws Exception{
+        var intent=new android.content.Intent(getTargetContext(),jp.virtualcd.player.case3d.CaseActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("album","content://case-layout-test/album").putExtra("title","Test album");
+        var activity=startActivitySync(intent);
+        try{for(int orientation:new int[]{0,1,0}){
+            runOnMainSync(()->activity.setRequestedOrientation(orientation));Thread.sleep(800);waitForIdleSync();
+            runOnMainSync(()->{try{
+                var type=activity.getClass();var cf=type.getDeclaredField("content");cf.setAccessible(true);var sf=type.getDeclaredField("shell");sf.setAccessible(true);var wf=type.getDeclaredField("wide");wf.setAccessible(true);
+                var content=(android.view.View)cf.get(activity);var shell=(android.view.View)sf.get(activity);boolean wide=(Boolean)wf.get(activity);
+                if(wide!=(orientation==0))throw new AssertionError("3D orientation");
+                int usable=shell.getHeight()-shell.getPaddingTop()-shell.getPaddingBottom();
+                if(wide&&content.getHeight()<usable*.95f)throw new AssertionError("3D viewport not full height");
+                if(content.getHeight()<100||content.getWidth()<100)throw new AssertionError("3D viewport collapsed");
+            }catch(ReflectiveOperationException ex){throw new AssertionError(ex);}});
+        }}finally{runOnMainSync(activity::finish);}
+    }
     private void testAlbumLoading(Bundle output)throws Exception{
         var context=getTargetContext();String tree=context.getSharedPreferences("MainActivity",0).getString("tree",null);
         if(tree==null)throw new AssertionError("No authorized library");
@@ -79,6 +194,118 @@ public final class DeviceSmokeTest extends Instrumentation {
             if(!cancelled)throw new AssertionError("Cancelled load continued");
             output.putString(source.directory?"directoryLoading":"zipLoading","PASS preview="+previewAt[0]+"ms cold="+coldMs+"ms warm="+warmMs+"ms tracks="+cold.tracks.size()+"; refresh, invalidation, cancellation");
         }
+    }
+    private void testResumeUi(Bundle output)throws Exception{
+        var files=new java.io.File(getTargetContext().getFilesDir(),"album-tags-v1").listFiles((d,n)->n.endsWith(".json"));
+        if(files==null||files.length==0)throw new AssertionError("Run loading test first");
+        var root=new org.json.JSONObject(new String(java.nio.file.Files.readAllBytes(files[0].toPath()),java.nio.charset.StandardCharsets.UTF_8));
+        var source=Uri.parse(root.getString("source"));var saved=AlbumTagCache.read(getTargetContext(),source);
+        if(saved==null)throw new AssertionError("Missing snapshot");
+        var intent=new android.content.Intent(getTargetContext(),MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+        MainActivity activity=(MainActivity)startActivitySync(intent);
+        var cancel=MainActivity.class.getDeclaredMethod("cancelAlbumLoad");cancel.setAccessible(true);
+        var load=MainActivity.class.getDeclaredMethod("loadAlbum",Uri.class,String.class,boolean.class);load.setAccessible(true);
+        var workerField=MainActivity.class.getDeclaredField("worker");workerField.setAccessible(true);
+        var tracksField=MainActivity.class.getDeclaredField("tracks");tracksField.setAccessible(true);
+        var titleField=MainActivity.class.getDeclaredField("selectedAlbumTitle");titleField.setAccessible(true);
+        var entered=new CountDownLatch(1);var release=new CountDownLatch(1);
+        try{
+            runOnMainSync(()->{try{cancel.invoke(activity);}catch(Exception e){throw new RuntimeException(e);}});
+            ((ExecutorService)workerField.get(activity)).submit(()->{entered.countDown();try{release.await(15,TimeUnit.SECONDS);}catch(InterruptedException ignored){}});
+            if(!entered.await(15,TimeUnit.SECONDS))throw new AssertionError("Worker did not become idle");
+            long start=SystemClock.elapsedRealtime();
+            runOnMainSync(()->{try{load.invoke(activity,source,null,false);}catch(Exception e){throw new RuntimeException(e);}});
+            boolean[] ready={false};
+            while(!ready[0]&&SystemClock.elapsedRealtime()-start<3000){
+                runOnMainSync(()->{try{var list=(android.widget.ListView)tracksField.get(activity);ready[0]=list.isEnabled()&&list.getCount()==saved.album.tracks.size()&&saved.album.title.equals(titleField.get(activity));}catch(Exception e){throw new RuntimeException(e);}});
+                if(!ready[0])Thread.sleep(20);
+            }
+            if(!ready[0])throw new AssertionError("Cached playable list waited for blocked metadata worker");
+            output.putString("resumeUi","PASS cached list enabled in "+(SystemClock.elapsedRealtime()-start)+"ms while metadata worker blocked");
+        }finally{runOnMainSync(()->{try{cancel.invoke(activity);}catch(Exception ignored){}activity.finish();});release.countDown();}
+    }
+    private void testTimer(Bundle result)throws Exception{
+        var context=getTargetContext();var prefs=AutoStopSettings.preferences(context);
+        var previous=new java.util.HashMap<String,Object>(prefs.getAll());
+        var disconnected=new CountDownLatch(1);var failure=new AtomicReference<Throwable>();
+        var controller=new AtomicReference<androidx.media3.session.MediaController>();
+        var future=new AtomicReference<com.google.common.util.concurrent.ListenableFuture<androidx.media3.session.MediaController>>();
+        var info=AlbumIndicators.summarize(Arrays.asList("01.FLAC","02.mp3","cover.jpg","archive.zip.mp3","notes.txt"));
+        if(info.count!=2||!info.formats.equals("FLAC/MP3"))throw new AssertionError("Album indicator counts non-audio files");
+        var isolated=context.getSharedPreferences("timer-default-test",0);isolated.edit().clear().commit();
+        if(!AutoStopSettings.enabled(isolated)||AutoStopSettings.minutes(isolated)!=180)throw new AssertionError("Timer defaults");
+        try{
+            // Simulate nearly three hours already played, without changing the configured duration.
+            prefs.edit().putBoolean("enabled",true).putInt("minutes",180).putLong("used",180*60000L-2000).commit();
+            runOnMainSync(()->future.set(new androidx.media3.session.MediaController.Builder(context,new androidx.media3.session.SessionToken(context,new android.content.ComponentName(context,PlaybackService.class)))
+                .setListener(new androidx.media3.session.MediaController.Listener(){@Override public void onDisconnected(androidx.media3.session.MediaController c){disconnected.countDown();}}).buildAsync()));
+            controller.set(future.get().get(10,TimeUnit.SECONDS));
+            runOnMainSync(()->{try{var c=controller.get();if(c.getMediaItemCount()==0)throw new AssertionError("No saved playback queue");c.setVolume(0);c.prepare();c.play();}catch(Throwable e){failure.set(e);}});
+            if(failure.get()!=null)throw new AssertionError(failure.get());
+            if(!disconnected.await(30,TimeUnit.SECONDS))throw new AssertionError("Timer did not release playback session");
+            if(prefs.getLong("used",-1)!=0)throw new AssertionError("Timer budget did not reset");
+            if(!"timer".equals(prefs.getString("lastStopReason",""))||prefs.getLong("lastStoppedAt",0)<=0||prefs.getLong("lastStopLimit",0)!=180*60000L||prefs.getLong("lastStopUsed",0)<180*60000L||!prefs.getBoolean("stopNoticePending",false))throw new AssertionError("Timer completion evidence missing");
+            if(!TimerNotice.summary(prefs).contains("180分"))throw new AssertionError("Timer summary");
+            var notifications=context.getSystemService(android.app.NotificationManager.class);
+            // Session release precedes announcement; notification posting also crosses a process boundary.
+            runOnMainSync(()->{});
+            if(notifications.areNotificationsEnabled()){
+                long deadline=android.os.SystemClock.elapsedRealtime()+5000;
+                while(java.util.Arrays.stream(notifications.getActiveNotifications()).noneMatch(n->n.getId()==TimerNotice.ID)&&android.os.SystemClock.elapsedRealtime()<deadline)Thread.sleep(50);
+                if(java.util.Arrays.stream(notifications.getActiveNotifications()).noneMatch(n->n.getId()==TimerNotice.ID))throw new AssertionError("Timer notification missing");
+            }
+            result.putString("timer","PASS default 3h ON, live expiry, session release, budget reset, durable reason/time, next-launch pending and posted notification");
+        }finally{
+            runOnMainSync(()->{if(controller.get()!=null)controller.get().release();else if(future.get()!=null)androidx.media3.session.MediaController.releaseFuture(future.get());});
+            context.stopService(new android.content.Intent(context,PlaybackService.class));
+            var edit=prefs.edit().clear();for(var entry:previous.entrySet()){Object value=entry.getValue();if(value instanceof Boolean)edit.putBoolean(entry.getKey(),(Boolean)value);else if(value instanceof Integer)edit.putInt(entry.getKey(),(Integer)value);else if(value instanceof Long)edit.putLong(entry.getKey(),(Long)value);else if(value instanceof String)edit.putString(entry.getKey(),(String)value);}edit.commit();
+            context.getSystemService(android.app.NotificationManager.class).cancel(TimerNotice.ID);
+            isolated.edit().clear().commit();
+        }
+    }
+    private Object field(Object target,String name)throws Exception{var f=target.getClass().getDeclaredField(name);f.setAccessible(true);return f.get(target);}
+    private void testLayout(Bundle output)throws Exception{
+        MainActivity activity=(MainActivity)startActivitySync(new android.content.Intent(getTargetContext(),MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+        var show=MainActivity.class.getDeclaredMethod("showLibrary");show.setAccessible(true);
+        var failure=new AtomicReference<Throwable>();
+        try{
+            for(boolean wide:new boolean[]{true,false,true}){
+                runOnMainSync(()->activity.setRequestedOrientation(wide?android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE:android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT));
+                boolean[] ready={false};long deadline=SystemClock.elapsedRealtime()+8000;
+                while(!ready[0]&&SystemClock.elapsedRealtime()<deadline){runOnMainSync(()->{try{var root=(android.view.View)field(activity,"rootLayout");ready[0]=root.getWidth()>0&&(root.getWidth()>root.getHeight())==wide;}catch(Exception e){failure.set(e);}});Thread.sleep(30);}
+                if(failure.get()!=null)throw new AssertionError(failure.get());if(!ready[0])throw new AssertionError("Rotation did not settle");
+                runOnMainSync(()->{try{show.invoke(activity);}catch(Exception e){failure.set(e);}});waitForIdleSync();
+                runOnMainSync(()->{try{
+                    var grid=(android.widget.GridView)field(activity,"albums");if(grid.getNumColumns()!=(wide?2:1)||grid.getHeight()<=0)throw new AssertionError("Album columns/height");
+                    var search=(android.view.View)field(activity,"search");var slot=(android.view.View)field(activity,"headerTitleSlot");
+                    if(wide&&search.getParent()!=slot)throw new AssertionError("Landscape search not inside header");
+                    if(!wide&&search.getParent()!=field(activity,"rootLayout"))throw new AssertionError("Portrait search not restored");
+                    int[] slotAt=new int[2],gridAt=new int[2];slot.getLocationOnScreen(slotAt);grid.getLocationOnScreen(gridAt);
+                    if(wide&&gridAt[1]>slotAt[1]+slot.getHeight()+40*getTargetContext().getResources().getDisplayMetrics().density)throw new AssertionError("Header still wastes vertical space");
+                    if(wide&&grid.getChildCount()>1&&grid.getChildAt(1).getLeft()<=grid.getChildAt(0).getLeft())throw new AssertionError("Columns overlap");
+                    // Reuse existing views; no album load, player mutation or metadata refresh on rotation.
+                    var visible=MainActivity.class.getDeclaredField("libraryVisible");visible.setAccessible(true);visible.setBoolean(activity,false);
+                    var navigation=MainActivity.class.getDeclaredMethod("updateNavigation");navigation.setAccessible(true);navigation.invoke(activity);
+                    grid.setVisibility(android.view.View.GONE);((android.view.View)field(activity,"search")).setVisibility(android.view.View.GONE);
+                    ((android.view.View)field(activity,"trackPane")).setVisibility(android.view.View.VISIBLE);
+                    ((android.view.View)field(activity,"albumHeader")).setVisibility(android.view.View.VISIBLE);
+                    ((android.view.View)field(activity,"tracks")).setVisibility(android.view.View.VISIBLE);
+                }catch(Throwable e){failure.set(e);}});waitForIdleSync();Thread.sleep(100);
+                runOnMainSync(()->{try{
+                    var cover=(android.view.View)field(activity,"albumHeader");var tracks=(android.view.View)field(activity,"tracks");
+                    var controls=(android.view.View)field(activity,wide?"sideRail":"playbackControls");var root=(android.view.View)field(activity,"screenLayout");
+                    if(wide&&((android.view.View)field(activity,"playbackControls")).getParent()!=field(activity,"sideColumns"))throw new AssertionError("Playback buttons not in sidebar");
+                    if(wide&&((android.view.View)field(activity,"headingRow")).getVisibility()!=android.view.View.GONE)throw new AssertionError("Track header still occupies height");
+                    if(!wide&&((android.view.View)field(activity,"playbackControls")).getParent()!=field(activity,"playbackPane"))throw new AssertionError("Portrait controls not restored");
+                    if(cover.getHeight()<40||tracks.getHeight()<40||controls.getHeight()<40)throw new AssertionError("Content collapsed");
+                    if(wide?tracks.getLeft()<cover.getRight():tracks.getTop()<cover.getBottom())throw new AssertionError("Album and tracks overlap");
+                    int[] controlAt=new int[2],rootAt=new int[2];controls.getLocationOnScreen(controlAt);root.getLocationOnScreen(rootAt);
+                    if(controlAt[0]<rootAt[0]||controlAt[0]+controls.getWidth()>rootAt[0]+root.getWidth()||controlAt[1]+controls.getHeight()>rootAt[1]+root.getHeight())throw new AssertionError("Playback controls clipped");
+                }catch(Throwable e){failure.set(e);}});
+                if(failure.get()!=null)throw new AssertionError(failure.get());
+            }
+            output.putString("layout","PASS landscape 2 columns, side-by-side track pane, portrait restore, controls within screen");
+        }finally{runOnMainSync(()->{activity.setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);activity.finish();});}
     }
     private void testListeningState()throws Exception{
         var context=getTargetContext();String namespace="listening-smoke-"+System.nanoTime();

@@ -28,6 +28,7 @@ public sealed class ZipTrack
     public string AudioFormat { get; init; } = "MP3";
     public string SourcePath { get; init; } = "";
     public string CuePath { get; init; } = "";
+    public long CueStartFrame { get; init; }
     public bool IsArchiveEntry { get; init; }
     public long DataOffset { get; init; }
     public long Size { get; init; }
@@ -105,6 +106,13 @@ public sealed class ZipTrack
 
 public sealed class ZipAlbum
 {
+    // Null in older caches; fall back to their per-entry compression metadata.
+    public bool? ArchiveHasCompressedEntries { get; init; }
+    [JsonIgnore]
+    public bool HasCompressedArchiveContent => Tracks.Any(track => track.IsArchiveEntry)
+        && (ArchiveHasCompressedEntries ?? (Tracks.Any(track => track.CompressionMethod != 0)
+            || Images.Any(image => image.CompressionMethod != 0)
+            || TextFiles.Any(text => text.CompressionMethod != 0)));
     public string Path { get; init; } = "";
     private readonly IReadOnlyList<ZipTrack> _tracks = [];
     public IReadOnlyList<ZipTrack> Tracks
@@ -157,6 +165,7 @@ public static class ZipAlbumReader
         var tracks = new List<ZipTrack>();
         var images = new List<ZipImage>();
         var textFiles = new List<ZipTextFile>();
+        var hasCompressedEntries = false;
         file.Position = centralOffset;
         var header = new byte[46];
 
@@ -167,6 +176,7 @@ public static class ZipAlbumReader
 
             var flags = U16(header, 8);
             var method = U16(header, 10);
+            hasCompressedEntries |= method != 0;
             var compressedSize = U32(header, 20);
             var uncompressedSize = U32(header, 24);
             var nameLength = U16(header, 28);
@@ -268,6 +278,7 @@ public static class ZipAlbumReader
             Path = path,
             Tracks = tracks,
             Images = images.OrderBy(image => image.FileName, StringComparer.CurrentCultureIgnoreCase).ToList(),
+            ArchiveHasCompressedEntries = hasCompressedEntries,
             TextFiles = textFiles.OrderBy(text => text.FileName, StringComparer.CurrentCultureIgnoreCase).ToList(),
             ImageCount = images.Count + CountExternalImages(path, isFolderAlbum: false)
         };
@@ -282,6 +293,12 @@ public static class ZipAlbumReader
         if (files.Count == 0) throw new InvalidDataException("フォルダ内に対応音楽ファイルが見つかりませんでした。");
 
         var tracks = new List<ZipTrack>();
+        foreach(var cue in Directory.EnumerateFiles(folderPath,"*.cue")){
+            var text=File.ReadAllText(cue);
+            if(!System.Text.RegularExpressions.Regex.IsMatch(text,"(?im)^\\s*FILE\\s+\"[^\"]+\\.flac\"\\s+WAVE\\s*$"))continue;
+            var expanded=CueAlbumReader.Open(cue);tracks.AddRange(expanded.Tracks);
+            foreach(var source in expanded.Tracks.Select(t=>t.SourcePath).Distinct())files.RemoveAll(f=>Path.GetFullPath(f).Equals(source,StringComparison.OrdinalIgnoreCase));
+        }
         foreach (var path in files)
         {
             var format = Path.GetExtension(path).TrimStart('.').ToUpperInvariant();

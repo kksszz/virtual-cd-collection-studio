@@ -22,7 +22,8 @@ public final class AlbumTracks {
     public static final class Track {
         public Uri uri;public String file,title,artist,album;public int disc,number;
         public final android.os.Bundle properties=new android.os.Bundle();
-        public MediaItem item(){return new MediaItem.Builder().setUri(uri).setMediaId(uri.toString()).setMimeType(AudioFormats.mime(file))
+        public MediaItem item(){return new MediaItem.Builder().setUri(uri).setMediaId(uri.toString()+(properties.containsKey(CueTracks.START)?"#cue-track="+number:""))
+            .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setStartPositionMs(Long.parseLong(properties.getString(CueTracks.START,"0"))).setEndPositionMs(Long.parseLong(properties.getString(CueTracks.END,Long.toString(C.TIME_END_OF_SOURCE)))).build()).setMimeType(AudioFormats.mime(file))
             .setMediaMetadata(new MediaMetadata.Builder().setTitle(title).setArtist(artist).setAlbumTitle(album)
                 .setTrackNumber(number>0?number:null).setDiscNumber(disc>0?disc:null).setExtras(new android.os.Bundle(properties)).build()).build();}
     }
@@ -33,6 +34,7 @@ public final class AlbumTracks {
         var result=new AlbumTracks();
         if(album.directory){
             var files=AlbumLibrary.children(context,album.uri);
+            var cue=CueTracks.read(context,album,files);if(cue!=null)return cue.artist;
             files.sort(Comparator.comparing(a->AudioFormats.natural(a.name)));
             for(var file:files)if(!file.directory&&AudioFormats.audio(file.name)){
                 result.readFile(context,file);
@@ -58,7 +60,13 @@ public final class AlbumTracks {
         var result=new AlbumTracks();result.title=album.title();
         List<AlbumLibrary.Album> files=new ArrayList<>();
         if(album.directory){
-            for(var file:AlbumLibrary.children(context,album.uri))if(!file.directory&&AudioFormats.audio(file.name))files.add(file);
+            var children=AlbumLibrary.children(context,album.uri);
+            if(children.stream().anyMatch(f->f.name.toLowerCase(Locale.ROOT).endsWith(".cue"))){
+                String cueKey="cue-v1|"+album.key()+children.stream().map(AlbumLibrary.Album::key).sorted().collect(java.util.stream.Collectors.joining("\n"));
+                var saved=force?null:AlbumTagCache.read(context,album.uri);if(saved!=null&&cueKey.equals(saved.signature))return saved.album;
+                var cue=CueTracks.read(context,album,children);AlbumTagCache.write(context,album.uri,cueKey,cue);if(progress!=null)progress.preview(cue);return cue;
+            }
+            for(var file:children)if(!file.directory&&AudioFormats.audio(file.name))files.add(file);
             files.sort(Comparator.comparing(a->AudioFormats.natural(a.name)));
         }
         StringBuilder signature=new StringBuilder(album.key());
@@ -67,6 +75,7 @@ public final class AlbumTracks {
         if(force)cache.remove(key);
         AlbumTracks cached=force?null:cache.get(key);
         if(cached!=null)return cached;
+        if(!force){var saved=AlbumTagCache.read(context,album.uri);if(saved!=null&&key.equals(saved.signature)){cache.put(key,saved.album);return saved.album;}}
         var preview=new AlbumTracks();preview.title=album.title();
         if(album.directory){
             for(var file:files)preview.basic(file.name,file.uri);
@@ -87,6 +96,7 @@ public final class AlbumTracks {
             .thenComparingInt(t->t.number>0?t.number:Integer.MAX_VALUE).thenComparing(t->AudioFormats.natural(t.file)));
         for(var t:result.tracks)if(t.album==null||t.album.trim().isEmpty())t.album=result.title;
         checkInterrupted();cache.put(key,result);
+        AlbumTagCache.write(context,album.uri,key,result);
         return result;
     }
     private void basic(String file,Uri uri){var t=new Track();t.file=file;t.uri=uri;t.title=TrackLabel.title(null,file);t.album=title;tracks.add(t);}

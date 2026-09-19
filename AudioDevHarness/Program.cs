@@ -34,6 +34,58 @@ Require(boostOutput.Average(MathF.Abs) > 0.6f, "200 percent software gain");
 Require(boostOutput.Max(MathF.Abs) <= 0.981f, "boost limiter ceiling");
 Console.WriteLine($"Low-volume clarity test passed. quiet={quietRms:0.000}, loud={loudRms:0.000}, peak={output.Max(MathF.Abs):0.000}");
 
+foreach (var rate in new[] { 44100, 48000 })
+{
+    var quiet = NormalizeTone(0.08f, rate, 997);
+    var loud = NormalizeTone(0.7f, rate, 4096);
+    var quietLevel = Rms(quiet, rate * 18, rate, 2);
+    var loudLevel = Rms(loud, rate * 18, rate, 2);
+    Require(Math.Abs(20 * Math.Log10(loudLevel / quietLevel)) < 0.2, "normalization level matching");
+    var otherChunks = NormalizeTone(0.08f, rate, 4096);
+    Require(quiet.SequenceEqual(otherChunks), "read chunk independence");
+    for (var i = 0; i < quiet.Length; i += 2)
+        Require(quiet[i + 1] == quiet[i] * 0.5f, "linked stereo gain");
+    Console.WriteLine($"PASS normalization {rate}Hz: quiet RMS={quietLevel:F4}, loud RMS={loudLevel:F4}");
+}
+var bypass = new NormalizationSampleProvider(new ArraySampleProvider(samples, sampleRate, 2), false);
+var bypassOutput = new float[samples.Length];
+bypass.Read(bypassOutput, 0, bypassOutput.Length);
+Require(samples.SequenceEqual(bypassOutput), "normalization exact bypass");
+var silence = new NormalizationSampleProvider(new ArraySampleProvider(new float[10000], sampleRate, 2), true);
+var silenceOutput = new float[10010];
+Array.Fill(silenceOutput, 123f);
+Require(silence.Read(silenceOutput, 5, 10000) == 10000, "normalization offset read");
+Require(silenceOutput.Skip(5).Take(10000).All(x => x == 0), "silence remains silent");
+Require(silenceOutput.Take(5).Concat(silenceOutput.Skip(10005)).All(x => x == 123), "offset bounds");
+Require(silence.Read(silenceOutput, 0, 10) == 0, "EOF");
+Console.WriteLine("PASS normalization bypass, silence, offset and EOF");
+var toggled = new NormalizationSampleProvider(new ArraySampleProvider(samples, sampleRate, 2), true);
+var toggleOutput = new float[samples.Length];
+toggled.Read(toggleOutput, 0, 1000);
+toggled.Enabled = false;
+toggled.Read(toggleOutput, 1000, samples.Length - 1000);
+Require(toggleOutput.Skip(1000).SequenceEqual(samples.Skip(1000)), "live OFF bypass");
+var normalizedLimiter = new SoftLimiterSampleProvider(new NormalizationSampleProvider(
+    new ArraySampleProvider(samples, sampleRate, 2), true));
+normalizedLimiter.Read(toggleOutput, 0, toggleOutput.Length);
+Require(toggleOutput.All(float.IsFinite) && toggleOutput.Max(MathF.Abs) <= 0.981f, "normalized limiter ceiling");
+Console.WriteLine("PASS normalization live toggle and output limiter");
+
+static float[] NormalizeTone(float amplitude, int rate, int chunk)
+{
+    var input = new float[rate * 20 * 2];
+    for (var f = 0; f < input.Length / 2; f++)
+    {
+        input[f * 2] = amplitude * MathF.Sin(2 * MathF.PI * 440 * f / rate);
+        input[f * 2 + 1] = input[f * 2] * 0.5f;
+    }
+    var provider = new NormalizationSampleProvider(new ArraySampleProvider(input, rate, 2), true);
+    var result = new float[input.Length];
+    for (var position = 0; position < result.Length;)
+        position += provider.Read(result, position, Math.Min(chunk, result.Length - position));
+    return result;
+}
+
 static float Rms(float[] values, int startFrame, int frameCount, int channels)
 {
     double sum = 0;

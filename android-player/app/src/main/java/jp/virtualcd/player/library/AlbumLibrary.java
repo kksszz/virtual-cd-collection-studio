@@ -53,7 +53,7 @@ public final class AlbumLibrary {
                 while(c.moveToNext()){
                     if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();
                     String child=c.getString(0),name=c.getString(1),mime=c.getString(2);
-                    if(DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)){pending.add(child);continue;}
+                    if(DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)){if(!".vcd-sync".equals(name))pending.add(child);continue;}
                     if(name==null)continue;String lower=name.toLowerCase(Locale.ROOT);
                     if(AudioFormats.audio(name)){audioCount++;audioSize+=c.getLong(3);modified=Math.max(modified,c.getLong(4));continue;}
                     if(!AudioFormats.archive(name))continue;
@@ -61,8 +61,11 @@ public final class AlbumLibrary {
                 }
             }
             if(audioCount>0){Uri folder=DocumentsContract.buildDocumentUriUsingTree(tree,id);Album info=describe(context,folder);result.add(new Album(folder,info.name,audioSize,modified,true));}
+            Uri syncRoot=DocumentsContract.buildDocumentUriUsingTree(tree,id);
+            try{result.addAll(MobileSync.read(context,syncRoot));}catch(java.io.InterruptedIOException ex){throw ex;}catch(Exception ex){result.addAll(MobileSync.cached(context,syncRoot));android.util.Log.w("MobileSync","同期データは未反映です",ex);}
             progress.update(result.size());
         }
+        var unique=new LinkedHashMap<String,Album>();for(var album:result)unique.put(album.uri.toString(),album);result=new ArrayList<>(unique.values());
         result.sort(Comparator.comparing(Album::title,String.CASE_INSENSITIVE_ORDER));return result;
     }
     private static AtomicFile index(Context c){return new AtomicFile(new File(c.getFilesDir(),"albums-v1.json"));}

@@ -10,6 +10,77 @@ internal sealed record ZipStorageConversionResult(string BackupPath, long Origin
 
 internal static class ZipStorageConversionService
 {
+    internal sealed record ExternalResult(string Source, string Destination, string Backup, string SourceHash, string OutputHash);
+
+    internal static string StoredDestination(string source) => source.EndsWith(".zip.mp3", StringComparison.OrdinalIgnoreCase)
+        ? source : source.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ? source + ".mp3"
+        : throw new InvalidOperationException("ZIPではありません。");
+
+    internal static void ValidateBackupRoot(string backup, IEnumerable<string> libraryRoots)
+    {
+        var full = Path.GetFullPath(backup).TrimEnd('\\');
+        foreach (var root in libraryRoots)
+        {
+            var r = Path.GetFullPath(root).TrimEnd('\\');
+            if (full.Equals(r, StringComparison.OrdinalIgnoreCase) || full.StartsWith(r + "\\", StringComparison.OrdinalIgnoreCase))
+                throw new IOException("バックアップ先がライブラリ登録フォルダー内です。処理を中止します。");
+        }
+        for (var parent = new DirectoryInfo(full); parent is not null; parent = parent.Parent)
+            if (parent.Exists && (parent.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("リンク経由のバックアップ先は使用できません。");
+    }
+
+    internal static ExternalResult ConvertWithExternalBackup(string source, string backupDirectory)
+    {
+        source = Path.GetFullPath(source);
+        var destination = StoredDestination(source);
+        if (destination != source && (File.Exists(destination) || Directory.Exists(destination)))
+            throw new IOException("出力先がすでに存在します: " + destination);
+        for (var parent = new FileInfo(source) as FileSystemInfo; parent is not null;
+            parent = parent is FileInfo file ? file.Directory : ((DirectoryInfo)parent).Parent)
+            if ((parent.Attributes & FileAttributes.ReparsePoint) != 0) throw new IOException("リンクは変換できません。");
+        if (!HasCompressedEntries(source)) throw new InvalidOperationException("すでに無圧縮です。");
+        Directory.CreateDirectory(backupDirectory);
+        var backup = Path.Combine(backupDirectory, Guid.NewGuid().ToString("N") + ".original");
+        File.WriteAllText(backup + ".json", System.Text.Json.JsonSerializer.Serialize(new { Source = source, Destination = destination, Backup = backup }));
+        var temporary = Path.Combine(Path.GetDirectoryName(source)!, "." + Guid.NewGuid().ToString("N") + ".storetmp");
+        string sourceHash;
+        try
+        {
+            using (var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                using (var output = new FileStream(backup, FileMode.CreateNew, FileAccess.Write, FileShare.None)) input.CopyTo(output);
+                input.Position = 0;
+                sourceHash = Convert.ToHexString(SHA256.HashData(input));
+                using (var saved = File.OpenRead(backup))
+                    if (sourceHash != Convert.ToHexString(SHA256.HashData(saved))) throw new IOException("元ファイルのバックアップ検証に失敗しました。");
+                var count = RebuildStored(backup, temporary);
+                VerifyEquivalent(backup, temporary, count);
+                if (HasCompressedEntries(temporary)) throw new IOException("圧縮された収録物が残っています。");
+                // Parse all track metadata before publishing the replacement.
+                _ = ZipAlbumReader.Open(temporary);
+            }
+            string outputHash;
+            using (var output = File.OpenRead(temporary)) outputHash = Convert.ToHexString(SHA256.HashData(output));
+            using (var current = File.OpenRead(source))
+                if (sourceHash != Convert.ToHexString(SHA256.HashData(current))) throw new IOException("変換中に元ファイルが変更されました。");
+            // The verified original remains outside the music library in all cases.
+            if (destination == source) File.Replace(temporary, source, null, true);
+            else File.Move(temporary, destination, false);
+            return new(source, destination, backup, sourceHash, outputHash);
+        }
+        finally { TryDelete(temporary); }
+    }
+
+    internal static void FinishExternalConversion(ExternalResult result)
+    {
+        using var backup = File.OpenRead(result.Backup);
+        if (Convert.ToHexString(SHA256.HashData(backup)) != result.SourceHash) throw new IOException("バックアップが変更されました。");
+        using var output = File.OpenRead(result.Destination);
+        if (Convert.ToHexString(SHA256.HashData(output)) != result.OutputHash) throw new IOException("出力ファイルが変更されました。");
+        if (!result.Source.Equals(result.Destination, StringComparison.OrdinalIgnoreCase))
+            FolderZipConversion.DeleteVerifiedFile(result.Source, result.SourceHash);
+    }
     private const uint EocdSignature = 0x06054b50;
     private const uint CentralSignature = 0x02014b50;
 
