@@ -5,6 +5,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 
 namespace ZipMp3Player;
 
@@ -20,9 +21,15 @@ internal sealed class BookletViewerWindow : Window
     private readonly Border _gutter = new();
     private readonly BookletPageTurnViewport _pageTurn = new();
     private readonly ScrollViewer _scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-    private readonly TextBlock _status = new() { Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 12, 0) };
+    private readonly TextBlock _status = new() { Width=220,TextTrimming=TextTrimming.CharacterEllipsis,Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 12, 0) };
     private readonly Button _previous;
     private readonly Button _next;
+    private readonly Button _slideshow;
+    private readonly ComboBox _interval = new() { Width=76,Margin=new Thickness(6,3,3,3),VerticalContentAlignment=VerticalAlignment.Center };
+    private readonly CheckBox _repeat = new() { Content=LocalizationService.Select("繰り返し","Repeat"),Foreground=Brushes.White,VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(8,3,8,3) };
+    private readonly DispatcherTimer _slideTimer = new(DispatcherPriority.Background);
+    private bool _slideshowPlaying;
+    private bool _loading;
     private int _index = -1;
     private int _loadGeneration;
     private double _zoom = 1;
@@ -49,9 +56,17 @@ internal sealed class BookletViewerWindow : Window
         _previous = AddButton("◀", () => Navigate(-1));
         _next = AddButton("▶", () => Navigate(1));
         toolbar.Children.Add(_status);
-        AddButton("−", () => SetZoom(_zoom / 1.25));
-        AddButton("＋", () => SetZoom(_zoom * 1.25));
-        AddButton(LocalizationService.Select("全体表示", "Fit"), () => SetZoom(1));
+        AddButton("−", () => { StopSlideshow(); SetZoom(_zoom / 1.25); });
+        AddButton("＋", () => { StopSlideshow(); SetZoom(_zoom * 1.25); });
+        AddButton(LocalizationService.Select("全体表示", "Fit"), () => { StopSlideshow(); SetZoom(1); });
+        _slideshow=AddButton(LocalizationService.Select("▶ スライドショー","▶ Slideshow"),ToggleSlideshow);
+        _slideshow.IsEnabled=false;
+        _slideshow.Width=150;
+        _slideshow.ToolTip=LocalizationService.Select("Spaceで再生・一時停止。手動操作で一時停止します。","Space to play/pause. Manual navigation pauses playback.");
+        foreach(int seconds in new[]{3,5,10,15,30})_interval.Items.Add(new ComboBoxItem {Content=seconds+LocalizationService.Select("秒"," sec"),Tag=seconds});
+        _interval.SelectedIndex=1;_interval.ToolTip=LocalizationService.Select("ページの表示間隔","Page display interval");toolbar.Children.Add(_interval);toolbar.Children.Add(_repeat);
+        _interval.SelectionChanged+=(_,_)=>ScheduleSlide();
+        _slideTimer.Tick+=async (_,_)=>await AdvanceSlideshowAsync();
         AddButton(LocalizationService.Select("ジャケットを戻す (Esc)", "Insert booklet (Esc)"), Close);
         DockPanel.SetDock(toolbar, Dock.Top); layout.Children.Add(toolbar);
         _pageSurface.Background = new SolidColorBrush(Color.FromRgb(238, 235, 225));
@@ -85,9 +100,10 @@ internal sealed class BookletViewerWindow : Window
         _scroll.Background = new RadialGradientBrush(Color.FromRgb(49, 55, 63), Color.FromRgb(13, 17, 22));
         _scroll.Content = _pageFrame; layout.Children.Add(_scroll); Content = layout;
         _scroll.SizeChanged += (_, _) => ResizeImage();
-        _scroll.PreviewMouseWheel += (_, e) => { SetZoom(_zoom * (e.Delta > 0 ? 1.15 : 1 / 1.15)); e.Handled = true; };
+        _scroll.PreviewMouseWheel += (_, e) => { StopSlideshow(); SetZoom(_zoom * (e.Delta > 0 ? 1.15 : 1 / 1.15)); e.Handled = true; };
         _image.MouseLeftButtonDown += (_, e) =>
         {
+            StopSlideshow();
             _dragStart = e.GetPosition(_scroll); _scrollStart = new Point(_scroll.HorizontalOffset, _scroll.VerticalOffset);
             _image.CaptureMouse(); _image.Cursor = Cursors.SizeAll; e.Handled = true;
         };
@@ -103,12 +119,14 @@ internal sealed class BookletViewerWindow : Window
         PreviewKeyDown += (_, e) =>
         {
             if (e.Key == Key.Escape) Close();
+            else if (e.Key == Key.Space && !_interval.IsKeyboardFocusWithin && !_repeat.IsKeyboardFocusWithin) ToggleSlideshow();
             else if (e.Key is Key.Right or Key.PageDown) Navigate(1);
             else if (e.Key is Key.Left or Key.PageUp) Navigate(-1);
             else return;
             e.Handled = true;
         };
-        Closed += (_, _) => { _closed = true; ++_loadGeneration; EndDrag(); _pageTurn.Stop(); _image.Source = null; };
+        Closed += (_, _) => { _closed = true; StopSlideshow(); ++_loadGeneration; EndDrag(); _pageTurn.Stop(); _image.Source = null; };
+        Deactivated+=(_,_)=>StopSlideshow();
         Loaded += async (_, _) =>
         {
             _previous.IsEnabled = _next.IsEnabled = false;
@@ -138,6 +156,7 @@ internal sealed class BookletViewerWindow : Window
 
     private void Navigate(int delta)
     {
+        StopSlideshow();
         if (_index >= 0 && _index + delta >= 0 && _index + delta < _booklet.Pages.Count)
         {
             _navigationDirection = Math.Sign(delta);
@@ -147,11 +166,13 @@ internal sealed class BookletViewerWindow : Window
 
     private async Task ShowPageAsync(int index, bool animateTurn = true)
     {
+        _slideTimer.Stop();_loading=true;_slideshow.IsEnabled=_slideshowPlaying;
         var generation = ++_loadGeneration;
         _index = index; EndDrag();
         _previous.IsEnabled = index > 0; _next.IsEnabled = index < _booklet.Pages.Count - 1;
         var page = _booklet.Pages[index];
         _status.Text = $"{index + 1} / {_booklet.Pages.Count} — {page.Name}";
+        _status.ToolTip=_status.Text;
         try
         {
             var bitmap = await Task.Run(page.LoadImage);
@@ -162,8 +183,47 @@ internal sealed class BookletViewerWindow : Window
         catch
         {
             if (!_closed && generation == _loadGeneration)
+            {
+                StopSlideshow();
+                _image.Source=null;
                 _status.Text += LocalizationService.Select("（画像を読み込めません）", " (Unable to load image)");
+            }
         }
+        finally
+        {
+            if(!_closed&&generation==_loadGeneration){_loading=false;_slideshow.IsEnabled=_booklet.Pages.Count>1&&_image.Source is not null;ScheduleSlide();}
+        }
+    }
+
+    private void ToggleSlideshow()
+    {
+        if(_slideshowPlaying){StopSlideshow();return;}
+        if(_closed||_loading||_booklet.Pages.Count<2||_image.Source is null)return;
+        _slideshowPlaying=true;_slideshow.Content=LocalizationService.Select("⏸ 一時停止","⏸ Pause");
+        if(_index==_booklet.Pages.Count-1){_navigationDirection=1;_ = ShowPageAsync(0);}
+        else ScheduleSlide();
+    }
+    private void StopSlideshow()
+    {
+        _slideshowPlaying=false;_slideTimer.Stop();
+        _slideshow.Content=LocalizationService.Select("▶ スライドショー","▶ Slideshow");
+        _slideshow.IsEnabled=!_closed&&!_loading&&_booklet.Pages.Count>1&&_image.Source is not null;
+    }
+    private void ScheduleSlide()
+    {
+        _slideTimer.Stop();
+        if(!_slideshowPlaying||_loading||_closed)return;
+        int seconds=(_interval.SelectedItem as ComboBoxItem)?.Tag is int value?value:5;
+        // Start the dwell only after loading and allow the transition to finish.
+        _slideTimer.Interval=TimeSpan.FromSeconds(seconds)+TimeSpan.FromMilliseconds(240);_slideTimer.Start();
+    }
+    private async Task AdvanceSlideshowAsync()
+    {
+        _slideTimer.Stop();
+        if(!_slideshowPlaying||_loading||_closed)return;
+        int next=_index+1;
+        if(next>=_booklet.Pages.Count){if(_repeat.IsChecked==true)next=0;else{StopSlideshow();return;}}
+        _navigationDirection=1;await ShowPageAsync(next);
     }
 
     private void SetZoom(double zoom) { _zoom = Math.Clamp(zoom, .25, 8); ResizeImage(); }

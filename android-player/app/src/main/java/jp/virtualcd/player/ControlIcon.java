@@ -27,6 +27,7 @@ public final class ControlIcon extends Drawable {
         c.save();c.translate(getBounds().exactCenterX()-12*density,getBounds().exactCenterY()-12*density);c.scale(density,density);
         paint.setColor(!enabled?0xff657181:selected?0xff091820:0xffdce6ee);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.7f);paint.setStrokeCap(Paint.Cap.ROUND);paint.setStrokeJoin(Paint.Join.ROUND);
         switch(kind){
+            case "lyrics":c.drawRoundRect(5,3,19,21,1,1,paint);lines(c,8,8,16,8);lines(c,8,12,16,12);lines(c,8,16,14,16);break;
             case "page-previous":lines(c,15,4,7,12,15,20);break;
             case "page-next":lines(c,9,4,17,12,9,20);break;
             case "orientation":c.save();c.rotate(-35,12,12);c.drawRoundRect(7,4,17,20,1.5f,1.5f,paint);lines(c,11,17,13,17);c.restore();c.drawArc(1,1,23,23,190,65,false,paint);lines(c,5,2,9,1,8,5);c.drawArc(1,1,23,23,10,65,false,paint);lines(c,19,22,15,23,16,19);break;

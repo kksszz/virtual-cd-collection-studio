@@ -11,14 +11,14 @@ public partial class MainWindow
     private async void MobileSync_Click(object sender,RoutedEventArgs e)
     {
         if(_dataOperations.ActiveCount>0){StatusText.Text="データ処理の完了後に同期してください。";return;}
-        var window=new Window{Title="モバイル同期 — 音楽・画像・3D",Owner=this,Width=1060,Height=740,MinWidth=700,MinHeight=520,WindowStartupLocation=WindowStartupLocation.CenterOwner,
+        var window=new Window{Title="モバイル同期 — 音楽・画像・歌詞・3D",Owner=this,Width=1060,Height=740,MinWidth=700,MinHeight=520,WindowStartupLocation=WindowStartupLocation.CenterOwner,
             Background=System.Windows.Media.Brushes.White,Foreground=System.Windows.Media.Brushes.Black};
         MobileSyncAppearance.Apply(window);
         var panel=new DockPanel{Margin=new Thickness(16)};window.Content=panel;
         var header=new StackPanel();DockPanel.SetDock(header,Dock.Top);panel.Children.Add(header);
         var titleRow=new DockPanel{Margin=new Thickness(0,0,0,6)};header.Children.Add(titleRow);
         var title=new TextBlock{Text="モバイルへ同期",FontSize=20,FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,0,16,0)};DockPanel.SetDock(title,Dock.Left);titleRow.Children.Add(title);
-        titleRow.Children.Add(new TextBlock{Text="音楽・画像・3Dを転送 · 既存ファイルは削除しません",TextWrapping=TextWrapping.Wrap,FontSize=12,VerticalAlignment=VerticalAlignment.Center});
+        titleRow.Children.Add(new TextBlock{Text="音楽・画像・歌詞・3Dを転送 · 既存ファイルは削除しません",TextWrapping=TextWrapping.Wrap,FontSize=12,VerticalAlignment=VerticalAlignment.Center});
         var modeRow=new DockPanel{Margin=new Thickness(0,0,0,6)};header.Children.Add(modeRow);
         var mode=new ComboBox{Width=300,ItemsSource=new[]{"Wi-Fi同期（推奨・USBデバッグ不要）","SDカード／フォルダーに出力","ADB転送（開発用）"},SelectedIndex=0,Margin=new Thickness(0,0,12,0)};DockPanel.SetDock(mode,Dock.Left);modeRow.Children.Add(mode);
         var settingsFile=Path.Combine(DataDirectory,"mobile-sync.json");var saved=new Dictionary<string,string>();try{if(File.Exists(settingsFile))saved=JsonSerializer.Deserialize<Dictionary<string,string>>(File.ReadAllText(settingsFile))??saved;}catch{}
@@ -40,9 +40,9 @@ public partial class MainWindow
         var search=new TextBox{ToolTip="アルバム名／アーティストで検索"};System.Windows.Automation.AutomationProperties.SetName(search,"アルバム名／アーティストで検索");searchRow.Children.Add(search);
         var footer=new StackPanel();DockPanel.SetDock(footer,Dock.Bottom);panel.Children.Add(footer);
         var selectionSummary=new TextBlock{TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,8,0,0),FontWeight=FontWeights.SemiBold};footer.Children.Add(selectionSummary);
-        footer.Children.Add(new TextBlock{Text="容量は選択元の合計です。生成する3Dは別途追加され、転送済みデータの再利用で実際の通信量は減る場合があります。",TextWrapping=TextWrapping.Wrap,FontSize=12,Margin=new Thickness(0,4,0,0)});
+        footer.Children.Add(new TextBlock{Text="容量は選択元の合計です。生成する3D・歌詞は別途追加され、転送済みデータの再利用で実際の通信量は減る場合があります。",TextWrapping=TextWrapping.Wrap,FontSize=12,Margin=new Thickness(0,4,0,0)});
         var status=new TextBlock{TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,8,0,8)};footer.Children.Add(status);
-        var send=new Button{Content="選択したアルバムを同期",Background=System.Windows.Media.Brushes.Teal,Foreground=System.Windows.Media.Brushes.White,FontWeight=FontWeights.SemiBold,Padding=new Thickness(12,10,12,10)};footer.Children.Add(send);
+        var send=new Button{Content="選択したアルバムを同期",Background=MobileSyncAppearance.Brush("#2879B8"),Foreground=System.Windows.Media.Brushes.White,FontWeight=FontWeights.SemiBold,Padding=new Thickness(12,10,12,10)};footer.Children.Add(send);
         var list=MobileSyncAppearance.CreateTransferTable();list.ToolTip="行をクリックして選択・解除できます。";panel.Children.Add(list);
         var generatedCases=new HashSet<string>();try{using var manifest=JsonDocument.Parse(File.ReadAllText(Path.Combine(DataDirectory,"MobileSync","vcd-sync.json")));foreach(var entry in manifest.RootElement.GetProperty("albums").EnumerateObject())if(entry.Value.TryGetProperty("glb",out var glb)&&File.Exists(Path.Combine(DataDirectory,"MobileSync",glb.GetString()??"")))generatedCases.Add(entry.Name);}catch{}
         var candidates=GetAlbumBrowserSourceAlbums().Select(a=>new SyncChoice(a,generatedCases.Contains(MobileSync.Hash(Path.GetFullPath(a.Album.Path).TrimEnd(Path.DirectorySeparatorChar).ToUpperInvariant())))).ToArray();list.ItemsSource=candidates;
@@ -74,7 +74,7 @@ public partial class MainWindow
             var selected=list.SelectedItems.Cast<SyncChoice>().Select(c=>c.Album).ToArray();string serial=devices.SelectedItem as string??"";int method=mode.SelectedIndex;
             if(selected.Length==0||(method==2&&serial.Length==0)||(method==1&&string.IsNullOrWhiteSpace(destination.Text))){status.Text="アルバムと転送先を選択してください。";return;}
             if(_dataOperations.ActiveCount>0){status.Text="他のデータ処理の完了後に実行してください。";return;}
-            if(MessageBox.Show(window,$"{selected.Length}アルバムを同期します。\n方式: {mode.SelectedItem}\n\n音楽・画像・3Dの変更分を転送します。Wi-Fi方式ではPCにも転送用コピーを保持します。続行しますか？","モバイル同期",MessageBoxButton.OKCancel)!=MessageBoxResult.OK)return;
+            if(MessageBox.Show(window,$"{selected.Length}アルバムを同期します。\n方式: {mode.SelectedItem}\n\n音楽・画像・歌詞・3Dの変更分を転送します。Wi-Fi方式ではPCにも転送用コピーを保持します。続行しますか？","モバイル同期",MessageBoxButton.OKCancel)!=MessageBoxResult.OK)return;
             using var operation=_dataOperations.Begin();if(operation is null)return;
             running=true;send.IsEnabled=false;header.IsEnabled=false;list.IsEnabled=false;
             var temporary=Path.Combine(Path.GetTempPath(),"vcd-sync-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(temporary);
@@ -88,15 +88,17 @@ public partial class MainWindow
                     status.Text=$"{count+1}/{selected.Length} 3D生成: {album.Title}";
                     if(album.Album.HasCompressedArchiveContent)throw new IOException(album.Title+": 先に無圧縮ZIP.MP3へ変換してください。");
                     await album.EnsureCaseArtworkLoadedAsync(1024,CancellationToken.None);
-                    var item=new JewelCaseCoverFlowItem(album.Album.Path,album.Title,album.Artist,album.SourceBadge,album.TrayColorMode,album.CaseFrontThumbnail??album.CoverThumbnail,album.InsideFrontThumbnail,album.BackCoverThumbnail,album.SpineThumbnail,album.RightSpineThumbnail,album.InlayThumbnail,album.DiscThumbnail,false){SpineCard=album.SpineCardThumbnail,SecondDiscImage=album.SecondDiscThumbnail};
+                    var item=new JewelCaseCoverFlowItem(album.Album.Path,album.Title,album.Artist,album.SourceBadge,album.TrayColorMode,album.CaseFrontThumbnail??album.CoverThumbnail,album.InsideFrontThumbnail,album.BackCoverThumbnail,album.SpineThumbnail,album.RightSpineThumbnail,album.InlayThumbnail,album.DiscThumbnail,false){SpineCard=album.SpineCardThumbnail,SpineCardReverse=album.SpineCardReverseThumbnail,SecondDiscImage=album.SecondDiscThumbnail};
                     var glb=Path.Combine(temporary,"case.glb");MobileGlbExporter.Export(item,glb);
                     var progress=new Progress<string>(s=>status.Text=$"{(method==0?"PC内の転送準備（端末への受信はAndroidに表示）":"保存先への同期")} · {count+1}/{selected.Length} {album.Title}\n{s}");
-                    await Task.Run(()=>sync.Send(album.Album.Path,album.Title,album.Artist,glb,s=>((IProgress<string>)progress).Report(s)));count++;
+                    var lyrics=await Task.Run(()=>ExportMobileLyrics(album.Album,temporary));
+                    var favorites=ExportMobileFavorites(album.Album);
+                    await Task.Run(()=>sync.Send(album.Album.Path,album.Title,album.Artist,glb,s=>((IProgress<string>)progress).Report(s),lyrics,favorites));count++;
                 }
                 if(method==0){server??=new MobileSyncServer(cache);server.Select(selected.Take(count).Select(a=>MobileSync.Hash(Path.GetFullPath(a.Album.Path).TrimEnd(Path.DirectorySeparatorChar).ToUpperInvariant())));address.Text=server.Address;address.Visibility=Visibility.Visible;showQr.Visibility=Visibility.Visible;qrWindow?.Close();qrWindow=new MobileSyncQrWindow(window,server.Address,server);qrWindow.Show();status.Text=$"{count}アルバムを転送できます。Androidの設定 → PCから同期 → QRコードを読み取る で接続してください。この画面を開いたままにしてください。家庭内Wi-Fiで使用し、ファイアウォールはプライベートネットワークのみ許可してください。";}
                 else status.Text=$"{count}アルバムの同期が完了しました。Androidで保存先を音楽フォルダーとして選択すると、3Dも自動反映されます。";
             }catch(Exception ex){status.Text="同期を中断しました。完了済みアルバムは使用できます。\n"+ex.Message;}
-            finally{running=false;send.IsEnabled=true;header.IsEnabled=true;list.IsEnabled=true;var glb=Path.Combine(temporary,"case.glb");if(File.Exists(glb))File.Delete(glb);if(!Directory.EnumerateFileSystemEntries(temporary).Any())Directory.Delete(temporary);}
+            finally{running=false;send.IsEnabled=true;header.IsEnabled=true;list.IsEnabled=true;var glb=Path.Combine(temporary,"case.glb");if(File.Exists(glb))File.Delete(glb);var lyrics=Path.Combine(temporary,"lyrics.json");if(File.Exists(lyrics))File.Delete(lyrics);if(!Directory.EnumerateFileSystemEntries(temporary).Any())Directory.Delete(temporary);}
         };
         window.Show();await Task.CompletedTask;
     }
@@ -107,6 +109,7 @@ public partial class MainWindow
         public int Tracks=>Album.Album.Tracks.Count;
         public string Format=>Album.SourceBadge+" · "+string.Join("/",Album.Album.Tracks.Select(t=>t.AudioFormat).Distinct());
         public string Images=>Album.HasImages?$"あり ({Album.ImageCount})":Album.ArtworkSummaryLoaded?"なし":"未確認";
+        public string Lyrics=>$"{Album.Album.Tracks.Count(t=>t.HasLyrics)}曲";
         public string CaseStatus{get;}
         public string Size{get;private set;}="確認中…";
         public long? StoredBytes{get;private set;}

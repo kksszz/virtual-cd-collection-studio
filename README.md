@@ -8,9 +8,11 @@ CDの音楽だけでなく、ジャケット、Spine Card（帯）、ブック�
 
 ## Android版 — Virtual CD Player
 
-Windows v0.83.0／Android 0.8.0では、アルバムを複数選んで音楽・画像・GLBを一括転送する **[モバイル同期](MOBILE_SYNC.md)** に対応しています。Wi-Fi同期は接続QRコードを使い、USBデバッグ不要です。
+Windows v0.84.0／Android 0.9.0では、アルバムを複数選んで音楽・画像・GLBを一括転送する **[モバイル同期](MOBILE_SYNC.md)** に対応しています。Wi-Fi同期は接続QRコードを使い、USBデバッグ不要です。
 
-Android 10以上向けの音楽プレーヤーです。現在は **試作版0.8.0** で、Xperia 1 IIで検証しています。端末内に保存済みの音楽はSIMカードやネット接続なしで再生できます。Windows版の全機能を移植したものではありません。
+Android 10以上向けの音楽プレーヤーです。現在は **試作版0.9.0** で、Xperia 1 IIで検証しています。端末内に保存済みの音楽はSIMカードやネット接続なしで再生できます。Windows版の全機能を移植したものではありません。
+
+設定 →「言語 / Language」で日本語／Englishを切り替えできます（初期値は日本語）。曲名や歌詞本文は翻訳しません。アルバムは最近追加した順にも並べられます。
 
 ### 主な機能
 
@@ -29,13 +31,13 @@ Android 10以上向けの音楽プレーヤーです。現在は **試作版0.8.
 2. アルバムを選ぶとジャケット・アルバム情報と曲一覧が表示されます。曲をタップして再生し、画像右側のアイコンからジャケットや3Dを開けます。
 3. Windowsの「モバイル同期」でアルバムを選び、Androidの「設定 → PCから同期」から接続QRコードを読み取ります。音楽・画像・GLBの保存後、3Dも自動登録されます。Androidの手動3D取り込みボタンは廃止しました。
 
-3D受け渡しは標準glTF 2.0（GLB）を使用します。Androidは本アプリのケースプロファイルを表示し、旧形式の登録済みデータも利用できます。元の音源や画像は変更せず、ZIP.MP3は解凍せず転送します。お気に入り・履歴の端末間同期は未対応です。
+3D受け渡しは標準glTF 2.0（GLB）を使用します。Androidは本アプリのケースプロファイルを表示し、旧形式の登録済みデータも利用できます。元の音源や画像は変更せず、ZIP.MP3は解凍せず転送します。Windowsから歌詞・お気に入りを引き継げます。お気に入りは初回のみ（標準）／毎回／引き継がないをAndroidで選べます。Windowsへの逆方向同期・履歴同期は未対応です。新しい高精細3DにはAndroid更新後の再転送が必要です。
 
 ### 対応範囲・開発情報
 
 圧縮された音声エントリー、暗号化ZIP、ZIP64、分割ZIP、BIN/ISOはAndroid版では未対応です。通常フォルダーの単一FLAC＋CUEに対応しました（実音声の曲頭一致はAndroidでは未検証）。タグ編集や画像の加工・用途設定はWindows版で行います。タグキャッシュは永続化していますが、初回取得には時間がかかります。
 
-Android版は [0.8.0プレリリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/android-v0.8.0)、Windows版は [v0.83.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/v0.83.0) から入手できます。Androidは従来と同じデバッグ署名の試作APKです。更新時にアンインストールする必要はありません。
+Android版は [0.9.0プレリリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/android-v0.9.0)、Windows版は [v0.84.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/v0.84.0) から入手できます。Androidは従来と同じデバッグ署名の試作APKです。更新時にアンインストールする必要はありません。
 
 - [Android版の説明・ビルド手順](android-player/README.md)
 - [Windowsからの3Dデータ出力](MOBILE_3D.md)

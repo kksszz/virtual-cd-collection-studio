@@ -15,11 +15,11 @@ public sealed class MobileSyncServer : IDisposable
     private readonly SemaphoreSlim clients=new(4);
     private HashSet<string> selected=new(StringComparer.Ordinal);
     private readonly object statusGate=new();
-    private string transferStatus="接続待ち — XperiaでQRコードを読み取ってください";
+    private string transferStatus="接続待ち — スマートフォーンでQRコードを読み取ってください";
     private DateTime lastReport;
     private bool completed;
     public string TransferStatus {get{lock(statusGate)return lastReport!=default&&!completed&&DateTime.UtcNow-lastReport>TimeSpan.FromSeconds(45)?"端末からの応答待ち（完了は未確認）\n"+transferStatus:transferStatus;}}
-    public void Select(IEnumerable<string> ids){selected=new HashSet<string>(ids,StringComparer.Ordinal);lock(statusGate){transferStatus="接続待ち — XperiaでQRコードを読み取ってください";lastReport=default;completed=false;}}
+    public void Select(IEnumerable<string> ids){selected=new HashSet<string>(ids,StringComparer.Ordinal);lock(statusGate){transferStatus="接続待ち — スマートフォーンでQRコードを読み取ってください";lastReport=default;completed=false;}}
     public int Port=>((IPEndPoint)listener.LocalEndpoint).Port;
     public string Address=>"http://"+(System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces().Where(n=>n.OperationalStatus==System.Net.NetworkInformation.OperationalStatus.Up).OrderByDescending(n=>n.GetIPProperties().GatewayAddresses.Count>0)
         .SelectMany(n=>n.GetIPProperties().UnicastAddresses).Select(a=>a.Address).FirstOrDefault(a=>a.AddressFamily==AddressFamily.InterNetwork&&!IPAddress.IsLoopback(a)&&IsPrivate(a))?.ToString()??"127.0.0.1")+":"+Port+"/"+token+"/";
@@ -50,7 +50,7 @@ public sealed class MobileSyncServer : IDisposable
                 if(report.GetProperty("manifest").GetString()!=expected)return;
                 var message=report.GetProperty("message").GetString()??"";if(message.Length>1200)return;
                 bool done=report.GetProperty("complete").GetBoolean();
-                lock(statusGate){transferStatus=(done?"同期完了 — 端末で保存・検証済み\n":"Xperiaからの受信状況\n")+message;completed=done;lastReport=DateTime.UtcNow;}
+                lock(statusGate){transferStatus=(done?"同期完了 — 端末で保存・検証済み\n":"スマートフォーンからの受信状況\n")+message;completed=done;lastReport=DateTime.UtcNow;}
                 await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),ct);return;
             }
             if(!allowed.Contains(relative))return;

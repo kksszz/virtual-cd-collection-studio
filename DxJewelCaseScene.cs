@@ -20,7 +20,7 @@ namespace ZipMp3Player;
 /// DirectX 11 renderer for the selected jewel case.  The model is original,
 /// procedural geometry; no LaunchBox model or texture is redistributed.
 /// </summary>
-internal sealed class DxJewelCaseScene : IDisposable
+internal sealed partial class DxJewelCaseScene : IDisposable
 {
     // Dimensions fixed from the supplied scans: 142 x 125 x 10.0 mm closed.
     // Treat this as the outer-envelope constraint. Moulded rails must remain
@@ -34,11 +34,10 @@ internal sealed class DxJewelCaseScene : IDisposable
         StandardCaseDepth * StandardVisibleSpineWidthMm / StandardCaseDepthMm;
     private const float OpeningSideRearLipMm = 0.8f;
     private const float OpeningSideTrayBandMm = 2.0f;
-    // Render the two printed faces immediately outside/inside the transparent
-    // side wall. The paper still has its true 6 mm width; these zero-thickness
-    // optical surfaces only prevent transparent tray triangles behind the
-    // insert from winning the depth test and showing through the print.
+    // Keep both printed faces inside the transparent side wall. The inner
+    // face remains aligned with the clear-tray Inlay fold.
     internal const float SpineArtworkSurfaceOffset = 0.0025f;
+    internal const float SpinePaperThickness = 0.0008f;
     internal const float WrappingSideClearance = 0.016f;
     internal const float WrappingFaceClearance = 0.010f;
     internal const float WrappingEdgeClearance = 0.010f;
@@ -60,9 +59,41 @@ internal sealed class DxJewelCaseScene : IDisposable
     private readonly GroupModel3D _frontPanelRoot = new();
     private readonly TranslateTransform3D _frontPanelSeatTranslation = new();
     private readonly GroupModel3D _spineCardRoot = new();
+    private readonly Dictionary<MeshGeometryModel3D, System.Windows.Visibility> _diagnosticVisibility = new();
+
+    // Session-only layer isolation; never edits artwork, geometry or materials.
+    public void SetBackDiagnosticLayer(string layer)
+    {
+        foreach (var pair in _diagnosticVisibility) pair.Key.Visibility = pair.Value;
+        _diagnosticVisibility.Clear();
+        var shell = CaseGeometry.Value;
+        var frontMeshes = _frontPanelRoot.Children.OfType<MeshGeometryModel3D>().ToHashSet();
+        foreach (var mesh in _baseRoot.Children.OfType<MeshGeometryModel3D>().Concat(frontMeshes))
+        {
+            var name = mesh.Material?.Name ?? "";
+            bool hide = layer switch
+            {
+                "frame" => name == "Dense clear back artwork frame",
+                "shell" => ReferenceEquals(mesh.Geometry, shell.BottomPerimeter)
+                    || ReferenceEquals(mesh.Geometry, shell.BottomMouldedEdges)
+                    || name == "Clear opening-side Spine frame",
+                "tray" => name == "Tray" || name.StartsWith("Tray spine ", StringComparison.Ordinal),
+                "front-panel" => frontMeshes.Contains(mesh) && name == "Clear front panel",
+                "front-rails" => frontMeshes.Contains(mesh) && (ReferenceEquals(mesh.Geometry, shell.TopLid)
+                    || name == "Front lid moulded rails"),
+                "front-clips" => frontMeshes.Contains(mesh) && name == "Booklet retaining clips",
+                _ => false
+            };
+            if (!hide) continue;
+            _diagnosticVisibility[mesh] = mesh.Visibility;
+            mesh.Visibility = System.Windows.Visibility.Hidden;
+        }
+        RequestRender();
+    }
     private readonly TranslateTransform3D _spineCardTranslation = new();
     private readonly TranslateTransform3D _spineCardOpenTranslation = new();
     private readonly TranslateTransform3D _spineCardDragTranslation = new();
+    private readonly TranslateTransform3D _spineCardBookletClearance = new();
     private readonly DispatcherTimer _spineCardMotionTimer = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
     private TaskCompletionSource<bool>? _spineCardMotionCompletion;
     private EventHandler? _spineCardMotionTick;
@@ -187,6 +218,7 @@ internal sealed class DxJewelCaseScene : IDisposable
         spineCardTransform.Children.Add(_spineCardTranslation);
         spineCardTransform.Children.Add(_spineCardOpenTranslation);
         spineCardTransform.Children.Add(_spineCardDragTranslation);
+        spineCardTransform.Children.Add(_spineCardBookletClearance);
         _spineCardRoot.Transform = spineCardTransform;
         _wrappingUpperRotation = new RotateTransform3D(_wrappingUpperPeel);
         _wrappingLowerRotation = new RotateTransform3D(_wrappingLowerPeel);
@@ -239,6 +271,10 @@ internal sealed class DxJewelCaseScene : IDisposable
             IsRotationEnabled = false,
             IsPanEnabled = false,
             IsZoomEnabled = false,
+            // Our case rotation/reset controls own navigation. Helix's default
+            // corner gizmos otherwise overlap the information/playback overlay.
+            ShowViewCube = false,
+            ShowCoordinateSystem = false,
             // Picking is handled by the parent's preview events so model clicks
             // do not take over the established case-rotation controls.
             EnableMouseButtonHitTest = false,
@@ -317,6 +353,9 @@ internal sealed class DxJewelCaseScene : IDisposable
         _lidRoot.Children.Clear();
         _frontPanelRoot.Children.Clear();
         _spineCardRoot.Children.Clear();
+        _diagnosticVisibility.Clear();
+        _spineCardBookletClearance.OffsetY = 0;
+        _spineCardBookletClearance.OffsetX = 0;
         _wrappingUpperRoot.Children.Clear();
         _wrappingLowerRoot.Children.Clear();
         _tearTapeFrontRoot.Children.Clear();
@@ -579,7 +618,10 @@ internal sealed class DxJewelCaseScene : IDisposable
         // tray/background uncovered; after the decorative side face was
         // removed that gap appeared as a solid black vertical band. The real
         // booklet continues underneath the transparent retaining moulding.
-        var bookletLeft = shell.FrontArtworkArea.Left;
+        // Keep the moulded guide anchored to the lid, and extend only the
+        // paper to its inner edge (0.90 - 0.55 / 2 = 0.625 mm).
+        var bookletLeft = shell.FrontArtworkArea.Left
+            - (LeftBookletGuideOffsetMm - LeftBookletGuideWidthMm / 2) * unitX;
         var bookletRight = frontPlaneCenterX + bookletWidthMm / 2;
         var bookletBottom = frontPlaneCenterY - bookletHeightMm / 2;
         var bookletTop = frontPlaneCenterY + bookletHeightMm / 2;
@@ -625,41 +667,48 @@ internal sealed class DxJewelCaseScene : IDisposable
             shell.FrontArtworkArea.Z - 0.0001f, false, _bookletRoot);
         AddArtwork(item.InsideFrontCover, bookletLeft, bookletRight, bookletBottom, bookletTop,
             bookletRearZ - 0.0001f, true, _bookletRoot);
-        AddBookletRetainers(bookletLeft, bookletRight, bookletBottom, bookletTop,
+        AddBookletRetainers(shell.FrontArtworkArea.Left, bookletRight, bookletBottom, bookletTop,
             height, shell.FrontArtworkArea.Z, unitX, unitY, bookletRetainerAcrylic);
 
         // The rear insert is 150 x 118 mm including two 6 mm spines. The flat
         // back window therefore displays the central 138 x 118 mm panel.
         var backArtworkWidth = 138f * unitX;
         var backArtworkHeight = 118f * unitY;
+        // Two sides of one paper insert directly below the tray floor.
+        // Retain the 138 mm panel and the clear rails outside its folds.
+        var inlayZ = -depth / 2 + depth * 1.5f / StandardCaseDepthMm + 0.003f;
+        var backArtworkZ = inlayZ - SpinePaperThickness;
+        var backFoldHalfWidth = backArtworkWidth / 2;
         // Missing panels stay unprinted; unrelated artwork must not be stretched onto them.
         AddArtwork(item.BackCover,
-            -backArtworkWidth / 2, backArtworkWidth / 2,
+            -backFoldHalfWidth, backFoldHalfWidth,
             -backArtworkHeight / 2, backArtworkHeight / 2,
-            // The lower STL includes an opaque central plate at the rear outer
-            // surface. Keep the zero-thickness print immediately outside that
-            // plate so it remains visible; this does not add structural depth.
-            -depth / 2 - 0.0002f,
+            backArtworkZ,
             true, _baseRoot);
-        AddBackArtworkFrame(width, height, backArtworkWidth, backArtworkHeight,
-            -depth / 2 - 0.0005f,
+        AddBackArtworkFrame(width, height, backFoldHalfWidth * 2, backArtworkHeight,
+            backArtworkZ - 0.0003f,
             backFrameAcrylic);
         var inlay = item.SplitInlay();
+        // Maintain the continuous inner fold while moving the whole paper
+        // inside the guard rails, rather than stretching either texture.
+        var inlayHalfWidth = backFoldHalfWidth - SpinePaperThickness;
         // Two independent printed sides of the same sheet. Keep the interior
         // below the tray floor, so opaque resin still hides it naturally.
         AddArtwork(inlay.Panel,
-            -backArtworkWidth / 2, backArtworkWidth / 2,
+            -inlayHalfWidth, inlayHalfWidth,
             -backArtworkHeight / 2, backArtworkHeight / 2,
-            -depth / 2 + depth * 1.5f / StandardCaseDepthMm + 0.003f,
+            inlayZ,
             false, _baseRoot, "Inlay artwork");
         // Back is viewed from -Z: its source-right edge is at world -X.
         // Inlay faces +Z, so its left/right strips stay in world order.
         AddSpine(item.RightSpineCover,
-            -width / 2 - SpineArtworkSurfaceOffset, backArtworkHeight, depth, true, _baseRoot, inlay.Left);
+            -width / 2, backArtworkHeight, depth, true, _baseRoot, inlay.Left,
+            inlayZ, backArtworkZ);
         AddSpine(item.SpineCover,
-            width / 2 + SpineArtworkSurfaceOffset,
-            backArtworkHeight, depth, false, _baseRoot, inlay.Right);
-        AddSpineCard(item.SpineCard, width, height, depth);
+            width / 2,
+            backArtworkHeight, depth, false, _baseRoot, inlay.Right,
+            inlayZ, backArtworkZ);
+        AddSpineCard(item.SpineCard, item.SpineCardReverse, width, height, depth);
         // Japanese caramel wrapping is represented only together with an obi.
         // Albums without a Spine Card remain ordinary, directly openable cases.
         if (item.SpineCard is not null) AddCaramelWrapping(width, height, depth);
@@ -841,6 +890,10 @@ internal sealed class DxJewelCaseScene : IDisposable
         var backRemoved = Math.Clamp((progress - .52) / .48, 0, 1);
         _tearTapeScale.ScaleX = Math.Max(.002, 1 - frontRemoved);
         _tearTapeBackScale.ScaleX = Math.Max(.002, 1 - backRemoved);
+        // Keep transforms non-singular, but never render the tiny scaled
+        // remnant once a strip has been pulled free. Rewrapping restores it.
+        _tearTapeFrontRoot.Visibility = frontRemoved < 1 ? System.Windows.Visibility.Visible : System.Windows.Visibility.Hidden;
+        _tearTapeBackRoot.Visibility = backRemoved < 1 ? System.Windows.Visibility.Visible : System.Windows.Visibility.Hidden;
         _tearTapeSideRoot.Visibility = progress < .42 ? System.Windows.Visibility.Visible : System.Windows.Visibility.Hidden;
         if (_tearTapeTabModel is not null)
             _tearTapeTabModel.Visibility = progress <= .004
@@ -1256,7 +1309,11 @@ internal sealed class DxJewelCaseScene : IDisposable
 
     public Task<bool> AnimateSpineCardAsync(bool removed)
     {
+        EndSpineCardDrag();
         CancelSpineCardMotion();
+        // Rewrapping calls this method directly, bypassing SetSpineCardRemoved.
+        // Always clear a manually placed obi, including an already-seated progress value.
+        if (!removed) ResetSpineCardDragOffset();
         var from = _spineCardProgress;
         var target = removed ? 1d : 0d;
         if (Math.Abs(from - target) < .00001)
@@ -1293,6 +1350,28 @@ internal sealed class DxJewelCaseScene : IDisposable
         if (animate) { _ = AnimateBookletAsync(removed); return; }
         CancelBookletMotion();
         SetBookletProgress(removed ? 1 : 0);
+    }
+
+    // Separate temporary displacement preserves the user's manually placed obi.
+    // The open lid reverses local X: the booklet slides 2.08 units left.
+    // Clear that swept distance with a small margin, without changing height.
+    public Task MoveSpineCardForBookletAsync(bool clear)
+    {
+        var from = _spineCardBookletClearance.OffsetX;
+        var target = clear ? Math.Min(0, -2.20 - _spineCardDragTranslation.OffsetX) : 0;
+        if (Math.Abs(from - target) < 0.00001) return Task.CompletedTask;
+        var completion = new TaskCompletionSource<bool>();
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        var timer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
+        timer.Tick += (_, _) =>
+        {
+            var t = Math.Clamp(started.Elapsed.TotalMilliseconds / 140, 0, 1);
+            _spineCardBookletClearance.OffsetX = from + (target - from) * t * t * (3 - 2 * t);
+            RequestRender();
+            if (t >= 1) { timer.Stop(); completion.TrySetResult(true); }
+        };
+        timer.Start();
+        return completion.Task;
     }
 
     // Slide almost an entire booklet width beneath all four tabs before lifting
@@ -1603,7 +1682,10 @@ internal sealed class DxJewelCaseScene : IDisposable
             _frontPanelRoot, false);
     }
 
-    private void AddBookletRetainers(float bookletLeft, float bookletRight,
+    private const float LeftBookletGuideOffsetMm = 0.90f;
+    private const float LeftBookletGuideWidthMm = 0.55f;
+
+    private void AddBookletRetainers(float lidArtworkLeft, float bookletRight,
         float bookletBottom, float bookletTop, float caseHeight, float frontSurfaceZ,
         float millimetreX, float millimetreY, DxMaterial material)
     {
@@ -1618,9 +1700,7 @@ internal sealed class DxJewelCaseScene : IDisposable
         // outside the 120 mm booklet, 0.9 mm toward the black spine, and is
         // only about 0.55 mm wide.  The old 0.82 mm strip was centred too far
         // into the artwork and consequently read as a full-height grey band.
-        const float leftGuideOffsetMm = 0.90f;
-        const float leftGuideWidthMm = 0.55f;
-        var leftGuideX = bookletLeft - leftGuideOffsetMm * millimetreX;
+        var leftGuideX = lidArtworkLeft - LeftBookletGuideOffsetMm * millimetreX;
         // Continue into the 1 mm margin beyond the 120 mm booklet until the
         // guide meets the inside faces of the moulded top and bottom rails.
         // Leaving the former 1.4 mm gap at each end made the new guide look
@@ -1631,7 +1711,7 @@ internal sealed class DxJewelCaseScene : IDisposable
         var guideHeight = guideTop - guideBottom;
         retainers.AddBox(new Vector3(leftGuideX, (guideTop + guideBottom) / 2,
                 retainerZ),
-            leftGuideWidthMm * millimetreX, guideHeight, retainerDepth);
+            LeftBookletGuideWidthMm * millimetreX, guideHeight, retainerDepth);
 
         // The opening-side edge in the same scan is held by two independent
         // 21 mm clips, not by another continuous rail.  Their thin stems sit
@@ -1673,9 +1753,17 @@ internal sealed class DxJewelCaseScene : IDisposable
         var frontZ = depth / 2 + 0.12f * millimetreZ;
         var panelThickness = panelThicknessMm * millimetreZ;
         var centerZ = frontZ - panelThickness / 2;
+        // This sheet belongs to the lid window, not the full case width.
+        // Extending across the hinge reflected the excess over Back on opening.
+        // End at the retaining stop's artwork-facing edge, where paper meets
+        // the stop. The stop and hinge-side rails are separate geometry.
+        var panelLeft = Math.Max((float)AssembledHingeX,
+            CaseGeometry.Value.FrontArtworkArea.Left
+                - (LeftBookletGuideOffsetMm - LeftBookletGuideWidthMm / 2) * millimetreX);
+        var panelRight = width / 2 - insetX;
         var panel = new MeshBuilder(true, true, true);
-        panel.AddBox(new Vector3(0, 0, centerZ),
-            width - insetX * 2, height - insetY * 2, panelThickness);
+        panel.AddBox(new Vector3((panelLeft + panelRight) / 2, 0, centerZ),
+            panelRight - panelLeft, height - insetY * 2, panelThickness);
         AddMesh(panel.ToMeshGeometry3D(), material, true, true,
             _frontPanelRoot, false);
     }
@@ -2262,6 +2350,16 @@ internal sealed class DxJewelCaseScene : IDisposable
             // the selected tray color.
             var isOuterClearRim = Math.Abs(centroid.X) > targetWidth * 0.485f
                 || Math.Abs(centroid.Y) > targetHeight * 0.485f;
+            // The outermost rear-facing skin is the transparent case, not the
+            // removable tray. Keep every raised/support face classified as
+            // before, but do not put opaque tray colour in front of Back art.
+            var rearSkinLimit = -targetDepth / 2 + 0.0001f;
+            if (a.Z <= rearSkinLimit && b.Z <= rearSkinLimit && c.Z <= rearSkinLimit
+                && Math.Abs(faceNormal.Z) > 0.9f)
+            {
+                (perimeter ?? primary).AddTriangle(a, b, c);
+                continue;
+            }
             // The printable lower STL closes the opening edge with a tall
             // vertical wall. The scanned injection-moulded tray has no such
             // wall: only its thin plate reaches this side and the clear shells
@@ -2411,15 +2509,21 @@ internal sealed class DxJewelCaseScene : IDisposable
         AddMesh(builder.ToMeshGeometry3D(), material, transparent, twoSided ?? reverse, target);
     }
 
+    private static float OuterSpinePrintX(float wallX, bool leftSide) =>
+        wallX * (138f / 142f);
+
     private void AddSpine(BitmapSource? bitmap, float x, float height, float depth, bool leftSide,
-        GroupModel3D? target = null, BitmapSource? insideBitmap = null)
+        GroupModel3D? target = null, BitmapSource? insideBitmap = null, float? insideRearZ = null,
+        float? outsideRearZ = null)
     {
         // Both printed spine folds sit centrally between the closed front and
         // rear rails. The former opening-side rear offset pushed this paper
         // downward by 1.4 mm and exposed a large false gap above it even after
         // the transparent rails themselves had been extended to meet.
-        var rearZ = -StandardVisibleSpineDepth / 2;
+        var rearZ = outsideRearZ ?? -StandardVisibleSpineDepth / 2;
         var frontZ = rearZ + StandardVisibleSpineDepth;
+        x = OuterSpinePrintX(x, leftSide);
+        var innerX = x + (leftSide ? SpinePaperThickness : -SpinePaperThickness);
         var builder = new MeshBuilder(true, true, true);
         if (leftSide)
         {
@@ -2455,10 +2559,9 @@ internal sealed class DxJewelCaseScene : IDisposable
         // exterior spine artwork onto the paper reverse. Fold each inner strip
         // from its matching edge of the central Inlay panel.
         var reverse = new MeshBuilder(true, true, true);
-        // The reverse print is the corresponding optical surface on the
-        // inside of the clear wall. Together with the exterior face it
-        // brackets every shell/tray triangle, so neither can tint the paper.
-        var innerX = x + (leftSide ? 2 * SpineArtworkSurfaceOffset : -2 * SpineArtworkSurfaceOffset);
+        // Preserve the inner print position and its existing Inlay seam.
+        // Exterior mesh has already been built; adjust only the inner fold.
+        rearZ = insideRearZ ?? -StandardVisibleSpineDepth / 2;
         if (leftSide)
         {
             reverse.AddQuad(new Vector3(innerX, height / 2, rearZ),
@@ -2663,7 +2766,7 @@ internal sealed class DxJewelCaseScene : IDisposable
         _tearTapeRibbonRoot.Children.Add(_tearTapeRibbonModel);
     }
 
-    private void AddSpineCard(BitmapSource? bitmap, float caseWidth, float caseHeight, float caseDepth)
+    private void AddSpineCard(BitmapSource? bitmap, BitmapSource? reverseBitmap, float caseWidth, float caseHeight, float caseDepth)
     {
         if (bitmap is null) return;
         var (back, spine, front) = SpineCardArtwork.Split(bitmap);
@@ -2701,10 +2804,10 @@ internal sealed class DxJewelCaseScene : IDisposable
             frontZ, false, _spineCardRoot, "Spine Card front flap");
 
         var side = new MeshBuilder(true, true, true);
-        side.AddQuad(new Vector3(outsideX, cardHeight / 2, caseDepth / 2),
-            new Vector3(outsideX, cardHeight / 2, -caseDepth / 2),
-            new Vector3(outsideX, -cardHeight / 2, -caseDepth / 2),
-            new Vector3(outsideX, -cardHeight / 2, caseDepth / 2),
+        side.AddQuad(new Vector3(outsideX, cardHeight / 2, frontZ),
+            new Vector3(outsideX, cardHeight / 2, backZ),
+            new Vector3(outsideX, -cardHeight / 2, backZ),
+            new Vector3(outsideX, -cardHeight / 2, frontZ),
             new Vector2(1, 0), new Vector2(0, 0), new Vector2(0, 1), new Vector2(1, 1));
         AddMesh(side.ToMeshGeometry3D(), new PhongMaterial
         {
@@ -2716,6 +2819,34 @@ internal sealed class DxJewelCaseScene : IDisposable
             SpecularShininess = 6,
             EnableAutoTangent = true
         }, false, false, _spineCardRoot);
+
+        if (reverseBitmap is not null)
+        {
+            // Viewed upright from the paper's reverse, left/right panels swap:
+            // Front inside | Spine inside | Back inside. Keep exterior dimensions.
+            var (frontInside, spineInside, backInside) = SpineCardArtwork.Split(reverseBitmap);
+            AddArtwork(backInside, foldX, foldX + backWidth, -cardHeight / 2, cardHeight / 2,
+                backZ, false, _spineCardRoot, "Spine Card back inside", twoSided: false);
+            AddArtwork(frontInside, foldX, foldX + frontWidth, -cardHeight / 2, cardHeight / 2,
+                frontZ, true, _spineCardRoot, "Spine Card front inside", twoSided: false);
+            var innerSide = new MeshBuilder(true, true, true);
+            innerSide.AddQuad(
+                new Vector3(outsideX, cardHeight / 2, backZ),
+                new Vector3(outsideX, cardHeight / 2, frontZ),
+                new Vector3(outsideX, -cardHeight / 2, frontZ),
+                new Vector3(outsideX, -cardHeight / 2, backZ),
+                new Vector2(1, 0), new Vector2(0, 0), new Vector2(0, 1), new Vector2(1, 1));
+            AddMesh(innerSide.ToMeshGeometry3D(), new PhongMaterial
+            {
+                Name = "Spine Card spine inside",
+                DiffuseColor = new Color4(1, 1, 1, 1),
+                DiffuseMap = CreateTexture(spineInside),
+                RenderDiffuseMap = true,
+                SpecularColor = new Color4(0.015f, 0.015f, 0.015f, 1),
+                SpecularShininess = 6
+            }, false, false, _spineCardRoot);
+            return;
+        }
 
         // A scan describes only the printed outside of the folded card. Its
         // unregistered reverse is plain opaque paper; without these opposing
@@ -2733,10 +2864,10 @@ internal sealed class DxJewelCaseScene : IDisposable
             new Vector3(foldX + frontWidth, -cardHeight / 2, frontZ),
             new Vector3(foldX, -cardHeight / 2, frontZ));
         reverse.AddQuad(
-            new Vector3(outsideX, cardHeight / 2, -caseDepth / 2),
-            new Vector3(outsideX, cardHeight / 2, caseDepth / 2),
-            new Vector3(outsideX, -cardHeight / 2, caseDepth / 2),
-            new Vector3(outsideX, -cardHeight / 2, -caseDepth / 2));
+            new Vector3(outsideX, cardHeight / 2, backZ),
+            new Vector3(outsideX, cardHeight / 2, frontZ),
+            new Vector3(outsideX, -cardHeight / 2, frontZ),
+            new Vector3(outsideX, -cardHeight / 2, backZ));
         AddMesh(reverse.ToMeshGeometry3D(), new PhongMaterial
         {
             Name = "Spine Card paper reverse",

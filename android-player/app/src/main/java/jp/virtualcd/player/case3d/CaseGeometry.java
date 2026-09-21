@@ -35,16 +35,21 @@ final class CaseGeometry {
         part=BASE;finish=1;
         // Rear shell, printed insert, and tray floor. Clear tray leaves the inlay visible.
         box(-.71f,.71f,-.625f,.625f,-.05f,-.041f,GLASS);
-        finish=0;face(-.69f,.69f,-.59f,.59f,-.051f,true,"back",WHITE);
-        face(-.69f,.69f,-.59f,.59f,-.036f,false,"inlay",WHITE);
+        // 138 mm insert under the tray, with 0.05 mm paper thickness.
+        // Fold coordinates, not case outer walls, own every seam.
+        float rear=-.0365f,innerRear=-.036f,foldFront=rear+.06f;
+        finish=0;face(-.69f,.69f,-.59f,.59f,rear,true,"back",WHITE);
+        face(-.6895f,.6895f,-.59f,.59f,innerRear,false,"inlay",WHITE);
         finish=1;detailedTray(tray,clear);
         // The base's edge channels and two lid pivot sockets.
         for(float y:new float[]{-.625f,.606f})box(-.71f,.71f,y,y+.019f,-.04f,.029f,EDGE);
         box(.693f,.713f,-.605f,.605f,-.035f,.027f,EDGE);
         for(float y:new float[]{-.57f,.51f})box(-.724f,-.681f,y,y+.06f,-.022f,.043f,EDGE);
         finish=0;
-        quad(new float[]{.714f,-.59f,.024f,.714f,-.59f,-.038f,.714f,.59f,-.038f,.714f,.59f,.024f},"spine",WHITE);
-        quad(new float[]{-.714f,-.59f,-.038f,-.714f,-.59f,.024f,-.714f,.59f,.024f,-.714f,.59f,-.038f},"rightSpine",WHITE);
+        quad(new float[]{.69f,-.59f,foldFront,.69f,-.59f,rear,.69f,.59f,rear,.69f,.59f,foldFront},"spine",WHITE);
+        quad(new float[]{-.69f,-.59f,rear,-.69f,-.59f,foldFront,-.69f,.59f,foldFront,-.69f,.59f,rear},"rightSpine",WHITE);
+        quad(new float[]{.6895f,-.59f,innerRear,.6895f,-.59f,foldFront,.6895f,.59f,foldFront,.6895f,.59f,innerRear},"inlayRight",WHITE);
+        quad(new float[]{-.6895f,-.59f,foldFront,-.6895f,-.59f,innerRear,-.6895f,.59f,innerRear,-.6895f,.59f,foldFront},"inlayLeft",WHITE);
         part=LID;
         // Booklet has paper thickness and separately printed inside/outside.
         // Only paper edges: coincident box faces would z-fight with the printed panels.
@@ -58,7 +63,9 @@ final class CaseGeometry {
         finish=1;
         box(-.71f,.71f,.60f,.625f,.025f,.058f,EDGE);box(-.71f,.71f,-.625f,-.60f,.025f,.058f,EDGE);
         box(.683f,.715f,-.60f,.60f,.024f,.058f,EDGE);box(-.711f,-.688f,-.60f,.60f,.024f,.058f,EDGE);
-        face(-.687f,.683f,-.60f,.60f,.056f,false,"",new float[]{.83f,.92f,.97f,.065f});
+        // The transparent window ends at the booklet stop, not the hinge.
+        box(-.5355f,-.53f,-.60f,.60f,.0305f,.0435f,EDGE);
+        face(-.53f,.683f,-.60f,.60f,.056f,false,"",new float[]{.83f,.92f,.97f,.065f});
         for(float x:new float[]{-.38f,.43f})for(float y:new float[]{-.593f,.575f})box(x-.035f,x+.035f,y,y+.018f,.022f,.038f,EDGE);
         for(float y:new float[]{-.57f,.51f})box(-.716f,-.66f,y+.01f,y+.05f,.033f,.052f,EDGE);
         // Latch tabs on the opening edge.
@@ -78,8 +85,8 @@ final class CaseGeometry {
             double a=i*Math.PI*2/128,b=(i+1)*Math.PI*2/128;
             float mid=(float)((a+b)/2);if(Math.abs(Math.cos(mid))<.14f)continue;
             float ca=(float)Math.cos(a),sa=(float)Math.sin(a),cb=(float)Math.cos(b),sb=(float)Math.sin(b);
-            float ra=Math.min(.612f/Math.max(.0001f,Math.abs(sa)),(ca<0?.608f:.631f)/Math.max(.0001f,Math.abs(ca)));
-            float rb=Math.min(.612f/Math.max(.0001f,Math.abs(sb)),(cb<0?.608f:.631f)/Math.max(.0001f,Math.abs(cb)));
+            float ra=Math.min(.612f/Math.max(.0001f,Math.abs(sa)),(ca<0?.608f:.629f)/Math.max(.0001f,Math.abs(ca)));
+            float rb=Math.min(.612f/Math.max(.0001f,Math.abs(sb)),(cb<0?.608f:.629f)/Math.max(.0001f,Math.abs(cb)));
             quad(new float[]{.06f+ca*.607f,sa*.607f,.009f,.06f+ca*ra,sa*ra,.009f,.06f+cb*rb,sb*rb,.009f,.06f+cb*.607f,sb*.607f,.009f},"",body);
         }
         batch(start);
@@ -103,16 +110,17 @@ final class CaseGeometry {
             }
             batch(caps);
         }
-        // Narrow perimeter rails and fixing tabs; the hinge strip belongs to tray.
-        box(-.704f,-.550f,-.612f,.612f,-.032f,.025f,body);
+        // Tray moulding stays inside the paper folds at +/- .6895.
+        // The separate transparent case rails keep their original outer bounds.
+        box(-.689f,-.550f,-.612f,.612f,-.032f,.025f,body);
         // Clear trays use a smooth hinge-side skin, matching the desktop variant.
         // Opaque moulding has subtle same-material ribs, not bright ladder lines.
         if(!clear){int ribs=meshes.size();
-            for(int i=0;i<39;i++){float y=-.59f+i*.031f;box(-.692f,-.566f,y,y+.003f,.025f,.027f,body);}batch(ribs);
+            for(int i=0;i<39;i++){float y=-.59f+i*.031f;box(-.689f,-.566f,y,y+.003f,.025f,.027f,body);}batch(ribs);
         }
-        for(float y:new float[]{-.612f,.599f})box(-.548f,.69f,y,y+.010f,-.025f,.012f,rim);
-        box(.682f,.695f,-.60f,.60f,-.026f,.010f,rim);
-        for(float y:new float[]{-.46f,.43f})box(.676f,.704f,y,y+.032f,-.015f,.016f,rim);
+        for(float y:new float[]{-.612f,.599f})box(-.548f,.689f,y,y+.010f,-.025f,.012f,rim);
+        box(.682f,.689f,-.60f,.60f,-.026f,.010f,rim);
+        for(float y:new float[]{-.46f,.43f})box(.676f,.689f,y,y+.032f,-.015f,.016f,rim);
     }
     /** Revolved mould cross-section; radial/Z normals are calculated per bevel. */
     private void profile(float[] rz,float a,float b,int steps,float[] color){
@@ -142,13 +150,11 @@ final class CaseGeometry {
     private void obi(CasePackage data){if(!data.hasObi)return;part=OBI;finish=0;
         float x=-.735f,z=.073f,back=-.064f;
         face(x,x+data.obiFrontWidth,-.60f,.60f,z,false,"obiFront",WHITE);
-        face(x,x+data.obiFrontWidth,-.60f,.60f,z-.002f,true,"",PAPER);
+        face(x+.0005f,x+data.obiFrontWidth,-.60f,.60f,z-.0005f,true,"obiFrontInside",WHITE);
         face(x,x+data.obiBackWidth,-.60f,.60f,back,true,"obiBack",WHITE);
-        face(x,x+data.obiBackWidth,-.60f,.60f,back+.002f,false,"",PAPER);
+        face(x+.0005f,x+data.obiBackWidth,-.60f,.60f,back+.0005f,false,"obiBackInside",WHITE);
         quad(new float[]{x,-.60f,back,x,-.60f,z,x,.60f,z,x,.60f,back},"obiSpine",WHITE);
-        quad(new float[]{x+.002f,-.60f,z,x+.002f,-.60f,back,x+.002f,.60f,back,x+.002f,.60f,z},"",PAPER);
-        // Fold edges are paper, not a transparent seam.
-        box(x+.001f,x+.003f,-.60f,.60f,back+.002f,z-.002f,PAPER);
+        quad(new float[]{x+.0005f,-.60f,z-.0005f,x+.0005f,-.60f,back+.0005f,x+.0005f,.60f,back+.0005f,x+.0005f,.60f,z-.0005f},"obiSpineInside",WHITE);
     }
     private void wrapping(CasePackage data){finish=3;
         float[] film={.96f,.98f,1,.018f},seam={.95f,.97f,1,.085f};

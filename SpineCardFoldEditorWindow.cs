@@ -10,6 +10,7 @@ namespace ZipMp3Player;
 internal sealed class SpineCardFoldEditorWindow : Window
 {
     private readonly BitmapSource _bitmap;
+    private readonly bool _reverse;
     private readonly Grid _viewport = new() { Background = new SolidColorBrush(Color.FromRgb(18, 21, 26)) };
     private readonly Canvas _overlay = new() { Background = Brushes.Transparent };
     private readonly Thumb _leftGuide = CreateGuide(Color.FromRgb(68, 185, 240));
@@ -23,13 +24,14 @@ internal sealed class SpineCardFoldEditorWindow : Window
     public double RightFold { get; private set; }
     public bool UseAutomatic => !_manual;
 
-    public SpineCardFoldEditorWindow(BitmapSource bitmap, double left, double right, bool manual)
+    public SpineCardFoldEditorWindow(BitmapSource bitmap, double left, double right, bool manual, bool reverse = false)
     {
         _bitmap = bitmap;
+        _reverse = reverse;
         LeftFold = left;
         RightFold = right;
         _manual = manual;
-        Title = LocalizationService.Select("Spine Card 折り目補正", "Spine Card Fold Adjustment");
+        Title = reverse ? LocalizationService.Select("Spine Card 裏面の折り目補正", "Spine Card Reverse Fold Adjustment") : LocalizationService.Select("Spine Card 折り目補正", "Spine Card Fold Adjustment");
         Width = 900; Height = 720; MinWidth = 620; MinHeight = 480;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = new SolidColorBrush(Color.FromRgb(24, 28, 34));
@@ -42,8 +44,8 @@ internal sealed class SpineCardFoldEditorWindow : Window
         root.Children.Add(new TextBlock
         {
             Text = LocalizationService.Select(
-                "細い青線の中心＝Back／Spine境界、細い橙線の中心＝Spine／Front境界です。透明な周辺もつかめます。線をドラッグするか、画像上をクリックしてください。",
-                "The center of the thin blue line is the Back/Spine boundary; the thin orange line is the Spine/Front boundary. The transparent area around each line is draggable."),
+                reverse ? "裏面は左からFront内側／Spine内側／Back内側です。青線と橙線で側面の左右境界を指定してください。" : "細い青線の中心＝Back／Spine境界、細い橙線の中心＝Spine／Front境界です。透明な周辺もつかめます。線をドラッグするか、画像上をクリックしてください。",
+                reverse ? "Reverse scan: Front inside | Spine inside | Back inside. Drag the blue and orange lines to define the spine boundaries." : "The center of the thin blue line is the Back/Spine boundary; the thin orange line is the Spine/Front boundary. The transparent area around each line is draggable."),
             Margin = new Thickness(2, 0, 2, 12), Foreground = new SolidColorBrush(Color.FromRgb(205, 214, 224)),
             TextWrapping = TextWrapping.Wrap
         });
@@ -185,6 +187,6 @@ internal sealed class SpineCardFoldEditorWindow : Window
     }
 
     private void UpdateStatus() => _status.Text = LocalizationService.Select(
-        $"{(_manual ? "手動" : "自動")}　Back {LeftFold:P1}　Spine {(RightFold - LeftFold):P1}　Front {(1 - RightFold):P1}",
-        $"{(_manual ? "Manual" : "Automatic")}  Back {LeftFold:P1}  Spine {(RightFold - LeftFold):P1}  Front {(1 - RightFold):P1}");
+        $"{(_manual ? "手動" : "自動")}　{(_reverse ? "Front内側" : "Back")} {LeftFold:P1}　Spine {(RightFold - LeftFold):P1}　{(_reverse ? "Back内側" : "Front")} {(1 - RightFold):P1}",
+        $"{(_manual ? "Manual" : "Automatic")}  {(_reverse ? "Front内側" : "Back")} {LeftFold:P1}  Spine {(RightFold - LeftFold):P1}  {(_reverse ? "Back内側" : "Front")} {(1 - RightFold):P1}");
 }

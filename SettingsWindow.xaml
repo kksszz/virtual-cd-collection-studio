@@ -91,6 +91,16 @@
         <CheckBox x:Name="AutomaticArtworkCheck" Content="画像のないアルバムのジャケットを自動取得する" Margin="0,7,0,0"
                   ToolTip="作品名・アーティスト名をMusicBrainzとTheAudioDBへ送信します。高解像度を優先し、600px未満は保存しません。音楽・ZIPは変更しません。"/>
         <CheckBox x:Name="AutomaticArtworkPauseCheck" Content="自動取得を一時停止（保存して反映）" Margin="20,5,0,0"/>
+        <Separator Margin="0,12,0,8"/>
+        <DockPanel>
+          <Button x:Name="ClearArtworkCacheButton" Content="画像キャッシュを削除" DockPanel.Dock="Right" Click="ClearArtworkCache_Click" VerticalAlignment="Top"/>
+          <StackPanel Margin="0,0,10,0">
+            <TextBlock Text="画像キャッシュ" FontWeight="SemiBold"/>
+            <TextBlock Text="保存済みの縮小画像だけを削除します。元画像・取得画像・音楽・設定は残ります。表示中の画像はメモリにも残るため、削除後はアプリを再起動してください。必要な縮小画像は再生成されます。"
+                       Foreground="#A9B3C0" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"/>
+            <TextBlock x:Name="ArtworkCacheStatus" Foreground="#A9B3C0" TextWrapping="Wrap" Margin="0,5,0,0"/>
+          </StackPanel>
+        </DockPanel>
       </StackPanel>
     </Border>
     <DockPanel Grid.Row="6">

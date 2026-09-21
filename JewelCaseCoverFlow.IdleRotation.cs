@@ -53,7 +53,7 @@ public sealed partial class JewelCaseCoverFlow
         PreviewTouchMove += (_, _) => Reset();
         void Render(object? sender, EventArgs args)
         {
-            var eligible = enabled && IsVisible && !_collectionPresentation && _dxScene is not null
+            var eligible = enabled && !_backDiagnosticActive && IsVisible && !_collectionPresentation && _dxScene is not null
                 && SelectedKey is not null && Window.GetWindow(this) is { IsActive: true, WindowState: not WindowState.Minimized }
                 && Mouse.Captured is null && Keyboard.Modifiers == ModifierKeys.None
                 && Mouse.LeftButton == MouseButtonState.Released && Mouse.RightButton == MouseButtonState.Released

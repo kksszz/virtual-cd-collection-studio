@@ -13,11 +13,11 @@
     <Copyright>Copyright (C) 2026 kksszz</Copyright>
     <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
-    <Version>0.83.0</Version>
-    <InformationalVersion>0.83.0</InformationalVersion>
+    <Version>0.84.0</Version>
+    <InformationalVersion>0.84.0</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <AssemblyVersion>0.83.0.0</AssemblyVersion>
-    <FileVersion>0.83.0.0</FileVersion>
+    <AssemblyVersion>0.84.0.0</AssemblyVersion>
+    <FileVersion>0.84.0.0</FileVersion>
   </PropertyGroup>
   <ItemGroup>
     <Resource Include="Assets\AppIcon.ico" />
@@ -39,6 +39,8 @@
     <None Update="AUTOMATIC_ARTWORK.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="CD_BOX_SCAN_GUIDE.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="MOBILE_SYNC.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="MOBILE_3D.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="THIRD_PARTY_LICENSES\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>

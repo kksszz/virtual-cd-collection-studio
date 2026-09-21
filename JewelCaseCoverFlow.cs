@@ -26,6 +26,7 @@ public sealed record JewelCaseCoverFlowItem(
 {
     public Func<BookletContent>? LoadBooklet { get; init; }
     public BitmapSource? SpineCard { get; init; }
+    public BitmapSource? SpineCardReverse { get; init; }
     public BitmapSource? SecondDiscImage { get; init; }
     internal bool CollectionPresentation { get; init; }
     // Inlay is the inside of the rear insert, not the booklet or exterior Back.
@@ -65,6 +66,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
     private readonly Button _bookletButton = new();
     private readonly Button _spineCardButton = new();
     private readonly Button _wrappingButton = new();
+    private bool _backDiagnosticActive;
     private bool _isOpeningBooklet;
     private readonly bool _isFullScreen;
     private IReadOnlyList<JewelCaseCoverFlowItem> _items = [];
@@ -353,7 +355,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
         if (isFullScreen) InitializeIdleRotation(toolbar);
         var exportMobile = new Button
         {
-            Content = LocalizationService.Select("モバイル3D出力", "Export mobile 3D"),
+            Content = LocalizationService.Select(".glb出力", "Export .glb"),
             Height = 25, Padding = new Thickness(8, 0, 8, 0), Margin = new Thickness(3, 0, 3, 4),
             Foreground = Brushes.White, Background = _discButton.Background, BorderBrush = _discButton.BorderBrush,
             ToolTip = "現在の画像・帯の折り位置を標準GLBまたは従来の.vcd3dに書き出します（音源・元画像は変更しません）。2枚目のCDは未対応です。"
@@ -363,16 +365,45 @@ public sealed partial class JewelCaseCoverFlow : Grid
             if (_selectedIndex < 0 || _selectedIndex >= _items.Count) return;
             var item = _items[_selectedIndex];
             var safeName = string.Concat(item.Title.Select(c => System.IO.Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
-            var save = new Microsoft.Win32.SaveFileDialog { Filter = "glTF 2.0 binary (*.glb)|*.glb|Legacy mobile case (*.vcd3d)|*.vcd3d", DefaultExt = ".glb", AddExtension = true, FileName = safeName, OverwritePrompt = true };
+            var save = new Microsoft.Win32.SaveFileDialog { Title = LocalizationService.Select(".glb出力", "Export .glb"), Filter = "glTF 2.0 binary (*.glb)|*.glb|Legacy mobile case (*.vcd3d)|*.vcd3d", DefaultExt = ".glb", AddExtension = true, FileName = safeName, OverwritePrompt = true };
             if (save.ShowDialog(Window.GetWindow(this)) != true) return;
             try
             {
                 MobileCaseExporter.Export(item, save.FileName);
-                MessageBox.Show(Window.GetWindow(this), "3Dデータを書き出しました。Androidで対象アルバムの3D画面から取り込んでください。\n音楽ファイルは含まれません。", "モバイル3D出力");
+                MessageBox.Show(Window.GetWindow(this), "3Dデータを書き出しました。音楽ファイルは含まれません。\nAndroidへの転送には「モバイル同期」を使用してください。", LocalizationService.Select(".glb出力", "Export .glb"));
             }
-            catch (Exception ex) { MessageBox.Show(Window.GetWindow(this), "書き出せませんでした: " + ex.Message, "モバイル3D出力"); }
+            catch (Exception ex) { MessageBox.Show(Window.GetWindow(this), "書き出せませんでした: " + ex.Message, LocalizationService.Select(".glb出力", "Export .glb")); }
         };
         toolbar.Children.Add(exportMobile);
+        if (_dxScene is not null)
+        {
+            var diagnostic = new Button
+            {
+                Content = "表示診断 ▾", Height = 25, Padding = new Thickness(8, 0, 8, 0),
+                Margin = new Thickness(3, 0, 3, 4), Foreground = Brushes.White,
+                Background = _discButton.Background, BorderBrush = _discButton.BorderBrush,
+                ToolTip = "Backの濃淡を調査します。選んだ部品だけを一時的に非表示にします。画像・設定は保存変更しません。"
+            };
+            var menu = new ContextMenu();
+            foreach (var (key, label) in new[] {
+                ("none", "通常表示に戻す"), ("frame", "背面枠だけ隠す"),
+                ("shell", "背面ケース・側壁だけ隠す"), ("tray", "トレイだけ隠す"),
+                ("front-panel", "フロント透明板だけ隠す"),
+                ("front-rails", "フロントのヒンジ・レールだけ隠す"),
+                ("front-clips", "フロントのジャケット留めだけ隠す") })
+            {
+                var option = new MenuItem { Header = label };
+                option.Click += (_, _) =>
+                {
+                    _backDiagnosticActive = key != "none";
+                    _dxScene.SetBackDiagnosticLayer(key);
+                    diagnostic.Content = key == "none" ? "表示診断 ▾" : "診断中：" + label;
+                };
+                menu.Items.Add(option);
+            }
+            diagnostic.Click += (_, _) => { menu.PlacementTarget = diagnostic; menu.IsOpen = true; };
+            toolbar.Children.Add(diagnostic);
+        }
         overlay.Children.Remove(_counterText);
         var toolbarHeader = new DockPanel { LastChildFill = true, VerticalAlignment = VerticalAlignment.Top };
         DockPanel.SetDock(_counterText, Dock.Right);
@@ -596,6 +627,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
         && ReferenceEquals(left.RightSpineCover, right.RightSpineCover)
         && ReferenceEquals(left.InlayCover, right.InlayCover)
         && ReferenceEquals(left.SpineCard, right.SpineCard)
+        && ReferenceEquals(left.SpineCardReverse, right.SpineCardReverse)
         && string.Equals(left.TrayColorMode, right.TrayColorMode, StringComparison.OrdinalIgnoreCase);
 
     public void SelectByKey(string key, bool notify = false)
@@ -1722,13 +1754,30 @@ public sealed partial class JewelCaseCoverFlow : Grid
 
     private async Task OpenBookletAsync()
     {
-        if (_isOpeningBooklet || _selectedIndex < 0 || _items[_selectedIndex].LoadBooklet is not { } loader) return;
+        if (_isOpeningBooklet || _isCaseTransitioning || !_isWrappingOpened
+            || _selectedIndex < 0 || _items[_selectedIndex].LoadBooklet is not { } loader) return;
         var key = SelectedKey;
         var title = _items[_selectedIndex].Title;
+        var restoreObi = HasSelectedSpineCard() && !_isSpineCardRemoved;
+        var caseWasOpen = _isCaseOpen;
+        var bookletScene = _dxScene;
+        var obiCleared = false;
         _isOpeningBooklet = true; IsEnabled = false; EndPointerDrag();
+        UpdateBookletButton();
         try
         {
             var booklet = await Task.Run(loader);
+            if (!IsLoaded || key != SelectedKey) return;
+            if (HasSelectedSpineCard())
+            {
+                if (!_isSpineCardRemoved && !await SetSpineCardRemovedAsync(true, true)) return;
+                if (!IsLoaded || key != SelectedKey) return;
+                if (bookletScene is not null)
+                {
+                    obiCleared = true;
+                    await bookletScene.MoveSpineCardForBookletAsync(true);
+                }
+            }
             if (!IsLoaded || key != SelectedKey) return;
             if (!_isCaseOpen)
             {
@@ -1750,10 +1799,23 @@ public sealed partial class JewelCaseCoverFlow : Grid
         {
             // Close the reader first so the user sees the real booklet aligned
             // with the empty lid, then slid back under its retaining tabs.
-            if (_dxScene is not null && IsLoaded && key == SelectedKey)
-                await _dxScene.AnimateBookletAsync(false);
-            _dxScene?.SetBookletRemoved(false, false);
+            if (IsLoaded && key == SelectedKey && ReferenceEquals(bookletScene, _dxScene))
+            {
+                if (bookletScene is not null)
+                {
+                    await bookletScene.AnimateBookletAsync(false);
+                    bookletScene.SetBookletRemoved(false, false);
+                }
+                // A fitted obi must only return after the lid is closed.
+                if (restoreObi && !caseWasOpen && _isCaseOpen)
+                    await SetCaseOpenAsync(false, true);
+                if (obiCleared && bookletScene is not null)
+                    await bookletScene.MoveSpineCardForBookletAsync(false);
+                if (restoreObi && !_isCaseOpen)
+                    await SetSpineCardRemovedAsync(false, true);
+            }
             _isOpeningBooklet = false; IsEnabled = true;
+            UpdateBookletButton();
             if (IsLoaded) Focus();
         }
     }
@@ -2054,6 +2116,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
                 _cutWrappingKeys.Remove(key);
             }
         }
+        if (!opened) ApplySpineCardRemoved(false, false);
         _dxScene?.SetWrappingOpened(opened, animate);
         UpdateWrappingButton();
         UpdateCaseOpenButton();
@@ -2114,7 +2177,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
         // Rewrapping is a single reversible operation. If the obi is still
         // lying beside the closed case, slide it back first instead of leaving
         // the restore button disabled with no obvious way forward.
-        if (!opened && _isSpineCardRemoved
+        if (!opened
             && !await SetSpineCardRemovedAsync(false, animate)) return false;
         _isCaseTransitioning = true;
         UpdateWrappingButton();
@@ -2242,6 +2305,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
 
     private void UpdateCaseOpenButton()
     {
+        UpdateBookletButton();
         _caseOpenButton.IsEnabled = !_isCaseTransitioning && (_isCaseOpen || _isWrappingOpened);
         _caseOpenButton.Opacity = _caseOpenButton.IsEnabled ? 1 : 0.48;
         _caseOpenButton.Content = _isCaseOpen
@@ -2264,6 +2328,18 @@ public sealed partial class JewelCaseCoverFlow : Grid
         _discButton.ToolTip = LocalizationService.Select(
             _isCaseOpen ? "CDを取り出す／戻す (D)。取り出したCDは左ドラッグで移動できます" : "先にケースを開いてください",
             _isCaseOpen ? "Remove/insert the CD (D). Left-drag an extracted CD to move it" : "Open the case first");
+    }
+
+    private void UpdateBookletButton()
+    {
+        _bookletButton.IsEnabled = _selectedIndex >= 0 && _selectedIndex < _items.Count
+            && _items[_selectedIndex].LoadBooklet is not null
+            && _isWrappingOpened && !_isCaseTransitioning && !_isOpeningBooklet;
+        _bookletButton.Opacity = _bookletButton.IsEnabled ? 1 : 0.48;
+        ToolTipService.SetShowOnDisabled(_bookletButton, true);
+        _bookletButton.ToolTip = !_isWrappingOpened
+            ? LocalizationService.Select("先にテープと透明フィルムを外してください", "Remove the tear tape and transparent film first")
+            : LocalizationService.Select("ジャケットを取り出して、Front・PAGE・ライナーノーツ・Front背面を閲覧", "Extract the booklet and browse Front, pages, liner notes and Inside Front");
     }
 
     private void UpdateSpineCardButton()

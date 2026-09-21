@@ -12,7 +12,7 @@ import java.util.zip.*;
 
 /** Small thumbnails only. Never extracts to the card; never decodes full-resolution images. */
 public final class ArtworkLoader {
-    private static final int LIMIT=8*1024*1024;
+    private static final int LIMIT=32*1024*1024;
     private static File caseFile(Context c,AlbumLibrary.Album album)throws Exception{return new File(new File(c.getFilesDir(),"cases3d"),jp.virtualcd.player.case3d.CasePackage.hash(album.uri.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))+".vcd3d");}
     public static String frontStamp(Context c,AlbumLibrary.Album album){try{var file=caseFile(c,album);return file.lastModified()+"|"+file.length();}catch(Exception ex){return "";}}
     private static Bitmap windowsFront(Context c,AlbumLibrary.Album album){
@@ -28,7 +28,7 @@ public final class ArtworkLoader {
         try {
             if(album.directory||!AudioFormats.archive(album.name)){
                 var pictures=listImages(context,album);pictures.sort(Comparator.comparingInt((ImageRef r)->score(r.name)).thenComparing(r->r.name));
-                int attempts=0;for(var picture:pictures){if(++attempts>8)break;try{Bitmap b=thumbnail(readDocument(context,picture.uri),mode);if(b!=null)return b;}catch(IOException ignored){}}
+                int attempts=0;for(var picture:pictures){if(++attempts>8)break;try{Bitmap b=documentImage(context,picture.uri,mode,384);if(b!=null)return b;}catch(IOException ignored){}}
                 AlbumLibrary.Album file=album;
                 if(album.directory){var files=AlbumLibrary.children(context,album.uri);files.sort(Comparator.comparing(a->AudioFormats.natural(a.name)));
                     file=null;for(var candidate:files)if(!candidate.directory&&AudioFormats.audio(candidate.name)){file=candidate;break;}if(file==null)return null;}
@@ -44,8 +44,7 @@ public final class ArtworkLoader {
                 for(var e:images){
                     if(Thread.currentThread().isInterrupted())return null;
                     if(e.length>LIMIT||e.packedLength>LIMIT||e.length==0||++attempted>8)continue;
-                    byte[] data=readImage(channel,e);
-                    Bitmap bitmap=thumbnail(data,mode);if(bitmap!=null)return bitmap;
+                    Bitmap bitmap=readImage(context,channel,e,mode,384);if(bitmap!=null)return bitmap;
                 }
                 // Embedded APIC artwork when the archive has no usable separate cover.
                 var track=StoredZipIndex.read(channel).get(0);
@@ -65,7 +64,7 @@ public final class ArtworkLoader {
         var result=new ArrayList<ImageRef>();
         if(album.directory){collectImages(context,album.uri,result,0,"");}
         else if(AudioFormats.archive(album.name)){
-            var fd=context.getContentResolver().openFileDescriptor(album.uri,"r");if(fd==null)throw new IOException("アルバムを開けません");
+            var fd=context.getContentResolver().openFileDescriptor(album.uri,"r");if(fd==null)throw new IOException(jp.virtualcd.player.LanguageStrings.text("アルバムを開けません","Unable to open album"));
             try(var input=new ParcelFileDescriptor.AutoCloseInputStream(fd)){for(var e:StoredZipIndex.readImages(input.getChannel()))result.add(new ImageRef(album.uri,e.name,e));}
         }
         result.sort(Comparator.comparing(r->AudioFormats.natural(r.name)));return result;
@@ -79,39 +78,69 @@ public final class ArtworkLoader {
         }
     }
     public static boolean imageFolder(String name){String lower=name.toLowerCase(Locale.ROOT);return lower.contains("ジャケ")||lower.contains("jacket")||lower.contains("歌詞")||lower.contains("art")||lower.contains("cover")||lower.contains("scan")||lower.contains("booklet")||lower.equals("image")||lower.equals("images")||lower.equals("画像");}
-    private static byte[] readDocument(Context context,android.net.Uri uri)throws IOException{
-        try(var input=context.getContentResolver().openInputStream(uri);var output=new ByteArrayOutputStream()){
-            if(input==null)throw new IOException("画像を開けません");byte[] chunk=new byte[8192];int n;
-            while((n=input.read(chunk))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();if(output.size()+n>LIMIT)throw new IOException("画像サイズ超過（8MBまで）");output.write(chunk,0,n);}return output.toByteArray();
+    private static Bitmap documentImage(Context context,android.net.Uri uri,String mode,int maxSize)throws IOException{
+        try(var input=context.getContentResolver().openInputStream(uri)){
+            if(input==null)throw new IOException(jp.virtualcd.player.LanguageStrings.text("画像を開けません","Unable to open image"));
+            return streamedImage(context,input,-1,mode,maxSize);
         }
     }
     public static Bitmap galleryImage(Context context,ImageRef image)throws IOException{
-        return image.entry==null?thumbnail(readDocument(context,image.uri),"full",1600):galleryImage(context,image.uri,image.entry);
+        return image.entry==null?documentImage(context,image.uri,"full",1600):galleryImage(context,image.uri,image.entry);
     }
     public static Bitmap galleryImage(Context context,android.net.Uri document,StoredZipIndex.Entry entry) throws IOException {
-        var fd=context.getContentResolver().openFileDescriptor(document,"r");if(fd==null)throw new IOException("画像を開けません");
+        var fd=context.getContentResolver().openFileDescriptor(document,"r");if(fd==null)throw new IOException(jp.virtualcd.player.LanguageStrings.text("画像を開けません","Unable to open image"));
         try(var input=new ParcelFileDescriptor.AutoCloseInputStream(fd)){
-            return thumbnail(readImage(input.getChannel(),entry),"full",1600);
+            return readImage(context,input.getChannel(),entry,"full",1600);
         }
     }
-    private static byte[] readImage(java.nio.channels.FileChannel channel,StoredZipIndex.Entry e) throws IOException {
-        if(e.length>LIMIT||e.packedLength>LIMIT)throw new IOException("8MBを超える画像は現在の試作では表示できません");
-        byte[] packed=new byte[(int)e.packedLength];var buffer=ByteBuffer.wrap(packed);
-        while(buffer.hasRemaining()){if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();int n=channel.read(buffer,e.offset+buffer.position());if(n<=0)throw new EOFException();}
-        if(e.method!=8)return packed;
+    private static Bitmap readImage(Context context,java.nio.channels.FileChannel channel,StoredZipIndex.Entry e,String mode,int maxSize) throws IOException {
+        if(e.length>LIMIT||e.packedLength>LIMIT)throw new IOException(jp.virtualcd.player.LanguageStrings.text("画像サイズ超過（32MBまで）","Image exceeds size limit (32 MB)"));
+        if(e.length<0||e.packedLength<0||e.offset<0||e.offset>channel.size()-e.packedLength||(e.method!=0&&e.method!=8))throw new IOException(jp.virtualcd.player.LanguageStrings.text("画像のZIP情報が不正です","Invalid image ZIP header"));
+        InputStream packed=new InputStream(){
+            long position;
+            @Override public int read()throws IOException{byte[] one=new byte[1];return read(one,0,1)<0?-1:one[0]&255;}
+            @Override public int read(byte[] b,int off,int len)throws IOException{
+                if(len==0)return 0;if(position==e.packedLength)return -1;
+                int n=channel.read(ByteBuffer.wrap(b,off,(int)Math.min(len,e.packedLength-position)),e.offset+position);
+                if(n<=0)throw new EOFException(jp.virtualcd.player.LanguageStrings.text("画像が途中で途切れています","Image is truncated"));position+=n;return n;
+            }
+        };
+        if(e.method==0)return streamedImage(context,packed,e.length,mode,maxSize);
         var inflater=new Inflater(true);
-        try(var decoded=new InflaterInputStream(new ByteArrayInputStream(packed),inflater);var output=new ByteArrayOutputStream()){
-            byte[] chunk=new byte[8192];int n;
-            while((n=decoded.read(chunk))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();if(output.size()+n>LIMIT||output.size()+n>e.length)throw new IOException("画像サイズ超過");output.write(chunk,0,n);}
-            return output.toByteArray();
+        try(var decoded=new InflaterInputStream(packed,inflater)){
+            return streamedImage(context,decoded,e.length,mode,maxSize);
         }finally{inflater.end();}
+    }
+    // Spool encoded bytes to private cache, not the SD card or a large heap buffer.
+    // Validate the entire stream before decoding; BitmapFactory can swallow IO errors.
+    private static Bitmap streamedImage(Context context,InputStream input,long expected,String mode,int maxSize)throws IOException{
+        File temporary=File.createTempFile("artwork-",".tmp",context.getCacheDir());
+        try{
+            try(var output=new FileOutputStream(temporary)){
+                byte[] chunk=new byte[32768];long total=0;int n;
+                while((n=input.read(chunk))!=-1){
+                    if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();
+                    total+=n;if(total>LIMIT)throw new IOException(jp.virtualcd.player.LanguageStrings.text("画像サイズ超過（32MBまで）","Image exceeds size limit (32 MB)"));
+                    if(expected>=0&&total>expected)throw new IOException(jp.virtualcd.player.LanguageStrings.text("画像の展開サイズが不正です","Invalid decompressed image size"));
+                    output.write(chunk,0,n);
+                }
+                if(expected>=0&&total!=expected)throw new EOFException(jp.virtualcd.player.LanguageStrings.text("画像が途中で途切れています","Image is truncated"));
+            }
+            var options=new BitmapFactory.Options();options.inJustDecodeBounds=true;
+            BitmapFactory.decodeFile(temporary.getAbsolutePath(),options);
+            if(options.outWidth<=0||options.outHeight<=0)return null;
+            options.inSampleSize=1;
+            while(Math.max(options.outWidth,options.outHeight)/options.inSampleSize>maxSize*2)options.inSampleSize*=2;
+            options.inJustDecodeBounds=false;options.inPreferredConfig=Bitmap.Config.RGB_565;
+            return resize(BitmapFactory.decodeFile(temporary.getAbsolutePath(),options),mode,maxSize);
+        }finally{temporary.delete();}
     }
     private static int score(String name){
         String s=name.substring(name.lastIndexOf('/')+1).toLowerCase(Locale.ROOT);
-        if(s.contains("back")||s.contains("rear")||s.contains("裏")||s.contains("背面")||s.contains("バック"))return 100;
+        if(s.contains("back")||s.contains("rear")||s.contains(jp.virtualcd.player.LanguageStrings.text("裏","Reverse"))||s.contains(jp.virtualcd.player.LanguageStrings.text("背面","Back cover"))||s.contains(jp.virtualcd.player.LanguageStrings.text("バック","Back")))return 100;
         if(s.contains("front"))return 0;
-        if(s.contains("cover")||s.contains("folder")||s.contains("表紙")||s.contains("ジャケ"))return 1;
-        if(s.contains("disc")||s.contains("cd")||s.contains("booklet")||s.contains("レーベル"))return 50;
+        if(s.contains("cover")||s.contains("folder")||s.contains(jp.virtualcd.player.LanguageStrings.text("表紙","Front cover"))||s.contains(jp.virtualcd.player.LanguageStrings.text("ジャケ","jacket")))return 1;
+        if(s.contains("disc")||s.contains("cd")||s.contains("booklet")||s.contains(jp.virtualcd.player.LanguageStrings.text("レーベル","Disc label")))return 50;
         return 10;
     }
     private static Bitmap thumbnail(byte[] data,String mode){
@@ -124,7 +153,10 @@ public final class ArtworkLoader {
         options.inSampleSize=1;
         while(Math.max(options.outWidth,options.outHeight)/options.inSampleSize>maxSize*2)options.inSampleSize*=2;
         options.inJustDecodeBounds=false;options.inPreferredConfig=Bitmap.Config.RGB_565;
-        Bitmap bitmap=BitmapFactory.decodeByteArray(data,0,data.length,options);if(bitmap==null)return null;
+        return resize(BitmapFactory.decodeByteArray(data,0,data.length,options),mode,maxSize);
+    }
+    private static Bitmap resize(Bitmap bitmap,String mode,int maxSize){
+        if(bitmap==null)return null;
         int[] r=ThumbnailLayout.region(bitmap.getWidth(),bitmap.getHeight(),mode);
         Bitmap cropped=Bitmap.createBitmap(bitmap,r[0],r[1],r[2],r[3]);
         if(cropped!=bitmap){bitmap.recycle();bitmap=cropped;}

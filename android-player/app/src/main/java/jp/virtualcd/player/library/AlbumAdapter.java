@@ -26,20 +26,24 @@ public final class AlbumAdapter extends BaseAdapter implements AutoCloseable {
     private int sortGeneration;
     private String filterText="";
     private boolean artistOrder;
+    private boolean recentOrder;
     private List<AlbumLibrary.Album> all=Collections.emptyList(),shown=Collections.emptyList();
     private boolean closed;
-    public AlbumAdapter(Context c){context=c;listening=new ListeningState(c);sortPrefs=c.getSharedPreferences("album-order",0);artistPrefs=c.getSharedPreferences("album-artist-index",0);artistOrder=sortPrefs.getBoolean("artist",false);}
+    public AlbumAdapter(Context c){context=c;listening=new ListeningState(c);sortPrefs=c.getSharedPreferences("album-order",0);artistPrefs=c.getSharedPreferences("album-artist-index",0);int order=sortPrefs.getInt("order",sortPrefs.getBoolean("artist",false)?1:0);artistOrder=order==1;recentOrder=order==2;}
+    public int order(){return recentOrder?2:artistOrder?1:0;}
+    public void setOrder(int value){artistOrder=value==1;recentOrder=value==2;sortPrefs.edit().putInt("order",value).putBoolean("artist",artistOrder).apply();filter(filterText);indexArtists();}
     public boolean isArtistOrder(){return artistOrder;}
-    public void setArtistOrder(boolean value){artistOrder=value;sortPrefs.edit().putBoolean("artist",value).apply();filter(filterText);indexArtists();}
-    public void setAlbums(List<AlbumLibrary.Album> albums,String filter){all=new ArrayList<>(albums);formats.clear();for(var album:all){String cached=artistPrefs.getString(album.key(),null);if(cached!=null)artists.put(album.key(),cached);}filter(filter);indexArtists();}
+    public void setArtistOrder(boolean value){setOrder(value?1:0);}
+    public void setAlbums(List<AlbumLibrary.Album> albums,String filter){AlbumAddedOrder.observe(context,albums,false);all=new ArrayList<>(albums);formats.clear();for(var album:all){String cached=artistPrefs.getString(album.key(),null);if(cached!=null)artists.put(album.key(),cached);}filter(filter);indexArtists();}
     public void filter(String text){filterText=text;String q=text.trim().toLowerCase(Locale.ROOT);var list=new ArrayList<AlbumLibrary.Album>();for(var a:all)if(a.name.toLowerCase(Locale.ROOT).contains(q))list.add(a);
         var collator=java.text.Collator.getInstance(Locale.JAPANESE);collator.setStrength(java.text.Collator.SECONDARY);
         // Freeze keys during a sort: background metadata reads must not change comparator results.
         var keys=new HashMap<>(artists);
-        list.sort((a,b)->{int order=0;if(artistOrder){String aa=artistKey(keys.get(a.key())),bb=artistKey(keys.get(b.key()));order=Boolean.compare(aa.isEmpty(),bb.isEmpty());if(order==0)order=collator.compare(aa,bb);}
+        var added=new HashMap<String,Long>();if(recentOrder)for(var album:list)added.put(album.uri.toString(),AlbumAddedOrder.get(context,album));
+        list.sort((a,b)->{int order=recentOrder?Long.compare(added.get(b.uri.toString()),added.get(a.uri.toString())):0;if(artistOrder){String aa=artistKey(keys.get(a.key())),bb=artistKey(keys.get(b.key()));order=Boolean.compare(aa.isEmpty(),bb.isEmpty());if(order==0)order=collator.compare(aa,bb);}
             if(order==0)order=collator.compare(AudioFormats.natural(a.title()),AudioFormats.natural(b.title()));return order==0?a.uri.toString().compareTo(b.uri.toString()):order;});
         shown=list;notifyDataSetChanged();}
-    private static String artistKey(String value){return value==null||value.startsWith("アーティスト情報")?"":java.text.Normalizer.normalize(value.trim(),java.text.Normalizer.Form.NFKC);}
+    private static String artistKey(String value){return value==null||(value.startsWith("アーティスト情報")||value.startsWith("Artist information"))?"":java.text.Normalizer.normalize(value.trim(),java.text.Normalizer.Form.NFKC);}
     private void indexArtists(){
         int generation=++sortGeneration;if(sortJob!=null)sortJob.cancel(true);
         if(!artistOrder||closed)return;var snapshot=new ArrayList<>(all);
@@ -58,10 +62,10 @@ public final class AlbumAdapter extends BaseAdapter implements AutoCloseable {
     public void chooseThumbnail(int position){
         var album=getItem(position);var prefs=context.getSharedPreferences("thumbnail-layout",Context.MODE_PRIVATE);
         String[] modes={"auto","right","left","full"};String current=prefs.getString(album.uri.toString(),"auto");
-        new android.app.AlertDialog.Builder(context).setTitle("表紙の表示範囲")
-            .setSingleChoiceItems(new String[]{"自動（見開きは右側）","右側を表紙にする","左側を表紙にする","画像全体"},Arrays.asList(modes).indexOf(current),(dialog,index)->{
+        new android.app.AlertDialog.Builder(context).setTitle(jp.virtualcd.player.LanguageStrings.text("表紙の表示範囲","Cover display area"))
+            .setSingleChoiceItems(new String[]{jp.virtualcd.player.LanguageStrings.text("自動（見開きは右側）","Auto (right half of spreads)"),jp.virtualcd.player.LanguageStrings.text("右側を表紙にする","Use right half as cover"),jp.virtualcd.player.LanguageStrings.text("左側を表紙にする","Use left half as cover"),jp.virtualcd.player.LanguageStrings.text("画像全体","Entire image")},Arrays.asList(modes).indexOf(current),(dialog,index)->{
                 prefs.edit().putString(album.uri.toString(),modes[index]).apply();notifyDataSetChanged();dialog.dismiss();
-            }).setNegativeButton("キャンセル",null).show();
+            }).setNegativeButton(jp.virtualcd.player.LanguageStrings.text("キャンセル","Cancel"),null).show();
     }
     private static class Row { ImageView image;TextView name,artist,detail,badge;Button star;String key;Future<?> job; }
     public View getView(int position,View recycled,ViewGroup parent){
@@ -75,17 +79,17 @@ public final class AlbumAdapter extends BaseAdapter implements AutoCloseable {
             row.artist=new TextView(context);row.artist.setTextColor(0xffc4d3df);row.artist.setTextSize(13);row.artist.setMaxLines(2);row.artist.setEllipsize(android.text.TextUtils.TruncateAt.END);labels.addView(row.artist);
             var infoLine=new LinearLayout(context);infoLine.setGravity(Gravity.CENTER_VERTICAL);labels.addView(infoLine);
             row.detail=new TextView(context);row.detail.setTextColor(0xff99b5c9);row.detail.setTextSize(12);infoLine.addView(row.detail,new LinearLayout.LayoutParams(0,-2,1));
-            row.badge=new TextView(context);row.badge.setText("3D");row.badge.setTextSize(11);row.badge.setTextColor(0xff72d9ca);row.badge.setPadding(dp(4),0,dp(4),0);row.badge.setContentDescription("3Dデータ取込済み");infoLine.addView(row.badge);
+            row.badge=new TextView(context);row.badge.setText("3D");row.badge.setTextSize(11);row.badge.setTextColor(0xff72d9ca);row.badge.setPadding(dp(4),0,dp(4),0);row.badge.setContentDescription(jp.virtualcd.player.LanguageStrings.text("3Dデータ取込済み","3D data imported"));infoLine.addView(row.badge);
             layout.addView(labels,new LinearLayout.LayoutParams(0,-2,1));row.star=FavoriteButton.create(context);layout.addView(row.star,new LinearLayout.LayoutParams(dp(48),dp(48)));layout.setTag(row);recycled=layout;
         }else row=(Row)recycled.getTag();
         if(row.job!=null){row.job.cancel(false);worker.purge();}
         var album=getItem(position);String mode=context.getSharedPreferences("thumbnail-layout",Context.MODE_PRIVATE).getString(album.uri.toString(),"auto");
         String key=album.key()+"|"+mode+"|"+ArtworkLoader.frontStamp(context,album);row.key=key;row.name.setText(album.title());setDetail(row,album,formats.get(album.key()));
         row.badge.setVisibility(AlbumIndicators.has3d(context,album)?View.VISIBLE:View.GONE);
-        String artist=artists.get(album.key());row.artist.setText(artist==null?"アーティスト読込中…":artist.isEmpty()?"アーティスト情報なし":artist);
+        String artist=artists.get(album.key());row.artist.setText(artist==null?jp.virtualcd.player.LanguageStrings.text("アーティスト読込中…","Loading artist…"):artist.isEmpty()?jp.virtualcd.player.LanguageStrings.text("アーティスト情報なし","No artist information"):artist);
         FavoriteButton.bind(row.star,listening.contains("favoriteAlbums",album.uri.toString()),album.title());
         row.star.setOnClickListener(v->{try{listening.toggle("favoriteAlbums",new org.json.JSONObject().put("id",album.uri.toString()).put("source",album.uri.toString()).put("title",album.title()));notifyDataSetChanged();}
-            catch(org.json.JSONException error){Toast.makeText(context,"お気に入りを保存できません",Toast.LENGTH_SHORT).show();}});
+            catch(org.json.JSONException error){Toast.makeText(context,jp.virtualcd.player.LanguageStrings.text("お気に入りを保存できません","Unable to save favorites"),Toast.LENGTH_SHORT).show();}});
         Bitmap bitmap=cache.get(key);row.image.setImageResource(R.drawable.ic_album);
         if(bitmap!=null)row.image.setImageBitmap(bitmap);
         if(!closed&&(formats.get(album.key())==null||artist==null||(bitmap==null&&!missing.contains(key)))){final Row target=row;row.job=worker.submit(()->{
@@ -94,7 +98,7 @@ public final class AlbumAdapter extends BaseAdapter implements AutoCloseable {
             String loadedArtist=artists.get(album.key());
             if(loadedArtist==null){
                 try{var saved=AlbumTagCache.read(context,album.uri);loadedArtist=saved!=null?saved.album.artist:AlbumTracks.readArtist(context,album);if(loadedArtist==null)loadedArtist="";artists.put(album.key(),loadedArtist);artistPrefs.edit().putString(album.key(),loadedArtist).apply();}
-                catch(Exception error){loadedArtist="アーティスト情報を取得できません";}
+                catch(Exception error){loadedArtist=jp.virtualcd.player.LanguageStrings.text("アーティスト情報を取得できません","Unable to load artist information");}
             }
             final String label=loadedArtist;
             handler.post(()->{if(!closed&&key.equals(target.key))target.artist.setText(label);});
@@ -109,6 +113,6 @@ public final class AlbumAdapter extends BaseAdapter implements AutoCloseable {
     private int dp(int value){return (int)(value*context.getResources().getDisplayMetrics().density);}
     private void setDetail(Row row,AlbumLibrary.Album album,AlbumIndicators.Info info){String container=album.directory?"DIR":AudioFormats.archive(album.name)?"ZIP":"";String format=info==null?null:info.formats;
         String label=container+(format==null||format.isEmpty()?"":(container.isEmpty()?"":" · ")+format);
-        row.detail.setText(String.format(Locale.ROOT,"%s · %s曲\n%.1f MB",label,info==null||info.count<0?"—":String.valueOf(info.count),album.size/1048576.0));}
+        row.detail.setText(String.format(Locale.ROOT,jp.virtualcd.player.LanguageStrings.text("%s · %s曲\n%.1f MB","%s · %s tracks\n%.1f MB"),label,info==null||info.count<0?"—":String.valueOf(info.count),album.size/1048576.0));}
     public void close(){closed=true;sortGeneration++;sortWorker.shutdownNow();worker.shutdownNow();handler.removeCallbacksAndMessages(null);cache.evictAll();}
 }

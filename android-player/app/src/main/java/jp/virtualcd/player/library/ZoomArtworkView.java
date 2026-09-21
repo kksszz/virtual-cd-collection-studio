@@ -17,7 +17,7 @@ public final class ZoomArtworkView extends ImageView {
     private Runnable toggle=()->{};
     private java.util.function.IntConsumer page=direction->{};
     public ZoomArtworkView(Context context){
-        super(context);setScaleType(ScaleType.MATRIX);setContentDescription("アルバム画像。左右スワイプでページ切替、ピンチまたはダブルタップで拡大、タップで操作表示");
+        super(context);setScaleType(ScaleType.MATRIX);setContentDescription(jp.virtualcd.player.LanguageStrings.text("アルバム画像。左右スワイプでページ切替、ピンチまたはダブルタップで拡大、タップで操作表示","Album artwork. Swipe for pages, pinch or double tap to zoom, tap for controls."));
         pinch=new ScaleGestureDetector(context,new ScaleGestureDetector.SimpleOnScaleGestureListener(){
             @Override public boolean onScale(ScaleGestureDetector detector){zoomTo(zoom*detector.getScaleFactor(),detector.getFocusX(),detector.getFocusY());return true;}
         });

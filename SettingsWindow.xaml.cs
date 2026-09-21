@@ -9,6 +9,7 @@ public partial class SettingsWindow : Window
 {
     private readonly ObservableCollection<MusicFolderOption> _folders;
     private readonly string _dataDirectory;
+    private bool _clearingArtworkCache;
     internal IReadOnlyList<ZipAlbum> LibraryAlbums { get; init; } = [];
     private readonly CancellationTokenSource _sizeCancellation = new();
     private LibrarySizeSummary? _sizeSummary;
@@ -58,6 +59,27 @@ public partial class SettingsWindow : Window
         UpdateCount();
         Loaded += async (_, _) => await RefreshLibrarySizeAsync();
         Closed += (_, _) => _sizeCancellation.Cancel();
+        Closing+=(_,e)=>{if(_clearingArtworkCache)e.Cancel=true;};
+    }
+
+    private async void ClearArtworkCache_Click(object sender,RoutedEventArgs e)
+    {
+        if(_clearingArtworkCache)return;
+        if(MessageBox.Show(this,LocalizationService.Select(
+            "保存済みの画像サムネイルキャッシュを削除しますか？\n\n元画像・取得画像・音楽・お気に入り・設定は削除しません。\n表示中の画像を読み直すには、削除後にアプリを再起動してください。\nこの操作は設定画面のキャンセルでは取り消されません。",
+            "Delete saved image thumbnails?\n\nOriginal/downloaded artwork, music, favorites and settings will remain.\nRestart the app afterwards to reload images held in memory.\nCanceling Settings will not undo this operation."),
+            LocalizationService.Select("画像キャッシュの削除","Clear image cache"),MessageBoxButton.YesNo,MessageBoxImage.Question,MessageBoxResult.No)!=MessageBoxResult.Yes)return;
+        _clearingArtworkCache=true;ClearArtworkCacheButton.IsEnabled=false;
+        ArtworkCacheStatus.Text=LocalizationService.Select("キャッシュを削除しています…","Clearing cache…");
+        try{
+            var result=await Task.Run(()=>ArtworkThumbnailCache.Clear(_dataDirectory));
+            ArtworkCacheStatus.Text=LocalizationService.Select(
+                $"{result.Deleted}件（{result.Bytes/1048576d:F1} MiB）を削除しました。アプリを再起動してください。",
+                $"Deleted {result.Deleted} files ({result.Bytes/1048576d:F1} MiB). Please restart the app.");
+            if(result.Failed>0)ArtworkCacheStatus.Text+=LocalizationService.Select($"\n{result.Failed}件は使用中などの理由で削除できませんでした。",$"\nCould not delete {result.Failed} files; they may be in use.");
+        }
+        catch(Exception ex){ArtworkCacheStatus.Text=LocalizationService.Select("削除に失敗しました: ","Unable to clear cache: ")+ex.Message;}
+        finally{_clearingArtworkCache=false;ClearArtworkCacheButton.IsEnabled=true;}
     }
 
     private async void LibrarySizeRefresh_Click(object sender, RoutedEventArgs e) => await RefreshLibrarySizeAsync();

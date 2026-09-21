@@ -13,6 +13,14 @@ import static android.opengl.EGL14.*;
 import static android.opengl.GLES20.*;
 
 final class CaseDeviceChecks {
+    static void runDesktop(Instrumentation test)throws Exception {
+        byte[] bytes;try(var input=new FileInputStream(new File(test.getTargetContext().getCacheDir(),"desktop-check.glb"))){bytes=CasePackage.readBytes(input,CasePackage.MAX_BYTES);}
+        try(CasePackage data=CasePackage.parse(bytes)){
+            if(!data.desktopGeometry||!data.images.containsKey("front"))throw new AssertionError("Desktop profile/images");
+            render(test,data);
+        }
+        for(String mode:new String[]{"range","count","uri","profile","required"})reject(breakGlb(bytes,mode));
+    }
     static void runGlb(Instrumentation test)throws Exception {
         runGlb(test,false);
     }
@@ -100,6 +108,9 @@ final class CaseDeviceChecks {
             test.runOnMainSync(()->{touch(view,time+100,time+100,0);touch(view,time+100,time+130,1);});barrier(view);
             if(yaw.getFloat(view)!=-20||pitch.getFloat(view)!=12||zoom.getFloat(view)!=1||target.getFloat(view)!=0)throw new AssertionError("Double tap reset");
             settle(view);if(open.getFloat(view)!=0||value(view,"discRemoved")!=0)throw new AssertionError("Reset closure");
+            if(data.desktopGeometry){long started=System.nanoTime();for(int frame=0;frame<60;frame++){yaw.setFloat(view,-30+frame);view.onDrawFrame(null);glFinish();}android.util.Log.i("DesktopModelQA","GPU frame average ms="+(System.nanoTime()-started)/60000000.0);view.reset();barrier(view);settle(view);}
+            for(float side:new float[]{-90,90}){yaw.setFloat(view,side);pitch.setFloat(view,0);view.onDrawFrame(null);save(test,capture(),side<0?"case3d-spine-left.png":"case3d-spine-right.png");}
+            view.reset();barrier(view);settle(view);
             test.runOnMainSync(()->wheel(view,1));barrier(view);if(value(view,"zoom")<=1)throw new AssertionError("Mouse wheel zoom in");
             test.runOnMainSync(()->wheel(view,-1));barrier(view);if(Math.abs(value(view,"zoom")-1)>.001f)throw new AssertionError("Mouse wheel zoom out");
             test.runOnMainSync(()->wheel(view,100));barrier(view);if(value(view,"zoom")!=3)throw new AssertionError("Mouse wheel upper bound");

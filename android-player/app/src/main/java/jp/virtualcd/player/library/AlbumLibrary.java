@@ -24,7 +24,7 @@ public final class AlbumLibrary {
     public interface Progress { void update(int albums); }
     public static Album describe(Context context,Uri uri)throws IOException{
         try(var c=context.getContentResolver().query(uri,new String[]{DocumentsContract.Document.COLUMN_DISPLAY_NAME,DocumentsContract.Document.COLUMN_SIZE,DocumentsContract.Document.COLUMN_LAST_MODIFIED,DocumentsContract.Document.COLUMN_MIME_TYPE},null,null,null)){
-            if(c==null||!c.moveToFirst())throw new IOException("ファイル情報を取得できません");
+            if(c==null||!c.moveToFirst())throw new IOException(jp.virtualcd.player.LanguageStrings.text("ファイル情報を取得できません","Unable to get file information"));
             return new Album(uri,c.getString(0),c.getLong(1),c.getLong(2),DocumentsContract.Document.MIME_TYPE_DIR.equals(c.getString(3)));
         }
     }
@@ -32,7 +32,7 @@ public final class AlbumLibrary {
         var result=new ArrayList<Album>();
         Uri children=DocumentsContract.buildChildDocumentsUriUsingTree(directory,DocumentsContract.getDocumentId(directory));
         try(var c=context.getContentResolver().query(children,new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,DocumentsContract.Document.COLUMN_DISPLAY_NAME,DocumentsContract.Document.COLUMN_SIZE,DocumentsContract.Document.COLUMN_LAST_MODIFIED,DocumentsContract.Document.COLUMN_MIME_TYPE},null,null,null)){
-            if(c==null)throw new IOException("フォルダーを開けません");
+            if(c==null)throw new IOException(jp.virtualcd.player.LanguageStrings.text("フォルダーを開けません","Unable to open folder"));
             while(c.moveToNext()){
                 if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();
                 result.add(new Album(DocumentsContract.buildDocumentUriUsingTree(directory,c.getString(0)),c.getString(1),c.getLong(2),c.getLong(3),DocumentsContract.Document.MIME_TYPE_DIR.equals(c.getString(4))));
@@ -49,7 +49,7 @@ public final class AlbumLibrary {
             String id=pending.removeFirst();if(!visited.add(id))continue;
             long audioSize=0,modified=0;int audioCount=0;
             try(var c=context.getContentResolver().query(DocumentsContract.buildChildDocumentsUriUsingTree(tree,id),columns,null,null,null)){
-                if(c==null)throw new IOException("フォルダーを読み取れません");
+                if(c==null)throw new IOException(jp.virtualcd.player.LanguageStrings.text("フォルダーを読み取れません","Unable to read folder"));
                 while(c.moveToNext()){
                     if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();
                     String child=c.getString(0),name=c.getString(1),mime=c.getString(2);
@@ -62,7 +62,7 @@ public final class AlbumLibrary {
             }
             if(audioCount>0){Uri folder=DocumentsContract.buildDocumentUriUsingTree(tree,id);Album info=describe(context,folder);result.add(new Album(folder,info.name,audioSize,modified,true));}
             Uri syncRoot=DocumentsContract.buildDocumentUriUsingTree(tree,id);
-            try{result.addAll(MobileSync.read(context,syncRoot));}catch(java.io.InterruptedIOException ex){throw ex;}catch(Exception ex){result.addAll(MobileSync.cached(context,syncRoot));android.util.Log.w("MobileSync","同期データは未反映です",ex);}
+            try{result.addAll(MobileSync.read(context,syncRoot));}catch(java.io.InterruptedIOException ex){throw ex;}catch(Exception ex){result.addAll(MobileSync.cached(context,syncRoot));android.util.Log.w("MobileSync",jp.virtualcd.player.LanguageStrings.text("同期データは未反映です","Sync data has not been applied"),ex);}
             progress.update(result.size());
         }
         var unique=new LinkedHashMap<String,Album>();for(var album:result)unique.put(album.uri.toString(),album);result=new ArrayList<>(unique.values());
@@ -70,6 +70,7 @@ public final class AlbumLibrary {
     }
     private static AtomicFile index(Context c){return new AtomicFile(new File(c.getFilesDir(),"albums-v1.json"));}
     public static void save(Context context,Uri tree,List<Album> albums) throws Exception {
+        AlbumAddedOrder.observe(context,albums,false);
         var array=new JSONArray();for(var a:albums)array.put(new JSONObject().put("uri",a.uri.toString()).put("name",a.name).put("size",a.size).put("modified",a.modified).put("directory",a.directory));
         byte[] bytes=new JSONObject().put("tree",tree.toString()).put("albums",array).toString().getBytes(StandardCharsets.UTF_8);
         var file=index(context);FileOutputStream out=null;
@@ -81,6 +82,7 @@ public final class AlbumLibrary {
         if(!root.getString("tree").equals(tree.toString()))return Collections.emptyList();
         var array=root.getJSONArray("albums");var result=new ArrayList<Album>();
         for(int i=0;i<array.length();i++){var a=array.getJSONObject(i);result.add(new Album(Uri.parse(a.getString("uri")),a.getString("name"),a.getLong("size"),a.getLong("modified"),a.optBoolean("directory",false)));}
+        AlbumAddedOrder.observe(context,result,true);
         return result;
     }
 }

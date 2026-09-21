@@ -4,7 +4,7 @@
         xmlns:local="clr-namespace:ZipMp3Player"
         Title="Virtual CD Collection Studio" Icon="Assets/AppIcon.ico" Width="1400" Height="760" MinWidth="1050" MinHeight="560"
         Background="#15171B" Foreground="#F2F3F5" AllowDrop="True"
-        Drop="Window_Drop" DragOver="Window_DragOver" KeyDown="Window_KeyDown" Closing="Window_Closing">
+        Drop="Window_Drop" DragOver="Window_DragOver" PreviewKeyDown="Window_SavePreviewKeyDown" KeyDown="Window_KeyDown" Closing="Window_Closing">
   <Window.Resources>
     <BooleanToVisibilityConverter x:Key="ToolbarVisibilityConverter"/>
     <Style TargetType="Button">
@@ -252,6 +252,7 @@
               <ComboBoxItem Content="アーティスト順" Tag="Artist"/>
               <ComboBoxItem Content="アルバム名順" Tag="Album"/>
               <ComboBoxItem Content="アーティストツリー" Tag="ArtistTree"/>
+              <ComboBoxItem Content="最近追加した順" Tag="RecentlyAdded"/>
             </ComboBox>
           </Grid>
           <Grid>
@@ -475,6 +476,7 @@
         <ContextMenu Opened="TrackContextMenu_Opened">
           <MenuItem Header="アルバムのタグを編集…" Click="EditTrackTags_Click" InputGestureText="Ctrl+E"/>
           <MenuItem Header="CUEの曲情報を取得…" Click="ImportCueMetadata_Click"/>
+          <MenuItem x:Name="TrackYouTubeMenuItem" Header="YouTubeで動画を検索" Click="SearchTrackYouTube_Click"/>
           <Separator/>
           <MenuItem x:Name="TrackPropertiesMenuItem" Header="プロパティ" Click="TrackProperties_Click"/>
         </ContextMenu>
@@ -552,6 +554,9 @@
               <Button x:Name="Album3DViewButton" Content="3Dビュー" Margin="6,0,0,0" Padding="10,3"
                       Click="ShowAlbum3DFullScreen_Click"
                       ToolTip="選択アルバムの3D CDケースをフルスクリーンで表示"/>
+              <Button x:Name="AlbumBookletButton" Content="ブックレット閲覧" Margin="6,0,0,0" Padding="10,3"
+                      Click="ShowAlbumBooklet_Click" IsEnabled="False" ToolTipService.ShowOnDisabled="True"
+                      ToolTip="ブックレットを直接開きます"/>
               </WrapPanel>
               <WrapPanel Margin="0,4,0,0" Visibility="{Binding IsChecked, ElementName=ImageLyricsActionsToggle, Converter={StaticResource ToolbarVisibilityConverter}}">
               <Button Content="Google画像" Margin="1" Padding="9,4"
@@ -570,14 +575,14 @@
                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
               </Grid>
             </Border>
-            <WrapPanel x:Name="ImageNavigationPanel" Grid.Row="2" Margin="0,8,0,3" Orientation="Horizontal" HorizontalAlignment="Center">
+            <WrapPanel x:Name="ImageNavigationPanel" Grid.Row="2" Margin="0,8,0,3" Orientation="Horizontal" HorizontalAlignment="Left">
               <Button x:Name="PreviousImageButton" Content="◀" Padding="10,4" Click="PreviousImage_Click" IsEnabled="False"/>
               <TextBlock x:Name="AlbumImageCountText" Text="0 / 0" Width="62" HorizontalAlignment="Center" TextAlignment="Center"/>
               <Button x:Name="NextImageButton" Content="▶" Padding="10,4" Click="NextImage_Click" IsEnabled="False"/>
               <Button x:Name="RotateAlbumImageLeftButton" Content="↶" AutomationProperties.Name="画像を左へ90度回転" Padding="8,4" Margin="7,0,1,0"
-                      Click="RotateAlbumImageLeft_Click" IsEnabled="False" ToolTip="選択画像を左へ90度回転して保存"/>
+                      Click="RotateAlbumImageLeft_Click" IsEnabled="False" Visibility="Collapsed" ToolTip="左へ90度回転（別の画像へ移るときにファイルへ保存）"/>
               <Button x:Name="RotateAlbumImageRightButton" Content="↷" AutomationProperties.Name="画像を右へ90度回転" Padding="8,4" Margin="1,0"
-                      Click="RotateAlbumImageRight_Click" IsEnabled="False" ToolTip="選択画像を右へ90度回転して保存"/>
+                      Click="RotateAlbumImageRight_Click" IsEnabled="False" Visibility="Collapsed" ToolTip="右へ90度回転（別の画像へ移るときにファイルへ保存）"/>
               <TextBlock Text="用途" Margin="9,0,3,0" VerticalAlignment="Center" Foreground="#A6AFBB"/>
               <ComboBox x:Name="ArtworkRoleCombo" Width="196" Height="27" SelectedIndex="0"
                         SelectionChanged="ArtworkRole_Changed" ToolTip="3D CDケースでの画像の割り当て">
@@ -600,10 +605,11 @@
                 <ComboBoxItem Content="Flyer" Tag="Flyer"/>
                 <ComboBoxItem Content="Poster" Tag="Poster"/>
                 <ComboBoxItem Content="Spine Card（帯）" Tag="SpineCard"/>
+                <ComboBoxItem Content="Spine Card（帯・裏面）" Tag="SpineCardReverse"/>
                 <ComboBoxItem Content="Other" Tag="Other"/>
               </ComboBox>
-              <Button x:Name="AdjustSpineCardFoldsButton" Content="帯のBack／Spine範囲" Padding="8,4" Margin="4,0,0,0"
-                      Click="AdjustSpineCardFolds_Click" IsEnabled="False" Visibility="Collapsed"
+              <Button x:Name="AdjustSpineCardFoldsButton" Content="帯のBack／Spine範囲" Width="172" Padding="8,4" Margin="4,0,0,0"
+                      Click="AdjustSpineCardFolds_Click" IsEnabled="False" Visibility="Hidden"
                       ToolTip="Back・Spine・Frontの境界をガイドで非破壊指定"/>
               <TextBlock Text="トレイ" Margin="9,0,3,0" VerticalAlignment="Center" Foreground="#A6AFBB"/>
               <ComboBox x:Name="TrayColorCombo" Width="78" Height="27" SelectedIndex="0"
@@ -614,9 +620,6 @@
                 <ComboBoxItem Content="グレー" Tag="Gray"/>
                 <ComboBoxItem Content="透明" Tag="Clear"/>
               </ComboBox>
-              <Button x:Name="DeleteAlbumImageButton" Content="画像を削除" Padding="9,4" Margin="10,3,3,3"
-                      Click="DeleteAlbumImage_Click" IsEnabled="False"
-                      ToolTip="選択した貼り付け・追加・取得画像を削除"/>
             </WrapPanel>
             <TextBlock x:Name="AlbumImageNameText" Grid.Row="3" Foreground="#A6AFBB" FontSize="11"
                        TextAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
@@ -644,6 +647,10 @@
                 <TextBlock Text="歌詞" FontWeight="SemiBold" FontSize="15" Margin="0,0,8,0"/>
                 <ToggleButton x:Name="LyricsActionsToggle" Content="操作 ▾" IsChecked="False" Padding="8,3"
                               ToolTip="歌詞の操作ボタンを表示／非表示"/>
+                <CheckBox x:Name="LyricsAutoScrollCheck" Content="自動スクロール" IsChecked="True"
+                          Margin="8,0,0,0" VerticalAlignment="Center"
+                          Checked="LyricsAutoScroll_Changed" Unchecked="LyricsAutoScroll_Changed"
+                          ToolTip="LRCは時刻同期、通常歌詞は再生位置から推定して追従"/>
               </WrapPanel>
               <WrapPanel Margin="0,4,0,0" Visibility="{Binding IsChecked, ElementName=LyricsActionsToggle, Converter={StaticResource ToolbarVisibilityConverter}}">
                 <Button x:Name="LyricsOcrButton" Content="OCR ▾" Padding="6,4" Click="LyricsOcrMenu_Click"
@@ -661,10 +668,6 @@
                         ToolTip="アーティスト名・曲名・アルバム名を使ってGoogleで歌詞検索"/>
                 <Button Content="保存" Padding="6,4" Click="SaveLyrics_Click" Background="#276E9F"
                         ToolTip="歌詞を保存" AutomationProperties.Name="歌詞を保存"/>
-                <CheckBox x:Name="LyricsAutoScrollCheck" Content="自動スクロール" IsChecked="True"
-                          Margin="8,0,0,0" VerticalAlignment="Center"
-                          Checked="LyricsAutoScroll_Changed" Unchecked="LyricsAutoScroll_Changed"
-                          ToolTip="LRCは時刻同期、通常歌詞は再生位置から推定して追従"/>
               </WrapPanel>
             </StackPanel>
             <Grid Grid.Row="1">
@@ -769,6 +772,24 @@
           <TextBlock x:Name="LibraryLoadingDetail" Text="ライブラリを準備しています"
                      Foreground="#C4CED8" FontSize="12" TextAlignment="Center"
                      TextWrapping="Wrap" MaxWidth="370"/>
+        </StackPanel>
+      </Border>
+    </Border>
+    <Border x:Name="ArtworkSavingOverlay" Grid.Row="0" Grid.RowSpan="7" Grid.Column="0" Grid.ColumnSpan="3"
+            Panel.ZIndex="200" Background="#C915171B" Visibility="Collapsed" Focusable="True">
+      <Border Width="510" Padding="28" HorizontalAlignment="Center" VerticalAlignment="Center"
+              Background="#242A32" BorderBrush="#DCA04F" BorderThickness="1" CornerRadius="10">
+        <StackPanel>
+          <TextBlock x:Name="ArtworkSavingTitle" Text="画像の回転を保存しています" FontSize="22" FontWeight="SemiBold" Foreground="#FFCA80"/>
+          <TextBlock x:Name="ArtworkSavingFile" Margin="0,12,0,0" Foreground="#F2F3F5"
+                     TextWrapping="Wrap" MaxHeight="65" TextTrimming="CharacterEllipsis"/>
+          <ProgressBar Height="7" Margin="0,22,0,16" IsIndeterminate="True"
+                       Foreground="#FFB74D" Background="#3C424B"/>
+          <TextBlock x:Name="ArtworkSavingStage" Foreground="#F2F3F5" FontSize="15"
+                     Height="52" TextWrapping="Wrap"/>
+          <TextBlock Text="処理が終わると、自動で次の操作に進みます。" Foreground="#BAC5D2" Margin="0,14,0,5"/>
+          <TextBlock Text="保存中はアプリを強制終了しないでください。&#10;ZIPの容量によっては時間がかかります。"
+                     Foreground="#FFCA80" TextWrapping="Wrap"/>
         </StackPanel>
       </Border>
     </Border>

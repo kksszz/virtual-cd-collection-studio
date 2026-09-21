@@ -12,6 +12,192 @@ internal static class Program
 {
     [STAThread] static void Main(string[] args)
     {
+        if(args.Length==1&&args[0]=="--artwork-cache"){ArtworkCacheChecks.Run();return;}
+        if(args.Length==1&&args[0]=="--booklet-slideshow"){BookletSlideshowChecks.Run();return;}
+        if(args.Length==3&&args[0]=="--desktop-sample"){
+            var app=new Application();using var sampleZip=ZipFile.OpenRead(args[1]);
+            using var metadata=JsonDocument.Parse(sampleZip.GetEntry("manifest.json")!.Open());var m=metadata.RootElement;
+            if(m.TryGetProperty("obi",out var band)&&band.ValueKind==JsonValueKind.Object)throw new Exception("This sample helper requires an album without obi");
+            BitmapSource? Image(string role){var entry=sampleZip.GetEntry(role+".png");if(entry is null)return null;using var stream=entry.Open();using var bytes=new MemoryStream();stream.CopyTo(bytes);bytes.Position=0;var image=BitmapDecoder.Create(bytes,BitmapCreateOptions.PreservePixelFormat,BitmapCacheOption.OnLoad).Frames[0];image.Freeze();return image;}
+            var sampleItem=new JewelCaseCoverFlowItem("sample",m.GetProperty("title").GetString()!,m.GetProperty("artist").GetString()!,"DIR",m.GetProperty("tray").GetString()!,Image("front"),Image("insideFront"),Image("back"),Image("spine"),Image("rightSpine"),null,Image("disc"),false);
+            MobileGlbExporter.Export(sampleItem,args[2]);Console.WriteLine("PASS desktop sample: "+args[2]);return;
+        }
+        if(args.Length==1&&args[0]=="--mobile-model"){MobileModelChecks.Run();return;}
+        if(args.Length==1&&args[0]=="--front-panel-bounds"){
+            var app=new Application();
+            var type=typeof(MainWindow).Assembly.GetType("ZipMp3Player.DxJewelCaseScene")!;
+            using var scene=(IDisposable)Activator.CreateInstance(type)!;
+            var flags=BindingFlags.NonPublic|BindingFlags.Instance;
+            type.GetMethod("AddClearFrontPanel",flags)!.Invoke(scene,[2.42f,2.12f,.177f,new HelixToolkit.Wpf.SharpDX.PhongMaterial{Name="test"}]);
+            var panelRoot=(HelixToolkit.Wpf.SharpDX.GroupModel3D)type.GetField("_frontPanelRoot",flags)!.GetValue(scene)!;
+            var mesh=(HelixToolkit.SharpDX.MeshGeometry3D)panelRoot.Children.OfType<HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D>().Single().Geometry!;
+            var pts=mesh.Positions!;
+            var left=pts.Min(p=>p.X);var right=pts.Max(p=>p.X);
+            var shell=type.GetMethod("GetCoverFlowShellGeometry",BindingFlags.Static|BindingFlags.NonPublic)!.Invoke(null,null)!;
+            var artworkLeft=(float)shell.GetType().GetProperty("FrontLeft")!.GetValue(shell)!;
+            var stopInnerEdge=artworkLeft-(.90f-.55f/2)*2.42f/142f;
+            if(Math.Abs(left-stopInnerEdge)>.000001f)throw new Exception("Panel does not end at artwork-facing stop edge");
+            if(left< -1.12660f-.000001f||Math.Abs(right-(1.21f-.65f*2.42f/142f))>.000001f)throw new Exception("Lid panel crosses hinge or changed right boundary");
+            if(Math.Abs(pts.Max(p=>p.Z)-pts.Min(p=>p.Z)-.85f*.177f/10f)>.000001f)throw new Exception("Panel thickness changed");
+            // At 180 degrees the lid's entire sheet must lie on its own side.
+            if(pts.Any(p=>2*(-1.12660f)-p.X> -1.12660f+.000001f))throw new Exception("Opened panel overlaps Back across hinge");
+            Console.WriteLine("PASS clear panel: no hinge crossing closed/open; right edge and thickness preserved");return;
+        }
+        if(args.Length==1&&args[0]=="--back-diagnostic"){
+            var app=new Application();
+            var type=typeof(MainWindow).Assembly.GetType("ZipMp3Player.DxJewelCaseScene")!;
+            using var scene=(IDisposable)Activator.CreateInstance(type)!;
+            var diagnosticRoot=(HelixToolkit.Wpf.SharpDX.GroupModel3D)type.GetField("_baseRoot",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(scene)!;
+            var frontDiagnosticRoot=(HelixToolkit.Wpf.SharpDX.GroupModel3D)type.GetField("_frontPanelRoot",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(scene)!;
+            var names=new[]{"Dense clear back artwork frame","Clear opening-side Spine frame","Tray","Spine artwork","Clear front panel","Front lid moulded rails","Booklet retaining clips"};
+            var meshes=names.Select(n=>new HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D{Material=new HelixToolkit.Wpf.SharpDX.PhongMaterial{Name=n}}).ToArray();
+            for(int i=0;i<meshes.Length;i++)(i<4?diagnosticRoot:frontDiagnosticRoot).Children.Add(meshes[i]);
+            foreach(var (key,index) in new[]{("frame",0),("shell",1),("tray",2),("front-panel",4),("front-rails",5),("front-clips",6),("none",-1),("frame",0),("none",-1)}){
+                type.GetMethod("SetBackDiagnosticLayer")!.Invoke(scene,[key]);
+                for(int i=0;i<meshes.Length;i++)if((meshes[i].Visibility==Visibility.Hidden)!=(i==index))throw new Exception("Layer isolation/restore failed");
+            }
+            Console.WriteLine("PASS diagnostic single-layer isolation, switching/restoration, artwork unchanged");return;
+        }
+        if(args.Length==1&&args[0]=="--tape-residue"){
+            var app=new Application();
+            var type=typeof(MainWindow).Assembly.GetType("ZipMp3Player.DxJewelCaseScene")!;
+            using var scene=(IDisposable)Activator.CreateInstance(type)!;
+            var flags=BindingFlags.Instance|BindingFlags.NonPublic;
+            var update=type.GetMethod("UpdateTearTapeGeometry",flags)!;
+            foreach(double progress in new[]{0,.2,.48,.7,1,1,.7,.2,0,1,0}){
+                update.Invoke(scene,[progress]);
+                foreach(var (field,visible) in new[]{("_tearTapeFrontRoot",progress<.48),("_tearTapeBackRoot",progress<1),("_tearTapeSideRoot",progress<.42)}){
+                    var group=(HelixToolkit.Wpf.SharpDX.GroupModel3D)type.GetField(field,flags)!.GetValue(scene)!;
+                    if((group.Visibility==Visibility.Visible)!=visible)throw new Exception($"Tape visibility mismatch: {field} at {progress}");
+                }
+            }
+            Console.WriteLine("PASS tape: strips hidden after removal, partial pull preserved, repeated rewrap restores visibility");return;
+        }
+        if(args.Length==1&&args[0]=="--shell-components"){
+            var type=typeof(MainWindow).Assembly.GetType("ZipMp3Player.DxJewelCaseScene")!;
+            var shell=type.GetMethod("GetCoverFlowShellGeometry",BindingFlags.Static|BindingFlags.NonPublic)!.Invoke(null,null)!;
+            foreach(var name in new[]{"BottomTray","BottomPerimeter","BottomMouldedEdges","TopLid"}){
+                var mesh=(System.Windows.Media.Media3D.MeshGeometry3D)shell.GetType().GetProperty(name)!.GetValue(shell)!;
+                var parents=Enumerable.Range(0,mesh.Positions.Count).ToArray();
+                int Root(int n){while(parents[n]!=n){parents[n]=parents[parents[n]];n=parents[n];}return n;}
+                void Join(int a,int b){parents[Root(a)]=Root(b);}
+                var seen=new Dictionary<(long,long,long),int>();
+                for(int i=0;i<parents.Length;i++){var p=mesh.Positions[i];var key=((long)Math.Round(p.X*100000),(long)Math.Round(p.Y*100000),(long)Math.Round(p.Z*100000));if(seen.TryGetValue(key,out var old))Join(i,old);else seen[key]=i;}
+                for(int i=0;i<mesh.TriangleIndices.Count;i+=3){Join(mesh.TriangleIndices[i],mesh.TriangleIndices[i+1]);Join(mesh.TriangleIndices[i],mesh.TriangleIndices[i+2]);}
+                var groups=Enumerable.Range(0,parents.Length).GroupBy(Root).ToArray();
+                Console.WriteLine(name+" components="+groups.Length);
+                foreach(var g in groups.OrderBy(g=>g.Count()).Take(15)){
+                    var pts=g.Select(i=>mesh.Positions[i]).ToArray();
+                    Console.WriteLine($"n={pts.Length} X {pts.Min(p=>p.X):F5}..{pts.Max(p=>p.X):F5} Y {pts.Min(p=>p.Y):F5}..{pts.Max(p=>p.Y):F5} Z {pts.Min(p=>p.Z):F5}..{pts.Max(p=>p.Z):F5}");
+                }
+            }return;
+        }
+        if(args.Length==1&&args[0]=="--spine-inside"){
+            var app=new Application();
+            var type=typeof(MainWindow).Assembly.GetType("ZipMp3Player.DxJewelCaseScene")!;
+            using var scene=(IDisposable)Activator.CreateInstance(type)!;
+            foreach(var left in new[]{true,false}){
+                var group=new HelixToolkit.Wpf.SharpDX.GroupModel3D();
+                type.GetMethod("AddSpine",BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(scene,
+                    [null,left?-1.21f:1.21f,2f,.177f,left,group,null,(float?)-.05895f,(float?)-.05975f]);
+                var meshes=group.Children.OfType<HelixToolkit.Wpf.SharpDX.MeshGeometryModel3D>().ToArray();
+                var outer=(HelixToolkit.SharpDX.MeshGeometry3D)meshes.Single(m=>m.Material.Name=="Spine artwork").Geometry;
+                var inner=(HelixToolkit.SharpDX.MeshGeometry3D)meshes.Single(m=>m.Material.Name=="Spine paper reverse").Geometry;
+                if(outer.Positions.Any(p=>Math.Abs(p.X)>=1.21f))throw new Exception("Spine still outside shell");
+                float expected=(left?-1:1)*(1.21f*138f/142f-.0008f);
+                if(inner.Positions.Any(p=>Math.Abs(p.X-expected)>.000001f))throw new Exception("Inlay seam moved");
+                if(Math.Abs(Math.Abs(outer.Positions[0].X-inner.Positions[0].X)-.0008f)>.000001f)throw new Exception("Paper faces overlap");
+                if(Math.Abs(inner.Positions.Min(p=>p.Z)+.05895f)>.000001f)throw new Exception("Inner tray depth changed");
+                var foldX=(float)type.GetMethod("OuterSpinePrintX",BindingFlags.Static|BindingFlags.NonPublic)!.Invoke(null,[left?-1.21f:1.21f,left])!;
+                if(outer.Positions.Any(p=>Math.Abs(p.X-foldX)>.000001f)
+                    ||Math.Abs(outer.Positions.Min(p=>p.Z)+.05975f)>.000001f
+                    ||Math.Abs(outer.Positions.Max(p=>p.Z)-outer.Positions.Min(p=>p.Z)-.1062f)>.000001f
+                    ||1.21f-Math.Abs(foldX)<.03f)
+                    throw new Exception("Outer Back/Spine fold or front boundary mismatch");
+            }
+            Console.WriteLine("PASS 138mm Back, 6mm unstretched Spine, guard rail clearance, tray depth and paper thickness");return;
+        }
+        if(args.Length==1&&args[0]=="--rear-skin"){
+            var type=typeof(MainWindow).Assembly.GetType("ZipMp3Player.DxJewelCaseScene")!;
+            var shell=type.GetMethod("GetCoverFlowShellGeometry",BindingFlags.Static|BindingFlags.NonPublic)!.Invoke(null,null)!;
+            int Count(string name){
+                var mesh=(System.Windows.Media.Media3D.MeshGeometry3D)shell.GetType().GetProperty(name)!.GetValue(shell)!;
+                int count=0;
+                for(int i=0;i<mesh.TriangleIndices.Count;i+=3){
+                    var points=Enumerable.Range(0,3).Select(j=>mesh.Positions[mesh.TriangleIndices[i+j]]).ToArray();
+                    if(points.All(p=>p.Z<=-.177/2+.0001))count++;
+                }
+                return count;
+            }
+            if(Count("BottomTray")!=0||Count("BottomPerimeter")==0)throw new Exception("Rear skin must be clear, not tray");
+            Console.WriteLine("PASS rear skin: rear-most triangles are clear; opaque tray does not cover outer rear plane");return;
+        }
+        if(args.Length==1&&args[0]=="--recent-order"){
+            var dir=Path.Combine(Path.GetTempPath(),"album-order-test-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(dir);
+            var type=typeof(MainWindow).Assembly.GetType("ZipMp3Player.AlbumAddedStore")!;
+            object Open()=>Activator.CreateInstance(type,[Path.Combine(dir,"dates.json")])!;
+            void Add(object store,string album,long date)=>type.GetMethod("Observe")!.Invoke(store,[Path.Combine(dir,album),date]);
+            long Get(object store,string album)=>(long)type.GetMethod("Get")!.Invoke(store,[Path.Combine(dir,album)])!;
+            var store=Open();Add(store,"old",0);Add(store,"new",100);Add(store,"new",200);
+            type.GetMethod("Save")!.Invoke(store,null);store=Open();
+            if(Get(store,"old")!=0||Get(store,"NEW")!=100)throw new Exception("First-seen persistence failed");
+            Add(store,"latest",300);
+            if(Get(store,"latest")<=Get(store,"new"))throw new Exception("Date order failed");
+            Console.WriteLine("PASS recent order: baseline, persistence, repeat scan, case-insensitive identity");return;
+        }
+        if(args.Length==1&&args[0]=="--spine-return"){SpineReturnChecks.Run();return;}
+        if(args.Length==1&&args[0]=="--favorites"){FavoritesChecks.Run();return;}
+        if(args.Length==1&&args[0]=="--crop"){CropChecks.Run();return;}
+        if(args.Length==1&&args[0]=="--rotation"){RotationChecks.Run();return;}
+        if(args.Length==1&&args[0]=="--youtube-search"){
+            var build=typeof(MainWindow).GetMethod("BuildTrackYouTubeUrl",BindingFlags.Static|BindingFlags.NonPublic)!;
+            void Check(ZipTrack track,string? query){
+                var actual=(string?)build.Invoke(null,[track]);
+                var expected=query is null?null:"https://www.youtube.com/results?search_query="+Uri.EscapeDataString(query);
+                if(actual!=expected)throw new Exception($"YouTube URL mismatch: {actual}");
+            }
+            Check(new ZipTrack{Artist="森口博子",Title="JUST COMMUNICATION"},"森口博子 JUST COMMUNICATION");
+            Check(new ZipTrack{Artist=" A&B ",Title=" Song #1 ? + / "},"A&B Song #1 ? + /");
+            Check(new ZipTrack{Artist="アーティスト不明",Title="曲"},"曲");
+            Check(new ZipTrack{Artist="Unknown Artist",FileName="folder/song.flac"},"song");
+            Check(new ZipTrack{Title="Netherstorm",Artist="Frozen Crown",CueStartFrame=12000},"Frozen Crown Netherstorm");
+            Check(new ZipTrack(),null);
+            Console.WriteLine("PASS YouTube search: Japanese, escaping, unknown artist, filename fallback, CUE, empty track");return;
+        }
+        if(args.Length==1&&args[0]=="--lyrics"){LyricsChecks.Run();return;}
+        if(args.Length==2&&args[0]=="--cue-identity"){
+            var directory=Path.GetFullPath(args[1]);var cuePath=Directory.GetFiles(directory,"*.cue").Single();
+            var cueAlbum=ZipAlbumReader.Open(cuePath);var folderAlbum=ZipAlbumReader.OpenFolder(directory);
+            var identity=typeof(MainWindow).Assembly.GetType("ZipMp3Player.CueAlbumIdentity")!.GetMethod("IsCoveredBy",BindingFlags.Static|BindingFlags.NonPublic)!;
+            bool Covered(ZipAlbum a,ZipAlbum b)=>(bool)identity.Invoke(null,[a,b])!;
+            if(!Covered(cueAlbum,folderAlbum)||Covered(folderAlbum,cueAlbum))throw new Exception("CUE/folder canonical direction");
+            if(Covered(cueAlbum,new ZipAlbum{Path=directory,Tracks=folderAlbum.Tracks.Skip(1).ToArray()}))throw new Exception("Partial coverage suppressed");
+            if(Covered(cueAlbum,new ZipAlbum{Path=directory,Tracks=[new ZipTrack{SourcePath=cueAlbum.Tracks[0].SourcePath}]}))throw new Exception("Unsplit FLAC suppressed cue");
+            if(Covered(cueAlbum,new ZipAlbum{Path=directory+"-other",Tracks=folderAlbum.Tracks}))throw new Exception("Different album suppressed");
+            Console.WriteLine("PASS CUE identity: "+cueAlbum.Tracks.Count+" segments covered by image-bearing folder; partial/raw/different album preserved");return;
+        }
+        if(args.Length==1&&args[0]=="--booklet-button"){
+            var app=new Application();var flow=new JewelCaseCoverFlow();var type=typeof(JewelCaseCoverFlow);
+            void Set(string name,object value)=>type.GetField(name,BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(flow,value);
+            bool loaded=false;
+            var bookletItem=new JewelCaseCoverFlowItem("test","test","","DIR","White",null,null,null,null,null,null,null,false){LoadBooklet=()=>{loaded=true;throw new Exception("Loader should not run");}};
+            Set("_items",new[]{bookletItem});Set("_selectedIndex",0);
+            var button=(System.Windows.Controls.Button)type.GetField("_bookletButton",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(flow)!;
+            foreach(bool unwrapped in new[]{false,true})foreach(bool busy in new[]{false,true})foreach(bool reading in new[]{false,true}){
+                Set("_isWrappingOpened",unwrapped);Set("_isCaseTransitioning",busy);Set("_isOpeningBooklet",reading);
+                type.GetMethod("UpdateBookletButton",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(flow,null);
+                if(button.IsEnabled!=(unwrapped&&!busy&&!reading))throw new Exception("Booklet enable mismatch");
+                if(!unwrapped&&!button.ToolTip.ToString()!.Contains("テープ"))throw new Exception("Missing wrapping guidance");
+                if(!button.IsEnabled)((Task)type.GetMethod("OpenBookletAsync",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(flow,null)!).GetAwaiter().GetResult();
+            }
+            if(loaded)throw new Exception("Blocked request loaded booklet");
+            Set("_isWrappingOpened",true);Set("_isCaseTransitioning",false);Set("_isOpeningBooklet",false);
+            Set("_items",new[]{bookletItem with {LoadBooklet=null}});
+            type.GetMethod("UpdateBookletButton",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(flow,null);
+            if(button.IsEnabled)throw new Exception("Missing booklet enabled");
+            Console.WriteLine("PASS booklet button: wrapped/unwrapped, animation, reader, no booklet, guarded click");return;
+        }
+        if(args.Length==1&&args[0]=="--spine-reverse"){SpineReverseChecks.Run();return;}
         if(args.Length==2&&args[0]=="--sync-table"){SyncStyleChecks.RunTable(args[1]);return;}
         if(args.Length==1&&args[0]=="--qr-status-layout"){
             var app=new Application();

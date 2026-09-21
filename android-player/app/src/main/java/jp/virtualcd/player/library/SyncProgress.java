@@ -15,11 +15,11 @@ public final class SyncProgress {
     public String text(String stage,String name){
         int percent=total==0?100:(int)Math.min(100,done*100d/total);
         return stage+" · "+percent+"% · "+size(done)+" / "+size(total)
-            +"\n受信 "+size(received)+" · 再利用 "+size(reused)+" · "+completed+" / "+files+"ファイル"
+            +jp.virtualcd.player.LanguageStrings.text("\n受信 ","\nReceived ")+size(received)+jp.virtualcd.player.LanguageStrings.text(" · 再利用 "," · Reused ")+size(reused)+" · "+completed+" / "+files+jp.virtualcd.player.LanguageStrings.text("ファイル"," files")
             +(name.isEmpty()?"":"\n"+name);
     }
     public void report(String stage,String name){output.accept(text(stage,name));last=System.nanoTime();}
-    public void received(long bytes,String name){done+=bytes;received+=bytes;if(System.nanoTime()-last>=250_000_000L)report("PCから転送中",name);}
-    public void reused(long bytes){done+=bytes;reused+=bytes;completed++;if(System.nanoTime()-last>=250_000_000L)report("既存ファイルを確認中","");}
-    public void completed(){completed++;report("PCから転送中","");}
+    public void received(long bytes,String name){done+=bytes;received+=bytes;if(System.nanoTime()-last>=250_000_000L)report(jp.virtualcd.player.LanguageStrings.text("PCから転送中","Receiving from PC"),name);}
+    public void reused(long bytes){done+=bytes;reused+=bytes;completed++;if(System.nanoTime()-last>=250_000_000L)report(jp.virtualcd.player.LanguageStrings.text("既存ファイルを確認中","Checking existing files"),"");}
+    public void completed(){completed++;report(jp.virtualcd.player.LanguageStrings.text("PCから転送中","Receiving from PC"),"");}
 }

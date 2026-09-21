@@ -75,7 +75,7 @@ public sealed class MobileSync
         if((string?)root["format"]!="virtual-cd-sync"||(int?)root["version"]!=1)throw new IOException("未対応の同期索引です。上書きしません。");
         return new(target,root["albums"]?.AsObject()??throw new IOException("同期索引が不正です"));
     }
-    public async Task Send(string source,string title,string artist,string glb,Action<string>? progress=null)
+    public async Task Send(string source,string title,string artist,string glb,Action<string>? progress=null,string? lyrics=null,JsonObject? favorites=null)
     {
         source=Path.GetFullPath(source);var identitySource=source;
         if(CueAlbumReader.IsCue(source)){var disc=CueAlbumReader.Read(source);if(!disc.ImagePath.EndsWith(".flac",StringComparison.OrdinalIgnoreCase))throw new NotSupportedException("モバイル同期のCUEはFLAC形式に対応しています");source=Path.GetDirectoryName(source)!;}
@@ -89,8 +89,8 @@ public sealed class MobileSync
         foreach(var file in files){progress?.Invoke("検証: "+Path.GetFileName(file));var relative=directory?Path.GetRelativePath(source,file).Replace('\\','/'):Path.GetFileName(source);Safe(relative);inventory.Add((file,relative,FileHash(file),new FileInfo(file).Length));}
         var revision=Hash(string.Join("\n",inventory.Select(f=>f.Relative+"|"+f.Size+"|"+f.Hash)));
         var prefix=".vcd-sync/"+id+"/"+revision+"/";
-        long total=inventory.Sum(f=>f.Size)+new FileInfo(glb).Length,done=0;int completed=0;
-        void Report(string name)=>progress?.Invoke($"このアルバムの配置（既存再利用を含む）: {(total==0?100:done*100d/total):F0}% · {done/1048576d:F1} / {total/1048576d:F1} MiB · {completed}/{inventory.Count+1}ファイル\n{name}");
+        long total=inventory.Sum(f=>f.Size)+new FileInfo(glb).Length+(lyrics is null?0:new FileInfo(lyrics).Length),done=0;int completed=0;
+        void Report(string name)=>progress?.Invoke($"このアルバムの配置（既存再利用を含む）: {(total==0?100:done*100d/total):F0}% · {done/1048576d:F1} / {total/1048576d:F1} MiB · {completed}/{inventory.Count+1+(lyrics is null?0:1)}ファイル\n{name}");
         foreach(var file in inventory){Report(file.Relative);await target.Put(file.Local,prefix+file.Relative,file.Hash);done+=file.Size;completed++;Report(file.Relative);}
         var glbHash=FileHash(glb);var glbPath=".vcd-sync/"+id+"/"+glbHash+".glb";Report("3Dデータ");await target.Put(glb,glbPath,glbHash);done+=new FileInfo(glb).Length;completed++;Report("配置済み・同期情報を作成中");
         var record=new JsonObject{["id"]=id,["title"]=title,["artist"]=artist,["name"]=Path.GetFileName(source),["directory"]=directory,["music"]=directory?prefix.TrimEnd('/'):prefix+inventory[0].Relative,["revision"]=revision,["size"]=inventory.Sum(f=>f.Size),["glb"]=glbPath,["glbSha256"]=glbHash};
@@ -102,6 +102,14 @@ public sealed class MobileSync
         record["audioFingerprint"]=Hash(string.Join("\n",audioHashes.Order(StringComparer.Ordinal)));
         record["audioCount"]=audioHashes.Count;
         record["files"]=new JsonArray(inventory.Select(f=>(JsonNode)new JsonObject{["path"]=prefix+f.Relative,["sha256"]=f.Hash,["size"]=f.Size}).Append(new JsonObject{["path"]=glbPath,["sha256"]=glbHash,["size"]=new FileInfo(glb).Length}).ToArray());
+        if(lyrics is not null){
+            var lyricsHash=FileHash(lyrics);var lyricsPath=".vcd-sync/"+id+"/"+lyricsHash+".lyrics.json";
+            progress?.Invoke("歌詞を配置しています");await target.Put(lyrics,lyricsPath,lyricsHash);
+            done+=new FileInfo(lyrics).Length;completed++;Report("歌詞を配置しました");
+            record["lyrics"]=lyricsPath;record["lyricsSha256"]=lyricsHash;
+            record["files"]!.AsArray().Add(new JsonObject{["path"]=lyricsPath,["sha256"]=lyricsHash,["size"]=new FileInfo(lyrics).Length});
+        }
+        if(favorites is not null) record["favorites"]=favorites.DeepClone();
         albums[id]=record;
         var manifest=new JsonObject{["format"]="virtual-cd-sync",["version"]=1,["albums"]=albums.DeepClone()};
         await target.Commit(Encoding.UTF8.GetBytes(manifest.ToJsonString()));

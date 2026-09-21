@@ -9,6 +9,7 @@ import java.util.*;
 
 /** App-private listening state. Source files are never opened for writing. */
 public final class ListeningState {
+    public static final Object FAVORITE_LOCK=new Object();
     public static final String ALBUM_URI="sourceAlbumUri";
     private final SharedPreferences prefs;
     private List<MediaItem> savedQueue=Collections.emptyList();
@@ -67,8 +68,18 @@ public final class ListeningState {
     public List<JSONObject> entries(String key){var list=new ArrayList<JSONObject>();var values=array(key);for(int i=0;i<values.length();i++){JSONObject item=values.optJSONObject(i);if(item!=null)list.add(item);}return list;}
     public boolean contains(String key,String id){for(var item:entries(key))if(id.equals(item.optString("id")))return true;return false;}
     public boolean toggle(String key,JSONObject item){
+        synchronized(FAVORITE_LOCK){
         String id=item.optString("id");boolean had=contains(key,id);var next=new JSONArray();
         if(!had)next.put(item);for(var old:entries(key))if(!id.equals(old.optString("id")))next.put(old);
-        prefs.edit().putString(key,next.toString()).apply();return !had;
+        prefs.edit().putString(key,next.toString()).putBoolean("edited|"+key+"|"+id,true).apply();return !had;
+        }
+    }
+    public boolean favoriteEdited(String key,String id){return prefs.getBoolean("edited|"+key+"|"+id,false);}
+    public void setFavorite(String key,JSONObject item,boolean enabled){
+        synchronized(FAVORITE_LOCK){
+            String id=item.optString("id");var next=new JSONArray();
+            if(enabled)next.put(item);for(var old:entries(key))if(!id.equals(old.optString("id")))next.put(old);
+            prefs.edit().putString(key,next.toString()).commit();
+        }
     }
 }

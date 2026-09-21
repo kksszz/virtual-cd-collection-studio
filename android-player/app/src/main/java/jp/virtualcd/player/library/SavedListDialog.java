@@ -18,9 +18,9 @@ public final class SavedListDialog {
         var root=new LinearLayout(activity);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(dp(activity,16),dp(activity,12),dp(activity,16),dp(activity,12));root.setBackground(PlayerStyle.panel(activity,0xff19212b,20));
         var grip=new View(activity);grip.setBackground(PlayerStyle.panel(activity,0xff536171,3));var gripParams=new LinearLayout.LayoutParams(dp(activity,36),dp(activity,4));gripParams.gravity=Gravity.CENTER;gripParams.bottomMargin=dp(activity,16);root.addView(grip,gripParams);
         var header=new LinearLayout(activity);header.setGravity(Gravity.CENTER_VERTICAL);root.addView(header);
-        var title=text(activity,history?"再生履歴":"favoriteAlbums".equals(key)?"お気に入りのアルバム":"お気に入りの曲",21,0xffeef4fa);title.setTypeface(null,Typeface.BOLD);header.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-        var close=new Button(activity);close.setText("閉じる");PlayerStyle.button(close);header.addView(close,new LinearLayout.LayoutParams(dp(activity,64),dp(activity,48)));close.setOnClickListener(v->dialog.dismiss());
-        var subtitle=text(activity,entries.size()+"件  ·  "+(history?"最後に再生した順":"★で登録を解除"),12,0xff94a7b9);subtitle.setPadding(0,dp(activity,8),0,dp(activity,12));root.addView(subtitle);
+        var title=text(activity,history?jp.virtualcd.player.LanguageStrings.text("再生履歴","Playback history"):"favoriteAlbums".equals(key)?jp.virtualcd.player.LanguageStrings.text("お気に入りのアルバム","Favorite albums"):jp.virtualcd.player.LanguageStrings.text("お気に入りの曲","Favorite tracks"),21,0xffeef4fa);title.setTypeface(null,Typeface.BOLD);header.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        var close=new Button(activity);close.setText(jp.virtualcd.player.LanguageStrings.text("閉じる","Close"));PlayerStyle.button(close);header.addView(close,new LinearLayout.LayoutParams(dp(activity,64),dp(activity,48)));close.setOnClickListener(v->dialog.dismiss());
+        var subtitle=text(activity,entries.size()+jp.virtualcd.player.LanguageStrings.text("件  ·  "," items · ")+(history?jp.virtualcd.player.LanguageStrings.text("最後に再生した順","Last played"):jp.virtualcd.player.LanguageStrings.text("★で登録を解除","Tap ★ to remove")),12,0xff94a7b9);subtitle.setPadding(0,dp(activity,8),0,dp(activity,12));root.addView(subtitle);
         var list=new ListView(activity);list.setDivider(new ColorDrawable(0xff2b3745));list.setDividerHeight(dp(activity,1));list.setSelector(new ColorDrawable(0x225fcce8));list.setClipToPadding(false);
         root.addView(list,new LinearLayout.LayoutParams(-1,0,1));
         list.setAdapter(new BaseAdapter(){
@@ -35,10 +35,10 @@ public final class SavedListDialog {
                     row.star=FavoriteButton.create(activity);row.star.setVisibility(remove==null?View.GONE:View.VISIBLE);box.addView(row.star,new LinearLayout.LayoutParams(dp(activity,48),dp(activity,48)));box.setTag(row);recycled=box;
                 }else row=(Row)recycled.getTag();
                 JSONObject entry=entries.get(position);row.title.setText(entry.optString("title"));
-                if(remove!=null){FavoriteButton.bind(row.star,true,entry.optString("title"));row.star.setOnClickListener(v->{remove.accept(entry);entries.remove(entry);notifyDataSetChanged();subtitle.setText(entries.size()+"件 · ★で登録を解除");});}
+                if(remove!=null){FavoriteButton.bind(row.star,true,entry.optString("title"));row.star.setOnClickListener(v->{remove.accept(entry);entries.remove(entry);notifyDataSetChanged();subtitle.setText(entries.size()+jp.virtualcd.player.LanguageStrings.text("件 · ★で登録を解除"," items · Tap ★ to remove"));});}
                 String info=entry.optString("artist"),album=entry.optString("album");if(!album.isEmpty())info+=(info.isEmpty()?"":" · ")+album;
                 row.artist.setText(info);row.artist.setVisibility(info.isEmpty()?View.GONE:View.VISIBLE);
-                row.time.setVisibility(history?View.VISIBLE:View.GONE);if(history)row.time.setText("最終再生  "+android.text.format.DateFormat.format("yyyy/MM/dd  HH:mm",entry.optLong("lastPlayed")));
+                row.time.setVisibility(history?View.VISIBLE:View.GONE);if(history)row.time.setText(jp.virtualcd.player.LanguageStrings.text("最終再生  ","Last played  ")+android.text.format.DateFormat.format("yyyy/MM/dd  HH:mm",entry.optLong("lastPlayed")));
                 boolean current=entry.optString("id").equals(currentId);row.title.setTextColor(current?0xff70cde6:0xffeef4fa);
                 return recycled;
             }

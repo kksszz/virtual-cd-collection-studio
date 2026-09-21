@@ -19,11 +19,14 @@ public static class MobileCaseExporter
         var textures = new Dictionary<string, object>();
         var inlay = item.SplitInlay();
         var obi = item.SpineCard is { } card ? SpineCardArtwork.Split(card) : default;
+        var obiInside = item.SpineCardReverse is { } reverseCard ? SpineCardArtwork.Split(reverseCard) : default;
         var images = new Dictionary<string, BitmapSource?>
         {
             ["front"] = item.FrontCover, ["insideFront"] = item.InsideFrontCover,
             ["back"] = item.BackCover, ["spine"] = item.SpineCover,
             ["rightSpine"] = item.RightSpineCover, ["inlay"] = inlay.Panel,
+            ["inlayLeft"] = inlay.Left, ["inlayRight"] = inlay.Right,
+            ["obiFrontInside"] = obiInside.Back, ["obiSpineInside"] = obiInside.Spine, ["obiBackInside"] = obiInside.Front,
             ["disc"] = item.DiscImage,
             ["obiBack"] = obi.Back, ["obiSpine"] = obi.Spine, ["obiFront"] = obi.Front
         };
@@ -55,7 +58,7 @@ public static class MobileCaseExporter
                 }
                 var manifest = new
                 {
-                    format = "virtual-cd-case", version = 2, model = "jewel-case-v2",
+                    format = "virtual-cd-case", version = 3, model = "jewel-case-v3",
                     title = item.Title, artist = item.Artist,
                     // Do not expose Windows paths. Mobile binding is explicitly selected on import.
                     albumId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(item.Key))).ToLowerInvariant(),

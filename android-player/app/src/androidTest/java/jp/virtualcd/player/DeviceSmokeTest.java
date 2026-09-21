@@ -26,6 +26,75 @@ public final class DeviceSmokeTest extends Instrumentation {
     @Override public void onStart(){
         Bundle result=new Bundle();
         try{
+            if(testMode.equals("languageUi")){LanguageDeviceChecks.run(this);result.putString("languageUi","PASS settings selection, activity recreation, Japanese/English UI, saved setting");finish(-1,result);return;}
+            if(testMode.equals("language")){
+                String original=LanguageStrings.code(),prefix="language-test-"+System.nanoTime();
+                var c=new android.content.ContextWrapper(getTargetContext()){
+                    @Override public android.content.SharedPreferences getSharedPreferences(String name,int mode){return super.getSharedPreferences(prefix+name,mode);}
+                };
+                try{
+                    if(!c.getSharedPreferences("display-language",0).getString("code","ja").equals("ja"))throw new AssertionError("Default");
+                    for(String language:new String[]{"en","ja","en","ja"}){
+                        PlayerApplication.saveLanguage(c,language);
+                        if(!language.equals(c.getSharedPreferences("display-language",0).getString("code","ja")))throw new AssertionError("Persistence");
+                        LanguageStrings.setCode(c.getSharedPreferences("display-language",0).getString("code","ja"));
+                        if(!LanguageStrings.text("日本語","English").equals(language.equals("en")?"English":"日本語"))throw new AssertionError("Language");
+                        if(!FavoriteSync.labels()[0].equals(language.equals("en")?"First sync only (default)":"初回のみ引き継ぐ（標準）"))throw new AssertionError("Live labels");
+                        if(!ArtworkLoader.imageFolder("ジャケット")||!ArtworkLoader.imageFolder("歌詞")||!ArtworkLoader.imageFolder("画像"))throw new AssertionError("Japanese folder detection");
+                    }
+                }finally{LanguageStrings.setCode(original);c.getSharedPreferences("display-language",0).edit().clear().commit();}
+                result.putString("language","PASS default, persistence, repeated switching, labels, Japanese folder names");finish(-1,result);return;
+            }
+            if(testMode.equals("recentOrder")){
+                String prefix="recent-test-"+System.nanoTime();
+                var c=new android.content.ContextWrapper(getTargetContext()){
+                    @Override public android.content.SharedPreferences getSharedPreferences(String name,int mode){return super.getSharedPreferences(prefix+name,mode);}
+                };
+                var old=new AlbumLibrary.Album(Uri.parse("content://test/old"),"old",1,1);
+                var fresh=new AlbumLibrary.Album(Uri.parse("content://test/new"),"new",1,1);
+                var revision=new AlbumLibrary.Album(Uri.parse("content://test/revision"),"new",2,2);
+                try{
+                    AlbumAddedOrder.observe(c,List.of(old),true);AlbumAddedOrder.observe(c,List.of(fresh),false);
+                    long first=AlbumAddedOrder.get(c,fresh);
+                    AlbumAddedOrder.observe(c,List.of(old,fresh),false);
+                    if(AlbumAddedOrder.get(c,old)!=0||first<=0||AlbumAddedOrder.get(c,fresh)!=first)throw new AssertionError("First seen");
+                    AlbumAddedOrder.bindSync(c,"id",fresh);AlbumAddedOrder.bindSync(c,"id",revision);
+                    if(AlbumAddedOrder.get(c,revision)!=first)throw new AssertionError("Revision identity");
+                }finally{c.getSharedPreferences("album-added-v1",0).edit().clear().commit();}
+                result.putString("recentOrder","PASS baseline, repeat scan, sync revision identity");finish(-1,result);return;
+            }
+            if(testMode.equals("favoriteSync")){FavoriteSyncTest.run(getTargetContext());result.putString("favoriteSync","PASS first/always/never/one-shot, Android edits, revision binding, legacy, CUE");finish(-1,result);return;}
+            if(testMode.equals("lyrics")){
+                var entries=new org.json.JSONArray().put(new org.json.JSONObject().put("file","disc.flac · Track 2").put("title","Song").put("number",2).put("disc",1).put("text","[ar:Artist]\n[00:01.00]一行目\n[00:02.00][00:03.00]二行目"));
+                byte[] data=new org.json.JSONObject().put("format","virtual-cd-lyrics").put("version",1).put("tracks",entries).toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                var extras=new Bundle();extras.putString(TrackProperties.FILE,"disc.flac · Track 2");
+                var item=new MediaItem.Builder().setMediaMetadata(new MediaMetadata.Builder().setTitle("Song").setTrackNumber(2).setDiscNumber(1).setExtras(extras).build()).build();
+                if(!LyricsStore.find(data,item).equals("一行目\n二行目"))throw new AssertionError("CUE/LRC lyrics lookup");
+                var restored=item.buildUpon().setMediaMetadata(item.mediaMetadata.buildUpon().setExtras(null).build()).build();
+                if(!LyricsStore.find(data,restored).equals("一行目\n二行目"))throw new AssertionError("Restored queue fallback");
+                if(!LyricsStore.find(data,item.buildUpon().setMediaMetadata(new MediaMetadata.Builder().setTitle("Other").build()).build()).isEmpty())throw new AssertionError("Wrong song lyrics");
+                result.putString("lyrics","PASS CUE filename binding, LRC text, restored queue and unmatched song");finish(-1,result);return;
+            }
+            if(testMode.equals("syncStatusLayout")){
+                runOnMainSync(()->{
+                    for(int width:new int[]{320,640}){
+                        var view=new SyncStatusView(getTargetContext());view.setLayoutParams(new android.widget.LinearLayout.LayoutParams(width,-2));int height=-1;
+                        for(String message:new String[]{"PCに接続しています…","PCから転送中 · 38%\n受信 168 MiB · 56 / 100ファイル\n"+"長いファイル名".repeat(40),"PCからの転送完了","同期を中断しました。\n詳細".repeat(5)}){
+                            view.showProgress(message);
+                            view.measure(android.view.View.MeasureSpec.makeMeasureSpec(width,android.view.View.MeasureSpec.EXACTLY),android.view.View.MeasureSpec.makeMeasureSpec(2000,android.view.View.MeasureSpec.AT_MOST));
+                            if(height<0)height=view.getMeasuredHeight();
+                            if(height!=view.getMeasuredHeight())throw new AssertionError("Status height changed");
+                            int expected=message.startsWith("PCからの転送完了")?0xffa5d6a7:0xffffb74d;
+                            if(((android.graphics.drawable.ColorDrawable)view.getBackground()).getColor()!=expected)throw new AssertionError("Status color");
+                        }
+                    }
+                });
+                result.putString("syncStatusLayout","PASS fixed height at two widths: connecting, long progress, completion, error; orange/green backgrounds");finish(-1,result);return;
+            }
+            if(testMode.equals("artworkLimit")){
+                jp.virtualcd.player.library.ArtworkLimitTest.run(getTargetContext());
+                result.putString("artworkLimit","PASS 9MB document/STORED/DEFLATED, 32MB boundary, oversize/truncated/expanded-size rejection and cache cleanup");finish(-1,result);return;
+            }
             if(testMode.equals("imageFolder")){
                 if(!ArtworkLoader.imageFolder("Images")||!ArtworkLoader.imageFolder("IMAGE")||ArtworkLoader.imageFolder("Music"))throw new AssertionError("Folder rules");
                 var c=getTargetContext();var root=Uri.parse("content://com.android.externalstorage.documents/tree/6264-6230%3AMusic/document/6264-6230%3AMusic");
@@ -89,6 +158,7 @@ public final class DeviceSmokeTest extends Instrumentation {
                 result.putString("qr","PASS Windows QRCoder -> Android ZXing exact URL, LAN validation and non-sync QR rejection (camera optics not tested)");finish(-1,result);return;
             }
             if(testMode.equals("sync")){SyncDeviceChecks.run(getTargetContext(),syncAddress);result.putString("sync","PASS LAN download, checksum, unchanged skip, automatic GLB binding and incomplete-transfer rejection");finish(-1,result);return;}
+            if(testMode.equals("desktopGlb")){CaseDeviceChecks.runDesktop(this);result.putString("desktopGlb","PASS desktop geometry GPU poses, controls, lifecycle and malformed rejection");finish(-1,result);return;}
             if(testMode.equals("glb")||testMode.equals("glbReal")){CaseDeviceChecks.runGlb(this,testMode.equals("glbReal"));result.putString("glb","PASS legacy/GLB image comparison closed/open/disc, controls, reset, context restore and malformed GLB rejection");finish(-1,result);return;}
             if(testMode.equals("albumOrder")){testAlbumOrder();result.putString("albumOrder","PASS album/artist order, artist ties, unknown last, filter and persisted choice");finish(-1,result);return;}
             if(testMode.equals("nowPlayingLabel")){

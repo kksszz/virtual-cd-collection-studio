@@ -3614,11 +3614,11 @@ internal static partial class Program
                 var innerSpineX = innerSpines.Select(m =>
                     ((HelixToolkit.SharpDX.MeshGeometry3D)m.Geometry!).Positions![0].X).Order().ToArray();
                 if (outerSpines.Count != 2 || outerSpines.Any(m => m.IsTransparent)
-                    || Math.Abs(outerSpineX[0] - (-1.21f - DxJewelCaseScene.SpineArtworkSurfaceOffset)) > .0001f
-                    || Math.Abs(outerSpineX[1] - (1.21f + DxJewelCaseScene.SpineArtworkSurfaceOffset)) > .0001f
-                    || Math.Abs(innerSpineX[0] - (-1.21f + DxJewelCaseScene.SpineArtworkSurfaceOffset)) > .0001f
-                    || Math.Abs(innerSpineX[1] - (1.21f - DxJewelCaseScene.SpineArtworkSurfaceOffset)) > .0001f)
-                    throw new InvalidOperationException("Opaque Spine paper faces must bracket the transparent case wall so tray triangles cannot show through them.");
+                    || Math.Abs(outerSpineX[0] + 1.21f * 138f / 142f) > .0001f
+                    || Math.Abs(outerSpineX[1] - 1.21f * 138f / 142f) > .0001f
+                    || Math.Abs(innerSpineX[0] - (-1.21f * 138f / 142f + DxJewelCaseScene.SpinePaperThickness)) > .0001f
+                    || Math.Abs(innerSpineX[1] - (1.21f * 138f / 142f - DxJewelCaseScene.SpinePaperThickness)) > .0001f)
+                    throw new InvalidOperationException("Both Spine paper faces must be inside the case wall, with the Inlay seam unchanged.");
                 if (meshes.Where(m => m.Material?.Name is "Artwork" or "Spine artwork")
                     .Any(m => ((HelixToolkit.Wpf.SharpDX.PhongMaterial)m.Material!).RenderDiffuseMap))
                     throw new InvalidOperationException("Inlay must not substitute for exterior Back or Spine.");

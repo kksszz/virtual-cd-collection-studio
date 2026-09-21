@@ -30,7 +30,7 @@ public final class CaseSurface extends GLSurfaceView implements GLSurfaceView.Re
     private static final class Draw {final CaseGeometry.Mesh mesh;final float[] model=new float[16];float alpha,depth;Draw(CaseGeometry.Mesh mesh){this.mesh=mesh;}}
     public CaseSurface(Context context,CasePackage data){super(context);this.data=data;obiRemoved=targetObi=data.hasObi?0:1;wrapRemoved=targetWrap=data.wrapped?0:1;
         setEGLContextClientVersion(2);setEGLConfigChooser(8,8,8,0,24,0);setRenderer(this);setRenderMode(RENDERMODE_WHEN_DIRTY);
-        setContentDescription("3D CDケース。1本指で回転、2本指のスライドで移動。開いたCDの中心を押さえ、もう1本の指で外周を引くとCDを取り出します。ピンチまたはマウスホイールで拡大縮小、ダブルタップで初期表示");
+        setContentDescription(jp.virtualcd.player.LanguageStrings.text("3D CDケース。1本指で回転、2本指のスライドで移動。開いたCDの中心を押さえ、もう1本の指で外周を引くとCDを取り出します。ピンチまたはマウスホイールで拡大縮小、ダブルタップで初期表示","3D CD case. One finger rotates, two fingers pan. Hold the CD center and pull its edge with another finger to remove it. Pinch or mouse wheel to zoom; double tap to reset."));
         taps=new GestureDetector(context,new GestureDetector.SimpleOnGestureListener(){
             @Override public boolean onDown(MotionEvent event){return true;}
             @Override public boolean onDoubleTap(MotionEvent event){resetGesture=true;reset();return true;}
@@ -95,8 +95,11 @@ public final class CaseSurface extends GLSurfaceView implements GLSurfaceView.Re
         if(Math.abs(a[3])<.00001f||Math.abs(b[3])<.00001f)return Float.NaN;
         for(int i=0;i<3;i++){a[i]/=a[3];b[i]/=b[3];}
         float dz=b[2]-a[2];if(dz>=-.0001f)return Float.NaN;
-        float t=(.012f-a[2])/dz;if(t<0||t>1)return Float.NaN;
-        return (float)Math.hypot(a[0]+t*(b[0]-a[0])-.06f,a[1]+t*(b[1]-a[1]))/.60f;
+        float scale=1.42f/2.42f;
+        float z=data.desktopGeometry?(-.177f*.136f)*scale:.012f;
+        float t=(z-a[2])/dz;if(t<0||t>1)return Float.NaN;
+        float cx=data.desktopGeometry?.044f*scale:.06f,cy=data.desktopGeometry?.004f*scale:0,r=data.desktopGeometry?1.018f*scale:.60f;
+        return (float)Math.hypot(a[0]+t*(b[0]-a[0])-cx,a[1]+t*(b[1]-a[1])-cy)/r;
     }
     private static float approach(float value,float target,float step){return value+Math.signum(target-value)*Math.min(Math.abs(target-value),step);}
     private boolean advance(float seconds){float step=seconds*2.4f;
@@ -132,8 +135,8 @@ public final class CaseSurface extends GLSurfaceView implements GLSurfaceView.Re
         glUniform1i(textureUniform,0);glActiveTexture(GL_TEXTURE0);glEnableVertexAttribArray(position);glEnableVertexAttribArray(uv);glEnableVertexAttribArray(normal);
         opaque.clear();transparent.clear();for(Draw draw:draws){CaseGeometry.Mesh mesh=draw.mesh;float visibility=mesh.part==CaseGeometry.OBI?1-obiRemoved:mesh.part>=CaseGeometry.FILM_TOP?1-wrapRemoved:1;if(visibility<=.001f)continue;draw.alpha=mesh.color[3]*visibility;
             System.arraycopy(root,0,draw.model,0,16);float[] model=draw.model;
-            if(mesh.part==CaseGeometry.LID){Matrix.translateM(model,0,-.69f,0,.045f);Matrix.rotateM(model,0,-155*open,0,1,0);Matrix.translateM(model,0,.69f,0,-.045f);}
-            if(mesh.part==CaseGeometry.DISC){Matrix.translateM(model,0,.30f*discRemoved,.08f*discRemoved,.65f*discRemoved);Matrix.translateM(model,0,.06f,0,0);Matrix.rotateM(model,0,-25*discRemoved,1,0,0);Matrix.translateM(model,0,-.06f,0,0);}
+            if(mesh.part==CaseGeometry.LID){float hx=data.desktopGeometry?-1.12660f*(1.42f/2.42f):-.69f,hz=data.desktopGeometry?0:.045f;Matrix.translateM(model,0,hx,0,hz);Matrix.rotateM(model,0,-155*open,0,1,0);Matrix.translateM(model,0,-hx,0,-hz);}
+            if(mesh.part==CaseGeometry.DISC){float cx=data.desktopGeometry?.044f*(1.42f/2.42f):.06f,cy=data.desktopGeometry?.004f*(1.42f/2.42f):0;Matrix.translateM(model,0,.30f*discRemoved,.08f*discRemoved,.65f*discRemoved);Matrix.translateM(model,0,cx,cy,0);Matrix.rotateM(model,0,-25*discRemoved,1,0,0);Matrix.translateM(model,0,-cx,-cy,0);}
             if(mesh.part==CaseGeometry.OBI)Matrix.translateM(model,0,-1.2f*obiRemoved,0,.06f*obiRemoved);
             if(mesh.part==CaseGeometry.FILM_TOP)Matrix.translateM(model,0,0,.8f*wrapRemoved,.15f*wrapRemoved);
             if(mesh.part==CaseGeometry.FILM_BOTTOM)Matrix.translateM(model,0,0,-.3f*wrapRemoved,.08f*wrapRemoved);

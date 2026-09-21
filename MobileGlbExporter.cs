@@ -12,21 +12,23 @@ public static class MobileGlbExporter
     public static void Export(JewelCaseCoverFlowItem item,string destination)
     {
         string snapshot=Path.Combine(Path.GetTempPath(),"virtual-cd-glb-"+Guid.NewGuid().ToString("N")+".vcd3d");
-        try{MobileCaseExporter.Export(item,snapshot);ConvertSnapshot(snapshot,destination);}
+        try{MobileCaseExporter.Export(item,snapshot);ConvertSnapshotCore(snapshot,destination,DxJewelCaseScene.CaptureMobile(item));}
         finally{if(File.Exists(snapshot))File.Delete(snapshot);}
     }
     public static void ConvertSnapshot(string source,string destination)
+        => ConvertSnapshotCore(source,destination,null);
+    private static void ConvertSnapshotCore(string source,string destination,DxJewelCaseScene.MobileScene? desktop)
     {
         if(new FileInfo(source).Length>32*1024*1024)throw new InvalidDataException("Snapshot exceeds 32 MiB.");
         using var zip=ZipFile.OpenRead(source);
-        if(zip.Entries.Count>11||zip.GetEntry("manifest.json") is not {Length: <=16384})throw new InvalidDataException("Invalid snapshot manifest.");
+        if(zip.Entries.Count>16||zip.GetEntry("manifest.json") is not {Length: <=16384})throw new InvalidDataException("Invalid snapshot manifest.");
         using var manifestInput=zip.GetEntry("manifest.json")!.Open();
         using var document=JsonDocument.Parse(ReadBounded(manifestInput,16384));
         var m=document.RootElement;
-        if(m.GetProperty("format").GetString()!="virtual-cd-case"||m.GetProperty("version").GetInt32() is not (1 or 2))throw new InvalidDataException("Unsupported snapshot.");
+        if(m.GetProperty("format").GetString()!="virtual-cd-case"||m.GetProperty("version").GetInt32() is not (1 or 2 or 3))throw new InvalidDataException("Unsupported snapshot.");
         var images=new Dictionary<string,byte[]>();
         foreach(var property in m.GetProperty("textures").EnumerateObject()){
-            if(!new[]{"front","insideFront","back","spine","rightSpine","inlay","disc","obiFront","obiSpine","obiBack"}.Contains(property.Name)||property.Value.GetProperty("file").GetString()!=property.Name+".png")throw new InvalidDataException("Invalid texture role.");
+            if(!new[]{"front","insideFront","back","spine","rightSpine","inlay","inlayLeft","inlayRight","disc","obiFront","obiSpine","obiBack","obiFrontInside","obiSpineInside","obiBackInside"}.Contains(property.Name)||property.Value.GetProperty("file").GetString()!=property.Name+".png")throw new InvalidDataException("Invalid texture role.");
             var entry=zip.GetEntry(property.Name+".png");if(entry is null||entry.Length>5*1024*1024)throw new InvalidDataException("Invalid texture size.");
             using var input=entry.Open();byte[] png=ReadBounded(input,5*1024*1024);
             if(!Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(png)).Equals(property.Value.GetProperty("sha256").GetString(),StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Texture checksum mismatch.");
@@ -35,7 +37,15 @@ public static class MobileGlbExporter
         bool obi=m.TryGetProperty("obi",out var o)&&o.ValueKind==JsonValueKind.Object;
         bool wrapped=m.TryGetProperty("wrapped",out var w)&&w.GetBoolean();
         if(obi){foreach(string key in new[]{"frontWidthMm","backWidthMm"}){float width=o.GetProperty(key).GetSingle();if(!float.IsFinite(width)||width<1||width>140)throw new InvalidDataException("Invalid obi width.");}}
-        var model=MobileGlbGeometry.Build(new(m.GetProperty("tray").GetString()!,obi,obi?o.GetProperty("frontWidthMm").GetSingle()/100:0,obi?o.GetProperty("backWidthMm").GetSingle()/100:0,images.ContainsKey("disc")));
+        var model=desktop?.Meshes ?? MobileGlbGeometry.Build(new(m.GetProperty("tray").GetString()!,obi,obi?o.GetProperty("frontWidthMm").GetSingle()/100:0,obi?o.GetProperty("backWidthMm").GetSingle()/100:0,images.ContainsKey("disc")));
+        if(desktop is not null)foreach(var (role,bitmap) in desktop.Images){
+            System.Windows.Media.Imaging.BitmapSource image=bitmap;
+            double scale=Math.Min(1,1024d/Math.Max(image.PixelWidth,image.PixelHeight));
+            if(scale<1)image=new System.Windows.Media.Imaging.TransformedBitmap(image,new System.Windows.Media.ScaleTransform(scale,scale));
+            var encoder=new System.Windows.Media.Imaging.PngBitmapEncoder();encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(image));
+            using var output=new MemoryStream();encoder.Save(output);if(output.Length>5*1024*1024)throw new InvalidDataException("Texture exceeds limit");images[role]=output.ToArray();
+        }
+        if(images.Count>32)throw new InvalidDataException("Texture count exceeds limit");
         var writer=new GlbWriter();
         var textureIds=new Dictionary<string,int>();
         foreach(var (role,png) in images){int id=writer.Images.Count;writer.Images.Add(new {name=role,mimeType="image/png",bufferView=writer.View(png)});writer.Textures.Add(new {source=id,sampler=0});textureIds[role]=id;}
@@ -67,8 +77,8 @@ public static class MobileGlbExporter
                     float lid=clip is "Open" or "DiscOut"?Math.Clamp((t-.8f)/.4f,0,1):0;
                     float disc=clip=="DiscOut"?Math.Clamp((t-1.2f)/.4f,0,1):0;
                     Vector3 shift=Vector3.Zero;Quaternion rotation=Quaternion.Identity;float scale=1;
-                    if(part==1){rotation=Quaternion.CreateFromAxisAngle(Vector3.UnitY,-155*lid*MathF.PI/180);var pivot=new Vector3(-.69f,0,.045f);shift=pivot-Vector3.Transform(pivot,rotation);}
-                    if(part==2){rotation=Quaternion.CreateFromAxisAngle(Vector3.UnitX,-25*disc*MathF.PI/180);shift=new(.30f*disc,.08f*disc,.65f*disc);}
+                    if(part==1){rotation=Quaternion.CreateFromAxisAngle(Vector3.UnitY,-155*lid*MathF.PI/180);var pivot=desktop is null?new Vector3(-.69f,0,.045f):new Vector3(DxJewelCaseScene.MobileHingeX,0,0);shift=pivot-Vector3.Transform(pivot,rotation);}
+                    if(part==2){rotation=Quaternion.CreateFromAxisAngle(Vector3.UnitX,-25*disc*MathF.PI/180);var pivot=desktop is null?new Vector3(.06f,0,0):new Vector3(.044f,.004f,0)*DxJewelCaseScene.MobileScale;shift=new Vector3(.30f*disc,.08f*disc,.65f*disc)+pivot-Vector3.Transform(pivot,rotation);}
                     if(part==3){shift=new(-1.2f*band,0,.06f*band);scale=1-band;}
                     if(part>=4){shift=part==4?new(0,.8f*wrap,.15f*wrap):part==5?new(0,-.3f*wrap,.08f*wrap):new(1.3f*wrap,0,.2f*wrap);scale=1-wrap;}
                     translations[frame*3]=shift.X;translations[frame*3+1]=shift.Y;translations[frame*3+2]=shift.Z;
@@ -80,7 +90,8 @@ public static class MobileGlbExporter
             }
             writer.Animations.Add(new {name=clip,samplers,channels});
         }
-        var profile=new {profile="jewel-case-glb-1",title=m.GetProperty("title").GetString(),artist=m.GetProperty("artist").GetString(),tray=m.GetProperty("tray").GetString(),obi=obi?JsonSerializer.Deserialize<object>(o.GetRawText()):null,wrapped};
+        var profile=new {profile=desktop is null?"jewel-case-glb-1":"jewel-case-glb-2",title=m.GetProperty("title").GetString(),artist=m.GetProperty("artist").GetString(),tray=m.GetProperty("tray").GetString(),obi=obi?JsonSerializer.Deserialize<object>(o.GetRawText()):null,wrapped,
+            attribution=desktop is null?null:"CD, DVD case — Moder (@MHKK_1419475), https://www.printables.com/model/647946-cd-dvd-case — CC BY 4.0 https://creativecommons.org/licenses/by/4.0/ . Modified: normalized, separated, remeshed and textured by Virtual CD Collection Studio."};
         writer.Save(destination,profile);
     }
     private static byte[] ReadBounded(Stream input,int limit){using var bytes=new MemoryStream();byte[] buffer=new byte[8192];int n;while((n=input.Read(buffer))>0){if(bytes.Length+n>limit)throw new InvalidDataException("Snapshot entry exceeds limit.");bytes.Write(buffer,0,n);}return bytes.ToArray();}

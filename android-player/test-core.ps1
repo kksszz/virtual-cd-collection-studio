@@ -3,11 +3,15 @@ $taskJdk = Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot '.tools\jdk') -Di
 if (!$taskJdk) { throw 'JDK 17を.tools\jdkに配置してください。' }
 $output = Join-Path $PSScriptRoot '.tools\core-test-classes'
 New-Item -ItemType Directory -Path $output -Force | Out-Null
+& (Join-Path $taskJdk.FullName 'bin\javac.exe') -encoding UTF8 -d $output (Join-Path $PSScriptRoot 'app\src\main\java\jp\virtualcd\player\LanguageStrings.java') (Join-Path $PSScriptRoot 'tests\LanguageStringsTest.java')
+if ($LASTEXITCODE -ne 0) { throw 'Language test compilation failed' }
+& (Join-Path $taskJdk.FullName 'bin\java.exe') -cp $output LanguageStringsTest
+if ($LASTEXITCODE -ne 0) { throw 'Language test failed' }
 & (Join-Path $taskJdk.FullName 'bin\javac.exe') -encoding UTF8 -d $output (Join-Path $PSScriptRoot 'app\src\main\java\jp\virtualcd\player\PlaybackBudget.java') (Join-Path $PSScriptRoot 'tests\PlaybackBudgetTest.java')
 if ($LASTEXITCODE -ne 0) { throw 'Timer test compilation failed' }
 & (Join-Path $taskJdk.FullName 'bin\java.exe') -cp $output PlaybackBudgetTest
 if ($LASTEXITCODE -ne 0) { throw 'Timer test failed' }
-& (Join-Path $taskJdk.FullName 'bin\javac.exe') -encoding UTF-8 -d $output (Join-Path $PSScriptRoot 'app\src\main\java\jp\virtualcd\player\library\AudioFormats.java') (Join-Path $PSScriptRoot 'app\src\main\java\jp\virtualcd\player\archive\StoredZipIndex.java') (Join-Path $PSScriptRoot 'tests\StoredZipIndexTest.java')
+& (Join-Path $taskJdk.FullName 'bin\javac.exe') -encoding UTF-8 -cp $output -d $output (Join-Path $PSScriptRoot 'app\src\main\java\jp\virtualcd\player\library\AudioFormats.java') (Join-Path $PSScriptRoot 'app\src\main\java\jp\virtualcd\player\archive\StoredZipIndex.java') (Join-Path $PSScriptRoot 'tests\StoredZipIndexTest.java')
 if ($LASTEXITCODE -ne 0) { throw 'Core test compilation failed' }
 & (Join-Path $taskJdk.FullName 'bin\java.exe') -cp $output StoredZipIndexTest @args
 if ($LASTEXITCODE -ne 0) { throw 'Core test failed' }

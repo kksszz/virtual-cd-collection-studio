@@ -3,6 +3,7 @@ bin/
 obj/
 **/bin/
 **/obj/
+*_wpftmp.csproj
 
 # Visual Studio / Rider / VS Code
 .vs/
@@ -14,6 +15,7 @@ obj/
 *.sln.docstates
 
 # Local test and AI assets
+/1/
 .ai-dev/
 .smoke-*/
 AiDevHarness/model-cache/

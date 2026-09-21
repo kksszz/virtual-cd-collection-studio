@@ -28,7 +28,7 @@ public final class AlbumTracks {
                 .setTrackNumber(number>0?number:null).setDiscNumber(disc>0?disc:null).setExtras(new android.os.Bundle(properties)).build()).build();}
     }
     public final List<Track> tracks=new ArrayList<>();
-    public String title,artist="アーティスト情報なし";
+    public String title,artist=jp.virtualcd.player.LanguageStrings.text("アーティスト情報なし","No artist information");
     /** Read only enough tracks to obtain an album-list artist; never runs on the UI thread. */
     public static String readArtist(Context context,AlbumLibrary.Album album)throws IOException{
         var result=new AlbumTracks();
@@ -38,15 +38,15 @@ public final class AlbumTracks {
             files.sort(Comparator.comparing(a->AudioFormats.natural(a.name)));
             for(var file:files)if(!file.directory&&AudioFormats.audio(file.name)){
                 result.readFile(context,file);
-                if(!result.artist.equals("アーティスト情報なし"))break;
+                if(!result.artist.equals(jp.virtualcd.player.LanguageStrings.text("アーティスト情報なし","No artist information")))break;
             }
         }else if(AudioFormats.archive(album.name)){
             var fd=context.getContentResolver().openFileDescriptor(album.uri,"r");
-            if(fd==null)throw new IOException("音源を開けません");
+            if(fd==null)throw new IOException(jp.virtualcd.player.LanguageStrings.text("音源を開けません","Unable to open audio"));
             try(var input=new ParcelFileDescriptor.AutoCloseInputStream(fd)){
                 for(var entry:StoredZipIndex.read(input.getChannel())){
                     result.add(input,entry.name,ZipTrackDataSource.trackUri(album.uri,entry.name),entry.offset,entry.length);
-                    if(!result.artist.equals("アーティスト情報なし"))break;
+                    if(!result.artist.equals(jp.virtualcd.player.LanguageStrings.text("アーティスト情報なし","No artist information")))break;
                 }
             }
         }else if(AudioFormats.audio(album.name))result.readFile(context,album);
@@ -82,7 +82,7 @@ public final class AlbumTracks {
             if(progress!=null)progress.preview(preview);
             for(var file:files){checkInterrupted();result.readFile(context,file);if(progress!=null)progress.update(result.tracks.size(),files.size());}
         }else if(AudioFormats.archive(album.name)){
-            var fd=context.getContentResolver().openFileDescriptor(album.uri,"r");if(fd==null)throw new IOException("音源を開けません");
+            var fd=context.getContentResolver().openFileDescriptor(album.uri,"r");if(fd==null)throw new IOException(jp.virtualcd.player.LanguageStrings.text("音源を開けません","Unable to open audio"));
             try(var input=new ParcelFileDescriptor.AutoCloseInputStream(fd)){
                 var entries=StoredZipIndex.read(input.getChannel());
                 for(var entry:entries)preview.basic(entry.name,ZipTrackDataSource.trackUri(album.uri,entry.name));
@@ -90,8 +90,8 @@ public final class AlbumTracks {
                 for(var entry:entries){checkInterrupted();result.add(input,entry.name,ZipTrackDataSource.trackUri(album.uri,entry.name),entry.offset,entry.length);if(progress!=null)progress.update(result.tracks.size(),entries.size());}
             }
         }else if(AudioFormats.audio(album.name)){preview.basic(album.name,album.uri);if(progress!=null)progress.preview(preview);result.readFile(context,album);}
-        else throw new IOException("未対応の形式です。MP3/FLAC/WAV/M4Aまたは無圧縮ZIPを選択してください");
-        if(result.tracks.isEmpty())throw new IOException("対応する音楽ファイルがありません");
+        else throw new IOException(jp.virtualcd.player.LanguageStrings.text("未対応の形式です。MP3/FLAC/WAV/M4Aまたは無圧縮ZIPを選択してください","Unsupported format. Select MP3/FLAC/WAV/M4A or an uncompressed ZIP."));
+        if(result.tracks.isEmpty())throw new IOException(jp.virtualcd.player.LanguageStrings.text("対応する音楽ファイルがありません","No supported music files"));
         result.tracks.sort(Comparator.comparingInt((Track t)->t.disc>0?t.disc:1)
             .thenComparingInt(t->t.number>0?t.number:Integer.MAX_VALUE).thenComparing(t->AudioFormats.natural(t.file)));
         for(var t:result.tracks)if(t.album==null||t.album.trim().isEmpty())t.album=result.title;
@@ -103,7 +103,7 @@ public final class AlbumTracks {
     private static void checkInterrupted()throws InterruptedIOException{if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();}
     private void readFile(Context context,AlbumLibrary.Album file)throws IOException{
         checkInterrupted();
-        var fd=context.getContentResolver().openFileDescriptor(file.uri,"r");if(fd==null)throw new IOException("音源を開けません: "+file.name);
+        var fd=context.getContentResolver().openFileDescriptor(file.uri,"r");if(fd==null)throw new IOException(jp.virtualcd.player.LanguageStrings.text("音源を開けません: ","Unable to open audio: ")+file.name);
         try(var input=new ParcelFileDescriptor.AutoCloseInputStream(fd)){add(input,file.name,file.uri,0,input.getChannel().size());}
     }
     private void add(ParcelFileDescriptor.AutoCloseInputStream input,String name,Uri uri,long offset,long length)throws IOException{
@@ -126,7 +126,7 @@ public final class AlbumTracks {
             if(android.os.Build.VERSION.SDK_INT>=31)t.properties.putString(TrackProperties.RATE,metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_SAMPLERATE));
             String albumArtist=metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST);
             if(albumArtist==null||albumArtist.trim().isEmpty())albumArtist=t.artist;
-            if(artist.equals("アーティスト情報なし")&&albumArtist!=null&&!albumArtist.trim().isEmpty())artist=albumArtist;
+            if(artist.equals(jp.virtualcd.player.LanguageStrings.text("アーティスト情報なし","No artist information"))&&albumArtist!=null&&!albumArtist.trim().isEmpty())artist=albumArtist;
             if(tracks.isEmpty()&&t.album!=null&&!t.album.trim().isEmpty())title=t.album;
         }catch(Exception ignored){ /* Metadata failure must not hide a playable file. */ }
         String legacy=name.toLowerCase(Locale.ROOT).endsWith(".mp3")?LegacyId3Title.read(input.getChannel(),offset,length):null;
