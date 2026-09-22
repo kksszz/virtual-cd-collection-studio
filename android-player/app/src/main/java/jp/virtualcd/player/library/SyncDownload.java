@@ -44,9 +44,12 @@ public final class SyncDownload {
     public static synchronized void pull(Context c,Uri tree,String address,java.util.function.Consumer<String> progress)throws Exception{
         String base=validateAddress(address);byte[] manifest;var connection=connect(base,"vcd-sync.json");try(var in=connection.getInputStream()){manifest=CasePackage.readBytes(in,4*1024*1024);}finally{connection.disconnect();}
         var prefs=c.getSharedPreferences("sync-download-v1",0);String digest=CasePackage.hash(manifest),key=tree.toString();
-        if(digest.equals(prefs.getString(key+"|manifest",""))){reportToPc(base,digest,jp.virtualcd.player.LanguageStrings.text("前回の保存・検証が完了しています（変更なし）","Previously saved and verified (unchanged)"),true);return;}
         var json=new JSONObject(new String(manifest,java.nio.charset.StandardCharsets.UTF_8));if(!json.getString("format").equals("virtual-cd-sync")||json.getInt("version")!=1)throw new IOException(jp.virtualcd.player.LanguageStrings.text("未対応の同期形式です","Unsupported sync format"));
-        var records=json.getJSONObject("albums");var files=new LinkedHashMap<String,JSONObject>();var ids=records.keys();
+        var records=json.getJSONObject("albums");
+        boolean restoring=AlbumDeletion.needsTransfer(c,tree,records);
+        if(!restoring&&digest.equals(prefs.getString(key+"|manifest",""))){reportToPc(base,digest,jp.virtualcd.player.LanguageStrings.text("前回の保存・検証が完了しています（変更なし）","Previously saved and verified (unchanged)"),true);return;}
+        manifest=json.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var files=new LinkedHashMap<String,JSONObject>();var ids=records.keys();
         while(ids.hasNext()){String id=ids.next();if(!id.matches("[0-9a-f]{64}"))throw new IOException(jp.virtualcd.player.LanguageStrings.text("不正な同期IDです","Invalid sync ID"));var record=records.getJSONObject(id);var array=record.getJSONArray("files");for(int i=0;i<array.length();i++){var file=array.getJSONObject(i);String path=MobileSync.safePath(file.getString("path"));if(!path.startsWith(".vcd-sync/"+id+"/")||!file.getString("sha256").matches("[0-9a-f]{64}")||file.getLong("size")<0||file.getLong("size")>16L*1024*1024*1024)throw new IOException(jp.virtualcd.player.LanguageStrings.text("不正な転送情報です","Invalid transfer data"));if(files.put(path,file)!=null)throw new IOException(jp.virtualcd.player.LanguageStrings.text("重複した転送情報です","Duplicate transfer data"));if(files.size()>100000)throw new IOException(jp.virtualcd.player.LanguageStrings.text("転送ファイルが多すぎます","Too many transfer files"));}}
         long total=0;for(var file:files.values())total=Math.addExact(total,file.getLong("size"));
         final long[] lastReport={0};
@@ -76,6 +79,9 @@ public final class SyncDownload {
         FileOutputStream saved=null;try{saved=backup.startWrite();saved.write(manifest);backup.finishWrite(saved);}catch(Exception ex){if(saved!=null)backup.failWrite(saved);throw ex;}
         try{try(var out=c.getContentResolver().openOutputStream(commit,"wt")){if(out==null)throw new IOException(jp.virtualcd.player.LanguageStrings.text("同期情報を保存できません","Unable to save sync information"));out.write(manifest);}}
         catch(Exception ex){if(previous!=null)try(var out=c.getContentResolver().openOutputStream(commit,"wt")){if(out!=null)out.write(previous);}catch(Exception ignored){}throw ex;}
+        var restoredUris=new ArrayList<Uri>();var transferredIds=records.keys();
+        while(transferredIds.hasNext()){var audio=target.existing(records.getJSONObject(transferredIds.next()).getString("music"));if(audio!=null)restoredUris.add(audio.uri);}
+        AlbumDeletion.transferred(c,tree,records,restoredUris);
         if(!prefs.edit().putString(key+"|manifest",digest).commit())throw new IOException(jp.virtualcd.player.LanguageStrings.text("同期完了状態を保存できませんでした。再接続してください","Unable to save sync completion state. Reconnect."));
         meter.report(jp.virtualcd.player.LanguageStrings.text("PCからの転送完了","Transfer from PC complete"),"");reportToPc(base,digest,meter.text(jp.virtualcd.player.LanguageStrings.text("保存・検証完了","Saved and verified"),""),true);
     }

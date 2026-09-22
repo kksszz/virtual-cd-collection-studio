@@ -219,6 +219,7 @@ public partial class MainWindow : Window
         Closed += (_, _) =>
         {
             StopAutomaticArtwork();
+            _editBackupTimer?.Stop();
             _albumSearchTimer.Stop();
             _libraryChangeTimer.Stop();
             _libraryDiscoveryTimer.Stop();
@@ -270,6 +271,7 @@ public partial class MainWindow : Window
         ScheduleLibraryDiscovery(TimeSpan.FromSeconds(5));
         ScheduleRequested3dPreview(args);
         ConfigureAutomaticArtwork();
+        StartEditBackupRetention();
     }
 
     private void StartCachedLibraryMaintenance()
@@ -519,7 +521,7 @@ public partial class MainWindow : Window
         SaveLibraryCache();
         var previousLanguage = _settings.DisplayLanguage;
         var dialog = new SettingsWindow(_folders, _disabledFolders, _settings.MinimizeOnClose,
-            DataDirectory, previousLanguage, _settings.TagBackupEnabled, _settings.TagBackupFolder) { Owner = this,
+            DataDirectory, previousLanguage, _settings.TagBackupEnabled, _settings.TagBackupFolder, _settings.AutoCleanupEditBackups) { Owner = this,
                 LibraryAlbums = _albums.Select(item => item.Album).ToArray(),
                 AutomaticArtworkEnabled = _settings.AutomaticArtworkEnabled,
                 AutomaticArtworkPaused = _settings.AutomaticArtworkPaused };
@@ -533,6 +535,7 @@ public partial class MainWindow : Window
         _settings.DisplayLanguage = dialog.DisplayLanguage;
         _settings.TagBackupEnabled = dialog.TagBackupEnabled;
         _settings.TagBackupFolder = dialog.TagBackupFolder;
+        _settings.AutoCleanupEditBackups = dialog.AutoCleanupEditBackups;
         _settings.AutomaticArtworkEnabled = dialog.AutomaticArtworkEnabled;
         _settings.AutomaticArtworkPaused = dialog.AutomaticArtworkPaused;
         ConfigureAutomaticArtwork();
@@ -853,6 +856,7 @@ public partial class MainWindow : Window
         {
             token.ThrowIfCancellationRequested();
             var directory = pendingDirectories.Dequeue();
+            if (FolderAlbumLayout.IsTemporary(directory)) continue;
             try
             {
                 // A registered root may itself be an album, while known album
@@ -863,6 +867,7 @@ public partial class MainWindow : Window
                     var candidate = FindUntrackedAlbumInDirectory(directory, known, token);
                     if (candidate is not null) return [candidate];
                 }
+                if (FolderAlbumLayout.IsRoot(directory)) continue;
 
                 foreach (var child in Directory.EnumerateDirectories(directory, "*", SearchOption.TopDirectoryOnly))
                 {
@@ -898,9 +903,14 @@ public partial class MainWindow : Window
     private static string? FindUntrackedAlbumInDirectory(
         string directory, IReadOnlySet<string> known, CancellationToken token)
     {
+        if (FolderAlbumLayout.IsTemporary(directory)) return null;
+        var groupedRoot = FolderAlbumLayout.RootFor(directory);
+        if (FolderAlbumLayout.IsRoot(groupedRoot))
+            return known.Contains(groupedRoot) ? null : groupedRoot;
         foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
         {
             token.ThrowIfCancellationRequested();
+            if (FolderAlbumLayout.IsSupersededArchive(file)) continue;
             string? candidate = null;
             if (ZipAlbumReader.IsSupportedArchivePath(file) || CueAlbumReader.IsCue(file)) candidate = file;
             else if (ZipAlbumReader.IsStandardAudioPath(file)) candidate = directory;
@@ -1020,6 +1030,7 @@ public partial class MainWindow : Window
         foreach (var changedPath in changes)
         {
             token.ThrowIfCancellationRequested();
+            if (FolderAlbumLayout.IsTemporary(changedPath) || FolderAlbumLayout.IsSupersededArchive(changedPath)) continue;
             if (ZipAlbumReader.IsSupportedArchivePath(changedPath) || CueAlbumReader.IsCue(changedPath))
                 candidates.Add(changedPath);
             else if (CueAlbumReader.IsImage(changedPath))
@@ -1058,6 +1069,7 @@ public partial class MainWindow : Window
                 foreach (var file in Directory.EnumerateFiles(scope, "*", options))
                 {
                     token.ThrowIfCancellationRequested();
+                    if (FolderAlbumLayout.IsTemporary(file) || FolderAlbumLayout.IsSupersededArchive(file)) continue;
                     if (ZipAlbumReader.IsSupportedArchivePath(file) || CueAlbumReader.IsCue(file)) candidates.Add(file);
                     else if (ZipAlbumReader.IsStandardAudioPath(file))
                     {
@@ -1070,6 +1082,9 @@ public partial class MainWindow : Window
             catch (UnauthorizedAccessException) { }
         }
 
+        candidates = candidates.Where(path => !FolderAlbumLayout.IsTemporary(path) && !FolderAlbumLayout.IsSupersededArchive(path))
+            .Select(path => Directory.Exists(path) ? FolderAlbumLayout.RootFor(path) : path)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var refreshed = new List<AlbumListItem>();
         var removed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var retry = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1084,8 +1099,8 @@ public partial class MainWindow : Window
                     if (File.Exists(candidate)) album = ZipAlbumReader.Open(candidate);
                 }
                 else if (Directory.Exists(candidate)
-                         && Directory.EnumerateFiles(candidate, "*", SearchOption.TopDirectoryOnly)
-                             .Any(ZipAlbumReader.IsStandardAudioPath))
+                         && (FolderAlbumLayout.IsRoot(candidate) || Directory.EnumerateFiles(candidate, "*", SearchOption.TopDirectoryOnly)
+                             .Any(ZipAlbumReader.IsStandardAudioPath)))
                 {
                     album = ZipAlbumReader.OpenFolder(candidate);
                 }
@@ -1278,6 +1293,7 @@ public partial class MainWindow : Window
 
     private void InsertAlbumSorted(AlbumListItem album)
     {
+        if (FolderAlbumLayout.IsTemporary(album.Album.Path) || FolderAlbumLayout.IsSupersededArchive(album.Album.Path)) return;
         if (_albums.Any(existing => CueAlbumIdentity.IsCoveredBy(album.Album, existing.Album))) return;
         if (_removedAlbumPaths.Contains(album.Album.Path) || !_albumPaths.Add(album.Album.Path)) return;
         var selectedAlias = false;
@@ -1574,11 +1590,13 @@ public partial class MainWindow : Window
             if (!Directory.Exists(folder)) continue;
             foreach (var file in Directory.EnumerateFiles(folder, "*", options))
             {
+                if (FolderAlbumLayout.IsTemporary(file) || FolderAlbumLayout.IsSupersededArchive(file)) continue;
                 if (ZipAlbumReader.IsSupportedArchivePath(file) || CueAlbumReader.IsCue(file)) archivePaths.Add(file);
                 else if (ZipAlbumReader.IsStandardAudioPath(file)) albumFolders.Add(Path.GetDirectoryName(file)!);
             }
         }
 
+        albumFolders = albumFolders.Select(FolderAlbumLayout.RootFor).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var result = new List<AlbumListItem>();
         var number = 0;
         var total = archivePaths.Count + albumFolders.Count;
@@ -2284,6 +2302,8 @@ public partial class MainWindow : Window
         var restored = new List<AlbumListItem>(cachedAlbums.Count);
         foreach (var album in cachedAlbums)
         {
+            if (FolderAlbumLayout.IsTemporary(album.Path) || FolderAlbumLayout.IsSupersededArchive(album.Path))
+            { removedTagArtifacts++; continue; }
             var restoredAlbum = ExcludeCachedTagEditingArtifacts(album, ref removedTagArtifacts);
             if (restoredAlbum.Tracks.Count > 0)
                 restored.Add(new AlbumListItem(restoredAlbum, loadArtwork: false));
@@ -6020,6 +6040,7 @@ public partial class MainWindow : Window
         public List<string> DisabledMusicFolders { get; set; } = [];
         public bool MinimizeOnClose { get; set; }
         public bool TagBackupEnabled { get; set; }
+        public bool AutoCleanupEditBackups { get; set; } = true;
         public string TagBackupFolder { get; set; } = "";
         public string DisplayLanguage { get; set; } = LocalizationService.Japanese;
         public string? LastAlbumPath { get; set; }

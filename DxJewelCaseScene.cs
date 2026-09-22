@@ -354,6 +354,8 @@ internal sealed partial class DxJewelCaseScene : IDisposable
         _frontPanelRoot.Children.Clear();
         _spineCardRoot.Children.Clear();
         _diagnosticVisibility.Clear();
+        CancelSpineCardBookletMotion();
+        _spineCardBookletClearance.OffsetZ = 0;
         _spineCardBookletClearance.OffsetY = 0;
         _spineCardBookletClearance.OffsetX = 0;
         _wrappingUpperRoot.Children.Clear();
@@ -364,6 +366,9 @@ internal sealed partial class DxJewelCaseScene : IDisposable
         _tearTapeRibbonRoot.Children.Clear();
         _tearTapeTabModel = null;
         _tearTapeRibbonModel = null;
+        ResetBookletOpening();
+        CancelBookletMotion();
+        SetBookletProgress(0);
         _bookletRoot.Children.Clear();
         _frontPanelRoot.Children.Add(_bookletRoot);
         _lidRoot.Children.Add(_frontPanelRoot);
@@ -667,6 +672,9 @@ internal sealed partial class DxJewelCaseScene : IDisposable
             shell.FrontArtworkArea.Z - 0.0001f, false, _bookletRoot);
         AddArtwork(item.InsideFrontCover, bookletLeft, bookletRight, bookletBottom, bookletTop,
             bookletRearZ - 0.0001f, true, _bookletRoot);
+        _bookletRearArtwork = _bookletRoot.Children.Last();
+        _bookletOpeningBounds = (bookletLeft, bookletRight, bookletBottom, bookletTop, bookletRearZ - 0.0001f);
+        _bookletOuterImage = item.InsideFrontCover;
         AddBookletRetainers(shell.FrontArtworkArea.Left, bookletRight, bookletBottom, bookletTop,
             height, shell.FrontArtworkArea.Z, unitX, unitY, bookletRetainerAcrylic);
 
@@ -1348,29 +1356,48 @@ internal sealed partial class DxJewelCaseScene : IDisposable
     public void SetBookletRemoved(bool removed, bool animate)
     {
         if (animate) { _ = AnimateBookletAsync(removed); return; }
+        if (!removed) ResetBookletOpening();
         CancelBookletMotion();
         SetBookletProgress(removed ? 1 : 0);
     }
 
     // Separate temporary displacement preserves the user's manually placed obi.
-    // The open lid reverses local X: the booklet slides 2.08 units left.
-    // Clear that swept distance with a small margin, without changing height.
+    // Retreat behind the case instead of rapidly sliding farther sideways.
+    // Keep the obi's front face behind the booklet's extraction plane.
+    private readonly DispatcherTimer _obiBookletTimer = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
+    private EventHandler? _obiBookletTick;
+    private TaskCompletionSource<bool>? _obiBookletCompletion;
+    private void CancelSpineCardBookletMotion()
+    {
+        _obiBookletTimer.Stop();
+        if (_obiBookletTick is not null) _obiBookletTimer.Tick -= _obiBookletTick;
+        _obiBookletTick = null;
+        _obiBookletCompletion?.TrySetResult(false);
+        _obiBookletCompletion = null;
+    }
     public Task MoveSpineCardForBookletAsync(bool clear)
     {
-        var from = _spineCardBookletClearance.OffsetX;
-        var target = clear ? Math.Min(0, -2.20 - _spineCardDragTranslation.OffsetX) : 0;
+        CancelSpineCardBookletMotion();
+        if (_disposed) return Task.CompletedTask;
+        var from = _spineCardBookletClearance.OffsetZ;
+        var target = clear ? Math.Min(0, -.30 - _spineCardDragTranslation.OffsetZ - _spineCardTranslation.OffsetZ) : 0;
         if (Math.Abs(from - target) < 0.00001) return Task.CompletedTask;
-        var completion = new TaskCompletionSource<bool>();
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _obiBookletCompletion = completion;
         var started = System.Diagnostics.Stopwatch.StartNew();
-        var timer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
-        timer.Tick += (_, _) =>
+        _obiBookletTick = (_, _) =>
         {
-            var t = Math.Clamp(started.Elapsed.TotalMilliseconds / 140, 0, 1);
-            _spineCardBookletClearance.OffsetX = from + (target - from) * t * t * (3 - 2 * t);
+            var t = Math.Clamp(started.Elapsed.TotalMilliseconds / 240, 0, 1);
+            _spineCardBookletClearance.OffsetZ = from + (target - from) * t * t * (3 - 2 * t);
             RequestRender();
-            if (t >= 1) { timer.Stop(); completion.TrySetResult(true); }
+            if (t >= 1) {
+                _obiBookletTimer.Stop(); _obiBookletTimer.Tick -= _obiBookletTick;
+                _obiBookletTick = null; _obiBookletCompletion = null;
+                completion.TrySetResult(true);
+            }
         };
-        timer.Start();
+        _obiBookletTimer.Tick += _obiBookletTick;
+        _obiBookletTimer.Start();
         return completion.Task;
     }
 
@@ -1424,6 +1451,7 @@ internal sealed partial class DxJewelCaseScene : IDisposable
 
     public Task<bool> AnimateBookletAsync(bool removed)
     {
+        if (!removed) ResetBookletOpening();
         CancelBookletMotion();
         var from = _bookletProgress; var target = removed ? 1d : 0d;
         if (Math.Abs(from - target) < .00001) { SetBookletProgress(target); return Task.FromResult(true); }
@@ -3095,7 +3123,9 @@ internal sealed partial class DxJewelCaseScene : IDisposable
         CancelWrappingMotion();
         CancelSpineCardMotion();
         CancelBookletMotion();
+        CancelSpineCardBookletMotion();
         _animationRenderTimer.Stop();
+        ResetBookletOpening();
         Viewport.Items.Clear();
         _textureCache.Clear();
         _effects.Dispose();

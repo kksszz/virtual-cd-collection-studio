@@ -26,6 +26,7 @@ public final class DeviceSmokeTest extends Instrumentation {
     @Override public void onStart(){
         Bundle result=new Bundle();
         try{
+            if(testMode.equals("deletion")){DeletionDeviceChecks.run(this);result.putString("deletion","PASS isolated SAF: root protection, changed files, new files, album scope, related data and retransfer");finish(-1,result);return;}
             if(testMode.equals("languageUi")){LanguageDeviceChecks.run(this);result.putString("languageUi","PASS settings selection, activity recreation, Japanese/English UI, saved setting");finish(-1,result);return;}
             if(testMode.equals("language")){
                 String original=LanguageStrings.code(),prefix="language-test-"+System.nanoTime();
@@ -202,7 +203,7 @@ public final class DeviceSmokeTest extends Instrumentation {
             var sample=AlbumTracks.load(context,mp3).tracks.get(0).item();testBoundaries(sample,true,Player.REPEAT_MODE_OFF);testBoundaries(sample,false,Player.REPEAT_MODE_OFF);
             testBoundaries(sample,false,Player.REPEAT_MODE_ONE);testBoundaries(sample,false,Player.REPEAT_MODE_ALL);result.putString("boundaries","PASS gapless ON/OFF, last track, repeat one/all");
             result.putString("stream","PASS: folder scan + FLAC/MP3/ZIP decode and seek; muted; source files unchanged\n");finish(-1,result);
-        }catch(Throwable e){result.putString("stream","FAIL: "+e+"\n");finish(0,result);}
+        }catch(Throwable e){result.putString("stream","FAIL: "+android.util.Log.getStackTraceString(e)+"\n");finish(0,result);}
     }
     private void testAlbumOrder(){runOnMainSync(()->{
         var context=getTargetContext();var pref=context.getSharedPreferences("album-order",0);boolean had=pref.contains("artist"),old=pref.getBoolean("artist",false);

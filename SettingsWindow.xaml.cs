@@ -34,13 +34,14 @@ public partial class SettingsWindow : Window
     }
     public bool TagBackupEnabled => TagBackupCheck.IsChecked == true;
     public string TagBackupFolder => TagBackupFolderTextBox.Text.Trim();
+    public bool AutoCleanupEditBackups => EditBackupCleanupCheck.IsChecked == true;
     public string DisplayLanguage => (LanguageCombo.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag?.ToString()
         ?? LocalizationService.Japanese;
     public bool ExitRequested { get; private set; }
 
     public SettingsWindow(IEnumerable<string> folders, IEnumerable<string> disabledFolders, bool minimizeOnClose,
         string dataDirectory, string displayLanguage = LocalizationService.Japanese,
-        bool tagBackupEnabled = false, string tagBackupFolder = "")
+        bool tagBackupEnabled = false, string tagBackupFolder = "", bool autoCleanupEditBackups = true)
     {
         InitializeComponent();
         _dataDirectory = dataDirectory;
@@ -51,6 +52,7 @@ public partial class SettingsWindow : Window
         MinimizeOnCloseCheck.IsChecked = minimizeOnClose;
         TagBackupCheck.IsChecked = tagBackupEnabled;
         TagBackupFolderTextBox.Text = tagBackupFolder;
+        EditBackupCleanupCheck.IsChecked = autoCleanupEditBackups;
         UpdateTagBackupOption();
         LanguageCombo.SelectedIndex = string.Equals(displayLanguage, LocalizationService.English,
             StringComparison.OrdinalIgnoreCase) ? 1 : 0;

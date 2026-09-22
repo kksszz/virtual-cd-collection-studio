@@ -13,11 +13,11 @@
     <Copyright>Copyright (C) 2026 kksszz</Copyright>
     <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
-    <Version>0.84.0</Version>
-    <InformationalVersion>0.84.0</InformationalVersion>
+    <Version>0.85.0</Version>
+    <InformationalVersion>0.85.0</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <AssemblyVersion>0.84.0.0</AssemblyVersion>
-    <FileVersion>0.84.0.0</FileVersion>
+    <AssemblyVersion>0.85.0.0</AssemblyVersion>
+    <FileVersion>0.85.0.0</FileVersion>
   </PropertyGroup>
   <ItemGroup>
     <Resource Include="Assets\AppIcon.ico" />

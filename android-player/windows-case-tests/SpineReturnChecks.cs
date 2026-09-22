@@ -35,15 +35,20 @@ internal static class SpineReturnChecks
             if(!task.IsCompleted){var frame=new DispatcherFrame();_=task.ContinueWith(_=>app.Dispatcher.BeginInvoke(new Action(()=>frame.Continue=false)));Dispatcher.PushFrame(frame);}
             task.GetAwaiter().GetResult();
         }
-        foreach(var x in new[]{-3d,0d,4d}){
+        foreach(var x in new[]{-3d,0d,4d})foreach(var z in new[]{-.7d,0d,.4d}){
             type.GetMethod("SetSpineCardProgress",flags)!.Invoke(scene,[1d]);
-            drag.OffsetX=x;drag.OffsetY=.9;drag.OffsetZ=.4;
+            drag.OffsetX=x;drag.OffsetY=.9;drag.OffsetZ=z;
             Wait((Task)type.GetMethod("MoveSpineCardForBookletAsync")!.Invoke(scene,[true])!);
-            if(clearance.OffsetX+drag.OffsetX > -2.20+1e-8||clearance.OffsetY!=0)throw new Exception("Obi clearance not left of booklet");
+            if(clearance.OffsetX!=0||clearance.OffsetY!=0||clearance.OffsetZ>0
+                ||clearance.OffsetZ+drag.OffsetZ+translation.OffsetZ > -.30+1e-8)
+                throw new Exception("Obi must retreat only in depth, behind the extraction plane");
             Wait((Task)type.GetMethod("MoveSpineCardForBookletAsync")!.Invoke(scene,[false])!);
-            if(clearance.OffsetX!=0||clearance.OffsetY!=0||drag.OffsetX!=x||drag.OffsetY!=.9||drag.OffsetZ!=.4)throw new Exception("Manual obi position changed");
+            if(clearance.OffsetX!=0||clearance.OffsetY!=0||clearance.OffsetZ!=0||drag.OffsetX!=x||drag.OffsetY!=.9||drag.OffsetZ!=z)throw new Exception("Manual obi position changed");
         }
+        var pending=(Task)type.GetMethod("MoveSpineCardForBookletAsync")!.Invoke(scene,[true])!;
         (scene as IDisposable)?.Dispose();
+        Wait(pending);
+        if(((DispatcherTimer)type.GetField("_obiBookletTimer",flags)!.GetValue(scene)!).IsEnabled)throw new Exception("Retreat timer remains active after disposal");
         Console.WriteLine("PASS booklet obi clearance and exact manual-position restoration");
         Console.WriteLine("PASS obi return: arbitrary drag, partial/fully removed/already seated, both directions");
     }

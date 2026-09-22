@@ -9,7 +9,16 @@ namespace ZipMp3Player;
 internal static class ZipFolderConversion
 {
     internal sealed record Result(string Source, string Destination, string ArchiveHash,
-        Dictionary<string, string> EntryPaths, Dictionary<string, string> Hashes, ZipAlbum Album);
+        Dictionary<string, string> EntryPaths, Dictionary<string, string> Hashes, IReadOnlyList<ZipAlbum> Albums)
+    {
+        internal ZipAlbum Album => Albums[0];
+        internal (ZipAlbum Album, ZipTrack Track) FindTrack(string entryName)
+        {
+            var path = SafePath(Destination, EntryPaths[entryName]);
+            return Albums.SelectMany(a => a.Tracks.Select(t => (Album: a, Track: t)))
+                .Single(pair => string.Equals(pair.Track.SourcePath, path, StringComparison.OrdinalIgnoreCase));
+        }
+    }
     internal static string DestinationFor(string source) => source.EndsWith(".zip.mp3", StringComparison.OrdinalIgnoreCase)
         ? Path.GetFullPath(source)[..^8] : throw new IOException("ZIP.MP3を選択してください。");
     internal static string SafePath(string root, string name)
@@ -77,14 +86,31 @@ internal static class ZipFolderConversion
                 if (Hash(disk) != expected) throw new IOException("展開内容の照合に失敗しました。");
                 hashes.Add(relative, expected);
             }
-            var album = ZipAlbumReader.OpenFolder(stage);
-            if (album.Tracks.Count != original.Tracks.Count) throw new IOException("複数階層に分かれた音源は対応していません。元ZIPは保持しています。");
-            foreach (var track in album.Tracks)
+            FolderAlbumLayout.Write(stage, source);
+            using (var markerStream = File.OpenRead(Path.Combine(stage, FolderAlbumLayout.MarkerName)))
+                hashes[FolderAlbumLayout.MarkerName] = Hash(markerStream);
+            // The extracted tree remains one album, including all disc subdirectories.
+            ZipAlbum[] ReadAlbums(string root) => [ZipAlbumReader.OpenFolder(root)];
+            var albums = ReadAlbums(stage);
+            var tracks = albums.SelectMany(a => a.Tracks).ToArray();
+            var expectedPaths = original.Tracks.Select(t => SafePath(stage, mapping[t.FileName]))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (tracks.Length != original.Tracks.Count || !expectedPaths.SetEquals(tracks.Select(t => t.SourcePath)))
+                throw new IOException("展開後の曲が元ZIPと一致しません。元ZIPは保持しています。");
+            foreach (var track in tracks)
             { using var reader = TrackAudioReader.Open(track); if (reader.Reader.Read(new byte[4096], 0, 4096) == 0) throw new IOException("音源を読み込めません。"); }
             Directory.Move(stage, destination); // Atomic same-parent publish, no overwrite.
-            return new(source, destination, archiveHash, mapping, hashes, ZipAlbumReader.OpenFolder(destination));
+            return new(source, destination, archiveHash, mapping, hashes, ReadAlbums(destination));
         }
         catch (Exception ex) { throw new IOException($"{ex.Message}\n元ZIPは変更していません。部分的な展開データが残る場合の場所: {stage}", ex); }
+    }
+    internal static void CompleteReplacement(Result result)
+    {
+        var marker = FolderAlbumLayout.Read(result.Destination) ?? throw new IOException("アルバム管理ファイルを読み込めません。");
+        var path = Path.Combine(result.Destination, FolderAlbumLayout.MarkerName);
+        File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(marker with { ReplacementReady = true }));
+        using var stream = File.OpenRead(path);
+        result.Hashes[FolderAlbumLayout.MarkerName] = Hash(stream);
     }
     internal static void DeleteVerifiedSource(Result result)
     {

@@ -38,7 +38,9 @@ internal sealed class BookletViewerWindow : Window
     private bool _closed;
     private int _navigationDirection = 1;
 
-    public BookletViewerWindow(string title, BookletContent booklet)
+    public BookletViewerWindow(string title, BookletContent booklet) : this(title, booklet, 0) { }
+
+    public BookletViewerWindow(string title, BookletContent booklet, int initialPage)
     {
         _booklet = booklet;
         Title = title + " — " + LocalizationService.Select("ジャケット閲覧", "Booklet viewer");
@@ -131,14 +133,15 @@ internal sealed class BookletViewerWindow : Window
         {
             _previous.IsEnabled = _next.IsEnabled = false;
             _status.Text = LocalizationService.Select("ジャケットを開いています…", "Opening booklet…");
-            // Enter directly on the Front page. Previously the full spread was
+            // Enter on the requested page (Front for direct opening, inner page after 3D).
+            // Previously the full spread was
             // shown first and then used as the old page of a polygon turn,
             // which briefly produced several differently sized overlapping
             // copies during the opening transition.
             if (booklet.Pages.Count > 0)
             {
                 _image.Opacity = 0;
-                await ShowPageAsync(0, animateTurn: false);
+                await ShowPageAsync(Math.Clamp(initialPage, 0, booklet.Pages.Count - 1), animateTurn: false);
                 if (_closed) return;
                 var reveal = new ScaleTransform(.965, .965);
                 _image.RenderTransformOrigin = new Point(.5, .5);

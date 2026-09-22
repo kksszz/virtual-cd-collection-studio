@@ -5,6 +5,40 @@ using System.Security.Cryptography;
 using ZipMp3Player;
 
 var diagnosticArchive = Environment.GetEnvironmentVariable("ZIPMP3PLAYER_TAG_DIAG_ARCHIVE");
+var halfWidthArchive = Environment.GetEnvironmentVariable("ZIPMP3PLAYER_HALFWIDTH_DIAG_ARCHIVE");
+if (!string.IsNullOrWhiteSpace(halfWidthArchive))
+{
+    var album = ZipAlbumReader.Open(halfWidthArchive);
+    var folder = Path.Combine(Path.GetTempPath(), "ZipMp3Player-HalfWidthDiag-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(folder);
+    var flags = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic;
+    string Normalize(string? value) => TagTextNormalization.ToHalfWidthAsciiSymbols(value ?? "").Trim();
+    foreach (var track in album.Tracks)
+    {
+        var path = Path.Combine(folder, Guid.NewGuid().ToString("N") + ".mp3");
+        using (var input = ArchiveEntryExtractor.OpenSeekable(track))
+        using (var output = File.Create(path)) input.CopyTo(output);
+        var expected = new TrackTagValues(Normalize(track.Title), Normalize(track.Artist), Normalize(track.Album),
+            uint.TryParse(track.Year,out var year)?year:0, Normalize(track.Genre),
+            (uint)Math.Max(0,track.TrackNumber),(uint)Math.Max(0,track.DiscNumber),(uint)Math.Max(0,track.DiscCount));
+        typeof(TrackTagWriteService).GetMethod("ApplyTags",flags)!.Invoke(null,[path,expected]);
+        using var saved = TagLib.File.Create(path);
+        var actual = new TrackTagValues(saved.Tag.Title??"",saved.Tag.FirstPerformer??"",saved.Tag.Album??"",
+            saved.Tag.Year,saved.Tag.FirstGenre??"",saved.Tag.Track,saved.Tag.Disc,saved.Tag.DiscCount);
+        if (actual != expected)
+        {
+            Console.WriteLine("Mismatch: "+track.FileName);
+            foreach(var property in typeof(TrackTagValues).GetProperties())
+                if(!Equals(property.GetValue(expected),property.GetValue(actual)))
+                    Console.WriteLine(property.Name+": expected=["+property.GetValue(expected)+"] actual=["+property.GetValue(actual)+"]");
+            Console.WriteLine("Saved copy: "+path);
+            if(saved.GetTag(TagLib.TagTypes.Id3v2,false) is TagLib.Id3v2.Tag id3)Console.WriteLine("ID3v2."+id3.Version);
+            return;
+        }
+    }
+    Console.WriteLine("All tracks round-trip correctly in isolated copies: "+folder);
+    return;
+}
 if (!string.IsNullOrWhiteSpace(diagnosticArchive))
 {
     DiagnoseJapaneseTag(diagnosticArchive);
@@ -46,6 +80,7 @@ try
     TestUnsynchronizedJapaneseId3(root, first);
     TestMalformedPictureFrame(root, first);
     TestNormal(root, first);
+    TestHalfWidthSlash(root, first);
     foreach (var compression in new[] { CompressionLevel.NoCompression, CompressionLevel.Optimal })
         TestArchive(root, first, second, compression);
     TestArchiveRename(root, first);
@@ -54,6 +89,32 @@ try
 finally
 {
     try { Directory.Delete(root, recursive: true); } catch { }
+}
+
+static void TestHalfWidthSlash(string root, string source)
+{
+    var folder=Path.Combine(root,"halfwidth-slash");Directory.CreateDirectory(folder);
+    foreach(byte version in new byte[]{2,3,4})
+    {
+        var path=Path.Combine(folder,"source-"+version+".mp3");File.Copy(source,path);
+        SetInitial(path,"半角変換",version);
+        using(var file=TagLib.File.Create(path)){file.Tag.Performers=["小松　一彦／オール　ジャパン交響楽団"];file.Tag.Genres=["Rock／Pop"];file.Save();}
+        var hash=AudioPayloadHash(path);
+        foreach(var zipped in new[]{false,true})
+        {
+            string target;
+            if(zipped){target=Path.Combine(root,"slash-"+version+".zip.mp3");using var zip=ZipFile.Open(target,ZipArchiveMode.Create);Add(zip,"01.mp3",path,CompressionLevel.NoCompression);}
+            else {var dir=Path.Combine(root,"slash-dir-"+version);Directory.CreateDirectory(dir);target=Path.Combine(dir,"01.mp3");File.Copy(path,target);}
+            var album=zipped?ZipAlbumReader.Open(target):ZipAlbumReader.OpenFolder(Path.GetDirectoryName(target)!);
+            var track=album.Tracks.Single();
+            var values=new TrackTagValues(track.Title,"小松 一彦/オール ジャパン交響楽団",track.Album,
+                uint.TryParse(track.Year,out var year)?year:0,"Rock/Pop",(uint)track.TrackNumber,(uint)track.DiscNumber,(uint)track.DiscCount);
+            TrackTagWriteService.WriteAlbum(album,[new(track.FileName,track.SourcePath,values)]);
+            if(zipped){var saved=ZipAlbumReader.Open(target).Tracks.Single();Require(saved.Artist==values.Artist&&saved.Genre==values.Genre,"ZIP slash roundtrip");Require(ArchivedAudioHash(saved)==hash,"ZIP slash audio unchanged");}
+            else {VerifyTag(target,values);Require(AudioPayloadHash(target)==hash,"slash audio unchanged");using var saved=TagLib.File.Create(target);Require(((TagLib.Id3v2.Tag)saved.GetTag(TagLib.TagTypes.Id3v2,false)).Version==4,"slash tag upgraded to v2.4");}
+        }
+    }
+    Console.WriteLine("PASS half-width slash: ID3v2.2/2.3/2.4, folder/ZIP, artist/genre, audio unchanged");
 }
 
 static void TestNormal(string root, string source)

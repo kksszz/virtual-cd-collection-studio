@@ -269,6 +269,13 @@ internal static class TrackTagWriteService
     {
         RemoveMalformedPictureFrames(path);
         using var file = TagLib.File.Create(path);
+        // ID3v2.3 serializes multi-value text using '/', so a literal slash
+        // produced by half-width conversion would become a performer separator.
+        // Upgrade only affected ID3 tags; v2.4 preserves '/' inside one value.
+        if ((values.Artist.Contains('/') || values.Genre.Contains('/'))
+            && file.GetTag(TagLib.TagTypes.Id3v2, false) is TagLib.Id3v2.Tag id3
+            && id3.Version < 4)
+            id3.Version = 4;
         file.Tag.Title = NullIfBlank(values.Title);
         file.Tag.Performers = string.IsNullOrWhiteSpace(values.Artist) ? [] : [values.Artist.Trim()];
         file.Tag.Album = NullIfBlank(values.Album);

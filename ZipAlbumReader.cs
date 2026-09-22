@@ -286,9 +286,11 @@ public static class ZipAlbumReader
 
     public static ZipAlbum OpenFolder(string folderPath)
     {
-        var files = Directory.EnumerateFiles(folderPath, "*", SearchOption.TopDirectoryOnly)
+        var grouped = FolderAlbumLayout.IsRoot(folderPath);
+        var files = Directory.EnumerateFiles(folderPath, "*", new EnumerationOptions
+            { RecurseSubdirectories = grouped, AttributesToSkip = FileAttributes.ReparsePoint })
             .Where(IsStandardAudioPath)
-            .OrderBy(path => Path.GetFileName(path), StringComparer.CurrentCultureIgnoreCase)
+            .OrderBy(path => Path.GetRelativePath(folderPath, path), StringComparer.CurrentCultureIgnoreCase)
             .ToList();
         if (files.Count == 0) throw new InvalidDataException("フォルダ内に対応音楽ファイルが見つかりませんでした。");
 
@@ -304,7 +306,7 @@ public static class ZipAlbumReader
             var format = Path.GetExtension(path).TrimStart('.').ToUpperInvariant();
             if (format is "WAV" or "FLAC" or "M4A")
             {
-                tracks.Add(ReadTaggedTrack(path, format, tracks.Count + 1));
+                tracks.Add(ReadTaggedTrack(path, format, tracks.Count + 1, grouped ? Path.GetRelativePath(folderPath, path).Replace('\\', '/') : null));
                 continue;
             }
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -313,13 +315,13 @@ public static class ZipAlbumReader
             tracks.Add(new ZipTrack
             {
                 TrackNumber = tags.Track > 0 ? tags.Track : tracks.Count + 1,
-                FileName = Path.GetFileName(path),
+                FileName = grouped ? Path.GetRelativePath(folderPath, path).Replace('\\', '/') : Path.GetFileName(path),
                 Title = string.IsNullOrWhiteSpace(tags.Title) ? Path.GetFileNameWithoutExtension(path) : tags.Title,
                 Artist = tags.Artist,
                 Album = tags.Album,
                 Year = tags.Year,
                 Genre = tags.Genre,
-                DiscNumber = tags.Disc,
+                DiscNumber = tags.Disc > 0 || !grouped ? tags.Disc : FolderAlbumLayout.DiscFromPath(Path.GetRelativePath(folderPath, path)),
                 DiscCount = tags.DiscCount,
                 AudioFormat = audio.Layer == 2 ? "MP2" : "MP3",
                 SourcePath = path,
@@ -367,7 +369,7 @@ public static class ZipAlbumReader
         return name.AsSpan(guidStart + 1, 32).ToString().All(Uri.IsHexDigit);
     }
 
-    private static ZipTrack ReadTaggedTrack(string path, string format, int fallbackTrack)
+    private static ZipTrack ReadTaggedTrack(string path, string format, int fallbackTrack, string? relativePath = null)
     {
         using var file = TagLib.File.Create(path);
         var tag = file.Tag;
@@ -388,13 +390,13 @@ public static class ZipAlbumReader
         return new ZipTrack
         {
             TrackNumber = tag.Track > 0 && tag.Track <= int.MaxValue ? (int)tag.Track : fallbackTrack,
-            FileName = Path.GetFileName(path),
+            FileName = relativePath ?? Path.GetFileName(path),
             Title = string.IsNullOrWhiteSpace(tag.Title) ? Path.GetFileNameWithoutExtension(path) : tag.Title,
             Artist = tag.Performers.FirstOrDefault() ?? "",
             Album = tag.Album ?? "",
             Year = tag.Year > 0 ? tag.Year.ToString() : "",
             Genre = tag.Genres.FirstOrDefault() ?? "",
-            DiscNumber = tag.Disc > 0 && tag.Disc <= int.MaxValue ? (int)tag.Disc : 0,
+            DiscNumber = tag.Disc > 0 && tag.Disc <= int.MaxValue ? (int)tag.Disc : relativePath is null ? 0 : FolderAlbumLayout.DiscFromPath(relativePath),
             DiscCount = tag.DiscCount > 0 && tag.DiscCount <= int.MaxValue ? (int)tag.DiscCount : 0,
             AudioFormat = format,
             SourcePath = path,

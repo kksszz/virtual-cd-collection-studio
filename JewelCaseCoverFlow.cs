@@ -1767,6 +1767,18 @@ public sealed partial class JewelCaseCoverFlow : Grid
         try
         {
             var booklet = await Task.Run(loader);
+            var firstInside = booklet.Pages.Select((page, index) => (page, index))
+                .FirstOrDefault(entry => entry.page.Role is "Page" or "LinerNotes");
+            BitmapSource? openingPage = null;
+            if (firstInside.page is not null)
+            {
+                // Optional preview must not prevent opening the reader if a page is unreadable.
+                try { openingPage = await Task.Run(() => {
+                    var image = firstInside.page.LoadImage();
+                    if (image.CanFreeze) image.Freeze();
+                    return image;
+                }); } catch { }
+            }
             if (!IsLoaded || key != SelectedKey) return;
             if (HasSelectedSpineCard())
             {
@@ -1786,7 +1798,13 @@ public sealed partial class JewelCaseCoverFlow : Grid
             if (!IsLoaded || key != SelectedKey) return;
             if (_dxScene is not null && !await _dxScene.AnimateBookletAsync(true)) return;
             if (!IsLoaded || key != SelectedKey) return;
-            var viewer = new BookletViewerWindow(title, booklet) { Owner = Window.GetWindow(this) };
+            if (bookletScene is not null)
+            {
+                bookletScene.PrepareBookletOpening(openingPage);
+                if (!await bookletScene.AnimateBookletOpeningAsync(true)) return;
+            }
+            if (!IsLoaded || key != SelectedKey || !ReferenceEquals(bookletScene, _dxScene)) return;
+            var viewer = new BookletViewerWindow(title, booklet, openingPage is not null ? firstInside.index : 0) { Owner = Window.GetWindow(this) };
             if (_isFullScreen) viewer.WindowState = WindowState.Maximized;
             viewer.ShowDialog();
         }
@@ -1803,6 +1821,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
             {
                 if (bookletScene is not null)
                 {
+                    await bookletScene.AnimateBookletOpeningAsync(false);
                     await bookletScene.AnimateBookletAsync(false);
                     bookletScene.SetBookletRemoved(false, false);
                 }

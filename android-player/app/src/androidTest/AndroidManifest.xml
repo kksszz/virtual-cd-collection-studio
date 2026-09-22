@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <!-- Test-only sandbox provider. It cannot access the user's music tree. -->
+    <provider android:name="jp.virtualcd.player.DeletionTestProvider"
+      android:authorities="jp.virtualcd.player.test.deletion"
+      android:exported="true" android:grantUriPermissions="true"/>
+  </application>
+</manifest>

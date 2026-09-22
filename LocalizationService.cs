@@ -97,6 +97,8 @@ internal static class LocalizationService
             ["デフォルトは無効です。有効時はアルバムフォルダではなく、下の専用フォルダへ保存します。"] = "Disabled by default. When enabled, backups are saved to the dedicated folder below instead of album folders.",
             ["保存先を選択"] = "Choose Folder", ["タグ編集バックアップの保存先フォルダ"] = "Folder for tag-edit backups",
             ["バックアップ保存先"] = "Backup Folder",
+            ["編集バックアップを7日後に自動削除"] = "Automatically delete edit backups after 7 days",
+            ["切り抜き・回転・タグ編集のバックアップが対象です。初回確認から7日間保管し、元ファイルが見つからない・読めない場合は残します。通常の音楽・画像、手動バックアップ、一時復旧ファイルは削除しません。削除後はごみ箱から復元できません。アプリ起動中に定期確認します。"] = "Applies to crop, rotation and tag-edit backups. Backups are kept for 7 days from first detection, and retained if their source is missing or unreadable. Regular music, images, manual backups and temporary recovery files are excluded. Deleted backups cannot be restored from the Recycle Bin. Checks run periodically while the app is open.",
             ["ZIP.MP3：全曲をまとめて1回だけ再構築・バックアップ"] = "ZIP.MP3: rebuild all edited tracks once and create one backup",
             ["通常フォルダ：変更した各音楽ファイルへ実タグを書き込み・バックアップ"] = "Folder: write real tags to each edited audio file and create backups",
             ["ZIP.MP3：全曲の変更をまとめて1回だけ再構築"] = "ZIP.MP3: rebuild once for all edited tracks",

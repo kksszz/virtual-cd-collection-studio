@@ -13,6 +13,8 @@ internal static partial class Program
     [STAThread]
     private static void Main()
     {
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_BACKUP_RETENTION_TEST") == "1")
+        { VerifyBackupRetention(); return; }
         if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_EXTERNAL_STORE_TEST") == "1")
         { VerifyExternalStore(); return; }
         if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_COMPRESSION_BADGE_TEST") == "1")

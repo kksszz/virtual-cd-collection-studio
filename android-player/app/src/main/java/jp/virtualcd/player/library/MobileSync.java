@@ -39,10 +39,11 @@ public final class MobileSync {
         var json=new JSONObject(new String(bytes,StandardCharsets.UTF_8));
         if(!json.getString("format").equals("virtual-cd-sync")||json.getInt("version")!=1)throw new IOException(jp.virtualcd.player.LanguageStrings.text("未対応の同期形式です","Unsupported sync format"));
         var records=json.getJSONObject("albums");if(records.length()>20000)throw new IOException(jp.virtualcd.player.LanguageStrings.text("同期アルバム数の上限です","Sync album limit reached"));
+        AlbumDeletion.filterRecords(c,root,records);
         var prefs=c.getSharedPreferences("mobile-sync-v1",0);String rootKey=root.toString(),digest=CasePackage.hash(bytes);
         String saved=prefs.getString(rootKey+"|index",null);
         if(digest.equals(prefs.getString(rootKey+"|digest",""))&&saved!=null){
-            FavoriteSync.applyCached(c,records,forceFavorites);return decode(saved);
+            FavoriteSync.applyCached(c,records,forceFavorites);return AlbumDeletion.visible(c,decode(saved));
         }
         var result=new ArrayList<AlbumLibrary.Album>();var keys=records.keys();
         while(keys.hasNext()){
@@ -104,7 +105,7 @@ public final class MobileSync {
         Collections.sort(hashes);return CasePackage.hash(String.join("\n",hashes).getBytes(StandardCharsets.UTF_8));
     }
     private static String hashAudio(InputStream in,long length)throws Exception{var hash=java.security.MessageDigest.getInstance("SHA-256");byte[] buffer=new byte[65536];while(length>0){if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();int n=in.read(buffer,0,(int)Math.min(length,buffer.length));if(n<0)throw new EOFException();hash.update(buffer,0,n);length-=n;}StringBuilder result=new StringBuilder();for(byte b:hash.digest())result.append(String.format(Locale.ROOT,"%02x",b&255));return result.toString();}
-    public static List<AlbumLibrary.Album> cached(Context c,Uri root){try{return decode(c.getSharedPreferences("mobile-sync-v1",0).getString(root.toString()+"|index","[]"));}catch(Exception ignored){return Collections.emptyList();}}
+    public static List<AlbumLibrary.Album> cached(Context c,Uri root){try{return AlbumDeletion.visible(c,decode(c.getSharedPreferences("mobile-sync-v1",0).getString(root.toString()+"|index","[]")));}catch(Exception ignored){return Collections.emptyList();}}
     private static List<AlbumLibrary.Album> decode(String text)throws Exception{var result=new ArrayList<AlbumLibrary.Album>();var array=new JSONArray(text);for(int i=0;i<array.length();i++){var a=array.getJSONObject(i);result.add(new AlbumLibrary.Album(Uri.parse(a.getString("uri")),a.getString("name"),a.getLong("size"),a.getLong("modified"),a.getBoolean("directory")));}return result;}
     public static synchronized List<AlbumLibrary.Album> refresh(Context c,Uri tree,List<AlbumLibrary.Album> current)throws Exception{
         return refresh(c,tree,current,false);
@@ -116,9 +117,8 @@ public final class MobileSync {
         for(String root:roots){
             Uri uri=Uri.parse(root);if(!android.provider.DocumentsContract.getTreeDocumentId(uri).equals(android.provider.DocumentsContract.getTreeDocumentId(tree)))continue;
             var before=decode(prefs.getString(root+"|index","[]"));var next=read(c,uri,forceFavorites);
-            if(next.isEmpty())continue;
             var old=new HashSet<String>();for(var a:before)old.add(a.uri.toString());for(var a:next)old.add(a.uri.toString());
             result.removeIf(a->old.contains(a.uri.toString()));result.addAll(next);
-        }return result;
+        }return AlbumDeletion.visible(c,result);
     }
 }

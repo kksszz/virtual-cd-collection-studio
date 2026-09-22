@@ -12,6 +12,7 @@ internal static class Program
 {
     [STAThread] static void Main(string[] args)
     {
+        if(args.Length==1&&args[0]=="--booklet-opening"){BookletOpeningChecks.Run();return;}
         if(args.Length==1&&args[0]=="--artwork-cache"){ArtworkCacheChecks.Run();return;}
         if(args.Length==1&&args[0]=="--booklet-slideshow"){BookletSlideshowChecks.Run();return;}
         if(args.Length==3&&args[0]=="--desktop-sample"){

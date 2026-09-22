@@ -75,6 +75,19 @@ public final class ListeningState {
         }
     }
     public boolean favoriteEdited(String key,String id){return prefs.getBoolean("edited|"+key+"|"+id,false);}
+    public void removeAlbum(String source)throws JSONException,java.io.IOException{
+        synchronized(FAVORITE_LOCK){
+            var edit=prefs.edit();
+            for(String key:new String[]{"favoriteAlbums","favoriteTracks","history","queue"}){
+                var next=new JSONArray();
+                for(var item:entries(key))if(!source.equals(item.optString("source"))&&!source.equals(item.optString("id")))next.put(item);
+                edit.putString(key,next.toString());
+            }
+            savedQueue=Collections.emptyList();
+            if(!edit.putInt("index",0).putLong("position",0).commit())throw new java.io.IOException(
+                jp.virtualcd.player.LanguageStrings.text("再生履歴を更新できません","Unable to update listening state"));
+        }
+    }
     public void setFavorite(String key,JSONObject item,boolean enabled){
         synchronized(FAVORITE_LOCK){
             String id=item.optString("id");var next=new JSONArray();

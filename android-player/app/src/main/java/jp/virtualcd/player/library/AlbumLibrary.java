@@ -66,7 +66,7 @@ public final class AlbumLibrary {
             progress.update(result.size());
         }
         var unique=new LinkedHashMap<String,Album>();for(var album:result)unique.put(album.uri.toString(),album);result=new ArrayList<>(unique.values());
-        result.sort(Comparator.comparing(Album::title,String.CASE_INSENSITIVE_ORDER));return result;
+        result.sort(Comparator.comparing(Album::title,String.CASE_INSENSITIVE_ORDER));return AlbumDeletion.visible(context,result);
     }
     private static AtomicFile index(Context c){return new AtomicFile(new File(c.getFilesDir(),"albums-v1.json"));}
     public static void save(Context context,Uri tree,List<Album> albums) throws Exception {
@@ -83,6 +83,6 @@ public final class AlbumLibrary {
         var array=root.getJSONArray("albums");var result=new ArrayList<Album>();
         for(int i=0;i<array.length();i++){var a=array.getJSONObject(i);result.add(new Album(Uri.parse(a.getString("uri")),a.getString("name"),a.getLong("size"),a.getLong("modified"),a.optBoolean("directory",false)));}
         AlbumAddedOrder.observe(context,result,true);
-        return result;
+        return AlbumDeletion.visible(context,result);
     }
 }

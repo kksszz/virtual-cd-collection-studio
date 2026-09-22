@@ -27,11 +27,13 @@ public final class MainActivity extends Activity {
     private final java.util.concurrent.ExecutorService syncWorker=Executors.newSingleThreadExecutor();
     private boolean syncChecking;
     private boolean syncDialogOpen;
+    private boolean deletingAlbum;
+    private android.app.AlertDialog deletionProgress;
     private final Runnable syncTick=new Runnable(){public void run(){checkMobileSync();handler.postDelayed(this,15000);}};
     @Override protected void onResume(){super.onResume();handler.removeCallbacks(syncTick);handler.post(syncTick);}
     @Override protected void onPause(){handler.removeCallbacks(syncTick);super.onPause();}
     private void checkMobileSync(){
-        if(libraryTree==null||restoringLibrary||scanning||syncChecking||syncDialogOpen)return;syncChecking=true;
+        if(libraryTree==null||restoringLibrary||scanning||syncChecking||syncDialogOpen||deletingAlbum)return;syncChecking=true;
         final Uri tree=libraryTree;final int job=scanGeneration;final var base=library;var snapshot=new ArrayList<>(base);
         syncWorker.execute(()->{try{
             String endpoint=getPreferences(MODE_PRIVATE).getString("syncEndpoint","");
@@ -149,7 +151,7 @@ public final class MainActivity extends Activity {
         status.setOnClickListener(v->new android.app.AlertDialog.Builder(this).setMessage(status.getText()).setPositiveButton(jp.virtualcd.player.LanguageStrings.text("閉じる","Close"),null).show());
         albumAdapter=new AlbumAdapter(this);albums=new GridView(this);albums.setNumColumns(1);albums.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);albums.setHorizontalSpacing(PlayerStyle.dp(this,12));albums.setAdapter(albumAdapter);layout.addView(albums,new LinearLayout.LayoutParams(-1,0,1));
         albums.setOnItemClickListener((p,v,index,id)->loadAlbum(albumAdapter.getItem(index).uri));
-        albums.setOnItemLongClickListener((p,v,index,id)->{albumAdapter.chooseThumbnail(index);return true;});
+        albums.setOnItemLongClickListener((p,v,index,id)->{showAlbumActions(index);return true;});
         search.addTextChangedListener(new android.text.TextWatcher(){
             public void beforeTextChanged(CharSequence s,int start,int count,int after){}
             public void onTextChanged(CharSequence s,int start,int before,int count){albumAdapter.filter(s.toString());}
@@ -323,9 +325,68 @@ public final class MainActivity extends Activity {
         menu.getMenu().add(0,11,9,"言語 / Language");
         menu.getMenu().add(0,7,10,"Virtual CD Player "+BuildConfig.VERSION_NAME).setEnabled(false);
         menu.setOnMenuItemClickListener(item->{switch(item.getItemId()){
-            case 2:folder.performClick();break;case 3:choose.performClick();break;case 4:scanLibrary();break;case 5:showSaved("history");break;case 6:showFavorites();break;case 8:AutoStopSettings.show(this);break;case 9:showPcSync();break;case 10:if(player!=null&&player.getCurrentMediaItem()!=null)LyricsStore.show(this,player.getCurrentMediaItem());break;case 11:showLanguageSettings();break;}return true;});menu.show();}
+            case 2:if(!deletingAlbum)folder.performClick();break;case 3:if(!deletingAlbum)choose.performClick();break;case 4:scanLibrary();break;case 5:showSaved("history");break;case 6:showFavorites();break;case 8:AutoStopSettings.show(this);break;case 9:showPcSync();break;case 10:if(player!=null&&player.getCurrentMediaItem()!=null)LyricsStore.show(this,player.getCurrentMediaItem());break;case 11:showLanguageSettings();break;}return true;});menu.show();}
+    private void showAlbumActions(int index){
+        if(deletingAlbum)return;
+        var album=albumAdapter.getItem(index);
+        new android.app.AlertDialog.Builder(this).setTitle(album.title())
+            .setItems(new String[]{LanguageStrings.text("表紙の表示範囲","Cover display area"),
+                LanguageStrings.text("Androidからアルバムを削除…","Delete album from Android…")},(dialog,which)->{
+                if(which==0)albumAdapter.chooseThumbnail(index);else prepareAlbumDeletion(album);
+            }).show();
+    }
+    private void prepareAlbumDeletion(AlbumLibrary.Album album){
+        if(syncChecking||syncDialogOpen||scanning||restoringLibrary||deletingAlbum){
+            Toast.makeText(this,LanguageStrings.text("同期・読み込みの完了後に削除してください","Wait for syncing or loading to finish"),Toast.LENGTH_LONG).show();return;
+        }
+        deletingAlbum=true;final Uri tree=libraryTree;final var snapshot=new ArrayList<>(library);
+        deletionProgress=new android.app.AlertDialog.Builder(this).setMessage(LanguageStrings.text("削除対象を確認しています…","Checking deletion targets…")).setCancelable(false).create();deletionProgress.show();
+        syncWorker.execute(()->{
+            try{
+                var plan=AlbumDeletion.prepare(this,tree,album,snapshot);
+                handler.post(()->{
+                    if(isDestroyed())return;deletionProgress.dismiss();deletionProgress=null;
+                    new android.app.AlertDialog.Builder(this).setTitle(LanguageStrings.text("アルバムを削除","Delete album"))
+                        .setMessage(album.title()+"\n\n"+plan.files.size()+LanguageStrings.text("ファイル / "," files / ")
+                            +android.text.format.Formatter.formatFileSize(this,plan.bytes())+"\n\n"
+                            +LanguageStrings.text("このアルバムの音楽と関連データをAndroidから完全削除します。アルバムフォルダーは中の全ファイルが対象です。元に戻せません。\nWindows側のデータは残ります。共用の外部画像は削除しません。Windows側で転送対象に選べば、再び転送できます。",
+                            "Permanently delete this album's music and related data from Android. For album folders, all files inside are included. This cannot be undone.\nWindows data and shared external images are kept. Select the album for transfer on Windows to download it again."))
+                        .setNegativeButton(LanguageStrings.text("キャンセル","Cancel"),(d,w)->deletingAlbum=false)
+                        .setOnCancelListener(d->deletingAlbum=false)
+                        .setPositiveButton(LanguageStrings.text("削除する","Delete"),(d,w)->executeAlbumDeletion(plan)).show();
+                });
+            }catch(Exception ex){handler.post(()->{if(isDestroyed())return;deletingAlbum=false;deletionProgress.dismiss();deletionProgress=null;
+                new android.app.AlertDialog.Builder(this).setTitle(LanguageStrings.text("削除できません","Unable to delete")).setMessage(ex.getMessage()).setPositiveButton("OK",null).show();});}
+        });
+    }
+    private void executeAlbumDeletion(AlbumDeletion.Plan plan){
+        cancelAlbumLoad();if(cacheJob!=null)cacheJob.cancel(true);
+        if(player!=null)for(int i=player.getMediaItemCount()-1;i>=0;i--){
+            var extras=player.getMediaItemAt(i).mediaMetadata.extras;
+            if(extras!=null&&plan.album.toString().equals(extras.getString(ListeningState.ALBUM_URI,"")))player.removeMediaItem(i);
+        }
+        if(plan.album.equals(selectedAlbum)){selectedAlbum=null;playlist=Collections.emptyList();tracks.setAdapter(null);showLibrary();}
+        final var snapshot=new ArrayList<>(library);
+        deletionProgress=new android.app.AlertDialog.Builder(this).setMessage(LanguageStrings.text("アルバムを削除しています…","Deleting album…")).setCancelable(false).create();deletionProgress.show();
+        syncWorker.execute(()->{
+            Exception failure=null;
+            try{
+                AlbumDeletion.delete(this,plan);
+                snapshot.removeIf(a->a.uri.equals(plan.album));
+                AlbumLibrary.save(this,plan.tree,snapshot);
+            }catch(Exception ex){failure=ex;}
+            final Exception error=failure;
+            handler.post(()->{
+                if(isDestroyed())return;deletingAlbum=false;deletionProgress.dismiss();deletionProgress=null;
+                library=AlbumDeletion.visible(this,snapshot);albumAdapter.setAlbums(library,search.getText().toString());
+                if(error==null)status.setText(LanguageStrings.text("Androidからアルバムを削除しました。Windows側のデータは保持しています。","Album deleted from Android. Windows data was kept."));
+                else new android.app.AlertDialog.Builder(this).setTitle(LanguageStrings.text("削除が完了していません","Deletion incomplete"))
+                    .setMessage(LanguageStrings.text("一部が残っている可能性があります。\n","Some files may remain.\n")+error.getMessage()).setPositiveButton("OK",null).show();
+            });
+        });
+    }
     private boolean languageChangeBusy(){
-        if(!syncChecking&&!syncDialogOpen&&!scanning&&!restoringLibrary)return false;
+        if(!syncChecking&&!syncDialogOpen&&!scanning&&!restoringLibrary&&!deletingAlbum)return false;
         Toast.makeText(this,LanguageStrings.text("同期・読み込みの完了後に言語を切り替えてください。","Wait for syncing or loading to finish before changing the language."),Toast.LENGTH_LONG).show();
         return true;
     }
@@ -344,6 +405,7 @@ public final class MainActivity extends Activity {
     }
     private void showPcSync(){showPcSync(null);}
     private void showPcSync(String scanned){
+        if(deletingAlbum)return;
         if(libraryTree==null){Toast.makeText(this,jp.virtualcd.player.LanguageStrings.text("先に設定からSDカードの音楽フォルダーを選択してください","Choose your SD card music folder in Settings first."),Toast.LENGTH_LONG).show();return;}
         var box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);int pad=PlayerStyle.dp(this,20);box.setPadding(pad,pad,pad,pad);
         var hint=new TextView(this);hint.setText(scanned==null?jp.virtualcd.player.LanguageStrings.text("Windowsのモバイル同期画面に表示されたQRコードを読み取ってください。USBデバッグは不要です。選択中の音楽フォルダーへ保存します。\n同じ家庭内Wi-Fiで使用してください。URLの手動入力も可能です。","Scan the QR code shown in Mobile Sync on Windows. USB debugging is not required. Files are saved to the selected music folder.\nUse the same home Wi-Fi network. You can also enter the URL manually."):jp.virtualcd.player.LanguageStrings.text("QRコードを読み取りました。接続先：","QR code scanned. Connect to: ")+Uri.parse(scanned).getAuthority()+jp.virtualcd.player.LanguageStrings.text("\nこのPCでよければ「接続して同期」を押してください。選択中の音楽フォルダーへ保存します。","\nIf this is your PC, tap Connect and sync. Files will be saved to the selected music folder."));box.addView(hint);
@@ -418,6 +480,7 @@ public final class MainActivity extends Activity {
         });}catch(Exception e){handler.post(()->{if(!isDestroyed()&&job==scanGeneration){restoringLibrary=false;scanLibrary();}});}});
     }
     private void scanLibrary(){
+        if(deletingAlbum)return;
         if(scanJob!=null)scanJob.cancel(true);
         final Uri tree=libraryTree;final int job=++scanGeneration;
         scanning=true;restoringLibrary=false;folder.setEnabled(false);refresh.setEnabled(false);showLibrary();
@@ -466,6 +529,7 @@ public final class MainActivity extends Activity {
         return false;
     }
     private void loadAlbum(Uri document,String playId,boolean force){
+        if(deletingAlbum||AlbumDeletion.removed(this,document))return;
         cancelAlbumLoad();
         resumeFocusAllowed=false;selectedAlbum=document;selectedAlbumTitle="";
         libraryVisible=false;albums.setVisibility(View.GONE);search.setVisibility(View.GONE);trackPane.setVisibility(View.VISIBLE);tracks.setVisibility(View.VISIBLE);
@@ -587,5 +651,5 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onStart(){super.onStart();handler.post(tick);}
     @Override protected void onStop(){handler.removeCallbacks(tick);super.onStop();}
-    @Override protected void onDestroy(){generation++;scanGeneration++;cancelAlbumLoad();syncWorker.shutdownNow();cacheWorker.shutdownNow();coverWorker.shutdownNow();if(propertiesDialog!=null)propertiesDialog.dismiss();if(soundDialog!=null)soundDialog.dismiss();if(savedDialog!=null)savedDialog.dismiss();if(gallery!=null)gallery.close();scanner.shutdownNow();worker.shutdownNow();if(albumAdapter!=null)albumAdapter.close();handler.removeCallbacksAndMessages(null);if(connection!=null)MediaController.releaseFuture(connection);player=null;super.onDestroy();}
+@Override protected void onDestroy(){if(deletionProgress!=null)deletionProgress.dismiss();generation++;scanGeneration++;cancelAlbumLoad();syncWorker.shutdownNow();cacheWorker.shutdownNow();coverWorker.shutdownNow();if(propertiesDialog!=null)propertiesDialog.dismiss();if(soundDialog!=null)soundDialog.dismiss();if(savedDialog!=null)savedDialog.dismiss();if(gallery!=null)gallery.close();scanner.shutdownNow();worker.shutdownNow();if(albumAdapter!=null)albumAdapter.close();handler.removeCallbacksAndMessages(null);if(connection!=null)MediaController.releaseFuture(connection);player=null;super.onDestroy();}
 }
