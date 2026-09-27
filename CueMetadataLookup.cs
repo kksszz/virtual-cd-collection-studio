@@ -63,7 +63,7 @@ internal static class CueMetadataLookup
                 var position = medium.TryGetProperty("position", out var p) ? p.GetInt32() : disc.DiscNumber;
                 var description = $"{Artist(release)} — {Text(release, "title")} / {Text(release, "date")} / {Text(release, "country")} / Disc {position} / {(exact ? "Disc ID一致" : "曲数・曲時間の近似候補")}";
                 results.Add(new(disc.Fingerprint, Text(release, "id"), Text(release, "title"), Text(release, "date").Split('-')[0],
-                    position, media.GetArrayLength(), names, description));
+                    position, media.GetArrayLength(), names, description){AlbumArtist=Artist(release)});
             }
         }
         return results;

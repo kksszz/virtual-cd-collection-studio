@@ -12,6 +12,14 @@ internal static class Program
 {
     [STAThread] static void Main(string[] args)
     {
+        if(args.Length==1&&args[0]=="--scan-resume"){
+            try{ScanResumeChecks.Run();}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
+        }
+        if(args.Length==2&&args[0]=="--cd-import-ui"){CdImportChecks.Render(args[1]);return;}
+        if(args.Length>0&&args[0] is "--cd-import" or "--cd-import-full"){
+            try{CdImportChecks.Run(args.Length>1?args[1]:null,args[0]=="--cd-import-full");}
+            catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
+        }
         if(args.Length==1&&args[0]=="--booklet-opening"){BookletOpeningChecks.Run();return;}
         if(args.Length==1&&args[0]=="--artwork-cache"){ArtworkCacheChecks.Run();return;}
         if(args.Length==1&&args[0]=="--booklet-slideshow"){BookletSlideshowChecks.Run();return;}

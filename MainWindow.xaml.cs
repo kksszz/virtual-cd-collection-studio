@@ -163,6 +163,8 @@ public partial class MainWindow : Window
     {
         LocalizationService.InitializeFromSettings(SettingsPath);
         InitializeComponent();
+        AccessKeyManager.Register("M", MobileSyncToolbarButton);
+        Closed += (_, _) => AccessKeyManager.Unregister("M", MobileSyncToolbarButton);
         InitializeSeekTimePreview();
         LocalizationService.Apply(this);
         AlbumCoverFlow.PlaybackActiveProvider = IsAlbumActivelyPlaying;
@@ -255,7 +257,7 @@ public partial class MainWindow : Window
         HideLibraryLoading();
         var args = Environment.GetCommandLineArgs();
         if (args.Length > 1 && File.Exists(args[1])) await OpenAlbumAsync(args[1]);
-        else if (_folders.Count > 0 && (_albums.Count == 0 || _cacheNeedsRefresh))
+        else if (_folders.Count > 0 && (_albums.Count == 0 || _cacheNeedsRefresh || File.Exists(ScanCheckpointPath)))
         {
             await ScanFoldersAsync();
             if (_albums.Count > 0) RestoreLastSelection();
@@ -651,6 +653,7 @@ public partial class MainWindow : Window
         catch { return null; }
     }
 
+    private static string ScanCheckpointPath => Path.Combine(DataDirectory,"library-scan-resume.jsonl");
     private async Task ScanFoldersAsync()
     {
         _cachedLibraryMaintenanceCancellation?.Cancel();
@@ -705,7 +708,7 @@ public partial class MainWindow : Window
             var found = await Task.Run(() =>
             {
                 Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
-                return ScanWorker(folders, progress, token);
+                return ScanWorker(folders, progress, token, new LibraryScanCheckpoint(ScanCheckpointPath));
             }, token);
             if (token.IsCancellationRequested) return;
             var finalUpdate = Interlocked.Exchange(ref latestUpdate, null);
@@ -722,7 +725,7 @@ public partial class MainWindow : Window
             }
             StatusText.Text = _albums.Count > 0 ? $"スキャン完了: {_albums.Count}アルバム" : "アルバムは見つかりませんでした";
             if (_albums.Count > 0 && AlbumList.SelectedItem is null) AlbumList.SelectedIndex = 0;
-            SaveLibraryCache();
+            if (SaveLibraryCache()) new LibraryScanCheckpoint(ScanCheckpointPath).Complete();
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -1579,7 +1582,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private static List<AlbumListItem> ScanWorker(string[] folders, IProgress<ScanUpdate> progress, CancellationToken token)
+    private static List<AlbumListItem> ScanWorker(string[] folders, IProgress<ScanUpdate> progress, CancellationToken token, LibraryScanCheckpoint? checkpoint = null)
     {
         var archivePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var albumFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1590,6 +1593,7 @@ public partial class MainWindow : Window
             if (!Directory.Exists(folder)) continue;
             foreach (var file in Directory.EnumerateFiles(folder, "*", options))
             {
+                token.ThrowIfCancellationRequested();
                 if (FolderAlbumLayout.IsTemporary(file) || FolderAlbumLayout.IsSupersededArchive(file)) continue;
                 if (ZipAlbumReader.IsSupportedArchivePath(file) || CueAlbumReader.IsCue(file)) archivePaths.Add(file);
                 else if (ZipAlbumReader.IsStandardAudioPath(file)) albumFolders.Add(Path.GetDirectoryName(file)!);
@@ -1607,11 +1611,14 @@ public partial class MainWindow : Window
             progress.Report(new ScanUpdate($"解析中 {number}/{total}: {Path.GetFileName(path)}", null, number, total));
             try
             {
-                var album = new AlbumListItem(OpenArchiveForScan(path, token));
+                var stamp = checkpoint is null ? "" : LibraryScanCheckpoint.Stamp(path, token);
+                var album = new AlbumListItem(checkpoint?.Find(path,stamp) ?? OpenArchiveForScan(path, token));
                 UpdateLyricsIndicators(album.Album);
+                checkpoint?.Save(path,stamp,album.Album,token);
                 result.Add(album);
                 progress.Report(new ScanUpdate($"完了 {number}/{total}: {album.Title}", album, number, total));
             }
+            catch (OperationCanceledException) { throw; }
             catch { progress.Report(new ScanUpdate($"読み取りを省略 {number}/{total}: {Path.GetFileName(path)}", null, number, total)); }
         }
         foreach (var folder in albumFolders.OrderBy(p => p))
@@ -1621,11 +1628,14 @@ public partial class MainWindow : Window
             progress.Report(new ScanUpdate($"解析中 {number}/{total}: {Path.GetFileName(folder)}", null, number, total));
             try
             {
-                var album = new AlbumListItem(ZipAlbumReader.OpenFolder(folder));
+                var stamp = checkpoint is null ? "" : LibraryScanCheckpoint.Stamp(folder, token);
+                var album = new AlbumListItem(checkpoint?.Find(folder,stamp) ?? ZipAlbumReader.OpenFolder(folder));
                 UpdateLyricsIndicators(album.Album);
+                checkpoint?.Save(folder,stamp,album.Album,token);
                 result.Add(album);
                 progress.Report(new ScanUpdate($"完了 {number}/{total}: {album.Title}", album, number, total));
             }
+            catch (OperationCanceledException) { throw; }
             catch { progress.Report(new ScanUpdate($"読み取りを省略 {number}/{total}: {Path.GetFileName(folder)}", null, number, total)); }
         }
         return result;
@@ -2328,7 +2338,7 @@ public partial class MainWindow : Window
         return removedTagArtifacts;
     }
 
-    private void SaveLibraryCache()
+    private bool SaveLibraryCache()
     {
         _albumAdded.Save();
         try
@@ -2353,7 +2363,8 @@ public partial class MainWindow : Window
                 if (File.Exists(PartialLibraryPath)) File.Delete(PartialLibraryPath);
             }
         }
-        catch { /* 次回の再スキャンで復旧できるため再生は継続 */ }
+        catch { return false; /* 次回の再スキャンで復旧できるため再生は継続 */ }
+        return true;
     }
 
     private static ZipAlbum ExcludeCachedTagEditingArtifacts(ZipAlbum album, ref int removedCount)

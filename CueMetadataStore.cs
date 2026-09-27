@@ -7,7 +7,10 @@ namespace ZipMp3Player;
 
 internal sealed record CueTrackMetadata(string Title, string Artist);
 internal sealed record CueMetadata(string Fingerprint, string ReleaseId, string Album, string Year,
-    int DiscNumber, int DiscCount, List<CueTrackMetadata> Tracks, string Description);
+    int DiscNumber, int DiscCount, List<CueTrackMetadata> Tracks, string Description)
+{
+    public string AlbumArtist { get; init; } = "";
+}
 
 internal static class CueMetadataStore
 {

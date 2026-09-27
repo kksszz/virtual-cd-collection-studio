@@ -69,7 +69,11 @@
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
         <StackPanel.Resources>
           <Style x:Key="HeaderNavigationButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="MinWidth" Value="56"/>
+            <Setter Property="Width" Value="40"/>
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="18"/>
+            <Setter Property="ToolTipService.InitialShowDelay" Value="300"/>
+            <Setter Property="ToolTipService.ShowDuration" Value="10000"/>
             <Setter Property="Height" Value="36"/>
             <Setter Property="Margin" Value="3,0"/>
             <Setter Property="Padding" Value="8,0"/>
@@ -77,12 +81,13 @@
             <Setter Property="VerticalContentAlignment" Value="Center"/>
           </Style>
         </StackPanel.Resources>
-        <Button Content="◷ 履歴" Click="Usage_Click" Style="{StaticResource HeaderNavigationButton}" ToolTip="再生履歴・Usageを表示"/>
-        <Button Content="★ お気に入り" Click="Favorites_Click" Style="{StaticResource HeaderNavigationButton}" ToolTip="お気に入りの曲・アルバムを一覧から連続再生"/>
-        <Button Content="⇄ モバイル同期(_M)" Click="MobileSync_Click" Style="{StaticResource HeaderNavigationButton}" ToolTip="アルバムを選択して音楽・画像・3Dを一括転送"/>
-        <Button x:Name="AlbumBrowserButton" Content="▦ アルバムブラウザー" Click="OpenAlbumBrowser_Click"
+        <Button Content="&#xE81C;" AutomationProperties.Name="再生履歴" Click="Usage_Click" Style="{StaticResource HeaderNavigationButton}" ToolTip="再生履歴・Usageを表示"/>
+        <Button Content="&#xE734;" AutomationProperties.Name="お気に入り" Click="Favorites_Click" Style="{StaticResource HeaderNavigationButton}" ToolTip="お気に入り：曲・アルバムを一覧から連続再生"/>
+        <Button x:Name="MobileSyncToolbarButton" Content="&#xE895;" AutomationProperties.Name="モバイル同期" Click="MobileSync_Click" Style="{StaticResource HeaderNavigationButton}" ToolTip="モバイル同期（Alt+M）：音楽・画像・3Dを一括転送"/>
+        <Button x:Name="AlbumBrowserButton" Content="&#xE80A;" AutomationProperties.Name="アルバムブラウザー" Click="OpenAlbumBrowser_Click"
                 Style="{StaticResource HeaderNavigationButton}" ToolTip="アルバムブラウザー・3D CoverFlow・CDラック・Attractモード"/>
-        <Button Content="⚙" Width="40" Height="36" Margin="3,0" Padding="0" FontSize="16"
+        <Button Content="&#xE958;" AutomationProperties.Name="CD取り込み" Click="CdImport_Click" Style="{StaticResource HeaderNavigationButton}" ToolTip="CD取り込み：音楽CDをFLAC・MP3へ取り込む"/>
+        <Button Content="&#xE713;" AutomationProperties.Name="設定" Style="{StaticResource HeaderNavigationButton}"
                 Click="Settings_Click" ToolTip="設定（フォルダ管理・バックアップ・移行）"/>
       </StackPanel>
       <Border x:Name="UnifiedInfoCard" Grid.Column="1" Padding="8,5" Background="#1E2730" Margin="9,0,8,0"

@@ -17,13 +17,13 @@ remain subject to their respective licenses.
 - License: Apache License 2.0; https://github.com/journeyapps/zxing-android-embedded/blob/v4.3.0/COPYING
 - Used for on-device QR decoding and camera lifecycle; no camera images are uploaded by the sync feature.
 
-## FLAC CUE playback: FlakeNAudioAdapter 1.0.2 / CUETools.Codecs.FLAKE-Reloaded 1.0.1
+## FLAC playback and CD import: FlakeNAudioAdapter 1.0.2 / CUETools.Codecs.FLAKE-Reloaded 1.0.1
 
 - Adapter: https://github.com/teekay/FlakeNAudioAdapter, Copyright (c) 2022 Tomáš Kohl.
 - Adapter license: MIT, `THIRD_PARTY_LICENSES/FlakeNAudioAdapter-MIT.txt`.
 - Decoder source: https://github.com/teekay/FLACTools, Copyright 2008–2010 Grigory Chudov, 2022 Tomáš Kohl.
 - Decoder license: LGPL 2.1, `THIRD_PARTY_LICENSES/CUETools-FLAKE-LGPL-2.1.txt`.
-- Unmodified dynamically linked assemblies used for sample-accurate FLAC CUE seeking.
+- Unmodified dynamically linked assemblies used for sample-accurate FLAC CUE seeking and FLAC encoding/verification during CD import.
 
 ## NAudio 2.2.1
 
