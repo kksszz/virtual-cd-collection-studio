@@ -26,6 +26,66 @@ public final class DeviceSmokeTest extends Instrumentation {
     @Override public void onStart(){
         Bundle result=new Bundle();
         try{
+            if(testMode.equals("playbackArtwork")){PlaybackArtworkChecks.run(this);result.putString("playbackArtwork","PASS async load, stale result discarded, same-album transition, missing image, restored current item, position and paused state unchanged");finish(-1,result);return;}
+            if(testMode.equals("playbackOptions")){
+                var activity=startActivitySync(new android.content.Intent(getTargetContext(),MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+                var failure=new AtomicReference<Throwable>();
+                try{runOnMainSync(()->{ExoPlayer isolated=null;android.app.AlertDialog dialog=null;
+                    var tuning=new jp.virtualcd.player.audio.SoundPreferences(activity,"playback-options-test-"+System.nanoTime());
+                    try{
+                    isolated=new ExoPlayer.Builder(activity).build();
+                    var field=MainActivity.class.getDeclaredField("playbackControls");field.setAccessible(true);
+                    if(((android.view.ViewGroup)field.get(activity)).getChildCount()!=5)throw new AssertionError("Transport must contain 5 buttons");
+                    var button=new android.widget.Button(activity);PlaybackOptions.bind(button,null);if(button.isEnabled())throw new AssertionError("Disconnected options enabled");
+                    tuning.saveTuning(125,3);
+                    dialog=PlaybackOptions.show(activity,isolated,tuning);
+                    var root=dialog.getWindow().getDecorView();
+                    var speed=(android.widget.SeekBar)root.findViewWithTag("speed");
+                    var pitch=(android.widget.SeekBar)root.findViewWithTag("pitch");
+                    if(speed.getProgress()!=15||pitch.getProgress()!=15)throw new AssertionError("Saved tuning not loaded");
+                    speed.setKeyProgressIncrement(1);speed.onKeyDown(android.view.KeyEvent.KEYCODE_DPAD_RIGHT,new android.view.KeyEvent(0,android.view.KeyEvent.KEYCODE_DPAD_RIGHT));
+                    if(tuning.speedPercent()!=130||tuning.pitchSemitones()!=3)throw new AssertionError("Independent speed adjustment");
+                    pitch.setKeyProgressIncrement(1);pitch.onKeyDown(android.view.KeyEvent.KEYCODE_DPAD_LEFT,new android.view.KeyEvent(0,android.view.KeyEvent.KEYCODE_DPAD_LEFT));
+                    if(tuning.speedPercent()!=130||tuning.pitchSemitones()!=2)throw new AssertionError("Independent pitch adjustment");
+                    root.findViewWithTag("repeat").performClick();root.findViewWithTag("shuffle").performClick();
+                    if(isolated.getRepeatMode()!=Player.REPEAT_MODE_ALL||!isolated.getShuffleModeEnabled())throw new AssertionError("Checkbox enable failed");
+                    PlaybackOptions.bind(button,isolated);if(!button.isSelected()||!button.isEnabled())throw new AssertionError("Active options indicator");
+                    dialog.dismiss();dialog=PlaybackOptions.show(activity,isolated,tuning);root=dialog.getWindow().getDecorView();
+                    if(!((android.widget.CheckBox)root.findViewWithTag("repeat")).isChecked()||!((android.widget.CheckBox)root.findViewWithTag("shuffle")).isChecked())throw new AssertionError("Reopen lost state");
+                    if(((android.widget.SeekBar)root.findViewWithTag("speed")).getProgress()!=16||((android.widget.SeekBar)root.findViewWithTag("pitch")).getProgress()!=14)throw new AssertionError("Reopen lost tuning");
+                    root.findViewWithTag("resetTuning").performClick();
+                    if(tuning.speedPercent()!=100||tuning.pitchSemitones()!=0)throw new AssertionError("Reset tuning");
+                    if(!isolated.getShuffleModeEnabled()||isolated.getRepeatMode()!=Player.REPEAT_MODE_ALL)throw new AssertionError("Reset changed other options");
+                    root.findViewWithTag("repeat").performClick();root.findViewWithTag("shuffle").performClick();
+                    if(isolated.getRepeatMode()!=Player.REPEAT_MODE_OFF||isolated.getShuffleModeEnabled())throw new AssertionError("Checkbox disable failed");
+                }catch(Throwable ex){failure.set(ex);}finally{if(dialog!=null)dialog.dismiss();if(isolated!=null)isolated.release();tuning.preferences.edit().clear().apply();}});
+                if(failure.get()!=null)throw new AssertionError(failure.get());}finally{runOnMainSync(activity::finish);}
+                result.putString("playbackOptions","PASS transport, repeat/shuffle, independent speed/pitch, persistence, reset; real playback settings unchanged");finish(-1,result);return;
+            }
+            if(testMode.equals("assetButtons")){
+                var activity=startActivitySync(new android.content.Intent(getTargetContext(),MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+                var failure=new AtomicReference<Throwable>();
+                try{runOnMainSync(()->{try{
+                    var setter=MainActivity.class.getDeclaredMethod("setAssetButtons",boolean.class,boolean.class);setter.setAccessible(true);
+                    for(boolean hasCase:new boolean[]{false,true})for(boolean hasImages:new boolean[]{false,true}){
+                        setter.invoke(activity,hasCase,hasImages);
+                        for(String fieldName:new String[]{"caseButton","jacketButton","albumCover"}){
+                            var field=MainActivity.class.getDeclaredField(fieldName);field.setAccessible(true);var view=(android.view.View)field.get(activity);
+                            boolean expected=fieldName.equals("caseButton")?hasCase:hasImages;
+                            if(view.isEnabled()!=expected)throw new AssertionError(fieldName+" enabled mismatch");
+                            if(!fieldName.equals("albumCover")&&Math.abs(view.getAlpha()-(expected?1f:.4f))>.01)throw new AssertionError("Missing dim state");
+                        }
+                    }
+                    setter.invoke(activity,false,false);
+                    var opener=MainActivity.class.getDeclaredMethod("openJacketGallery");opener.setAccessible(true);opener.invoke(activity);
+                    var gallery=MainActivity.class.getDeclaredField("gallery");gallery.setAccessible(true);if(gallery.get(activity)!=null)throw new AssertionError("Disabled gallery opened");
+                }catch(Throwable ex){failure.set(ex);}});if(failure.get()!=null)throw new AssertionError(failure.get());}
+                finally{runOnMainSync(activity::finish);}
+                result.putString("assetButtons","PASS all four presence combinations, dim states, cover disabled and gallery guard");finish(-1,result);return;
+            }
+            if(testMode.equals("dozeStartupLatency")){UiStartupLatencyChecks.run(this,result,true);finish(-1,result);return;}
+            if(testMode.equals("uiStartupLatency")){UiStartupLatencyChecks.run(this,result);finish(-1,result);return;}
+            if(testMode.equals("startupLatency")){StartupLatencyChecks.run(this,result);finish(-1,result);return;}
             if(testMode.equals("deletion")){DeletionDeviceChecks.run(this);result.putString("deletion","PASS isolated SAF: root protection, changed files, new files, album scope, related data and retransfer");finish(-1,result);return;}
             if(testMode.equals("languageUi")){LanguageDeviceChecks.run(this);result.putString("languageUi","PASS settings selection, activity recreation, Japanese/English UI, saved setting");finish(-1,result);return;}
             if(testMode.equals("language")){

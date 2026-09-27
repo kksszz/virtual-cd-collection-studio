@@ -10,7 +10,7 @@ CDの音楽だけでなく、ジャケット、Spine Card（帯）、ブック�
 
 Windows v0.85.0／Android 0.10.0では、アルバムを複数選んで音楽・画像・GLBを一括転送する **[モバイル同期](MOBILE_SYNC.md)** に対応しています。Wi-Fi同期は接続QRコードを使い、USBデバッグ不要です。
 
-Android 10以上向けの音楽プレーヤーです。現在は **試作版0.10.0** で、Xperia 1 IIで検証しています。端末内に保存済みの音楽はSIMカードやネット接続なしで再生できます。Windows版の全機能を移植したものではありません。
+Android 10以上向けの音楽プレーヤーです。現在は **0.11.0** で、Xperia 1 IIで検証しています。端末内に保存済みの音楽はSIMカードやネット接続なしで再生できます。Windows版の全機能を移植したものではありません。
 
 設定 →「言語 / Language」で日本語／Englishを切り替えできます（初期値は日本語）。曲名や歌詞本文は翻訳しません。アルバムは最近追加した順にも並べられます。
 
@@ -38,7 +38,7 @@ Android 10以上向けの音楽プレーヤーです。現在は **試作版0.10
 
 圧縮された音声エントリー、暗号化ZIP、ZIP64、分割ZIP、BIN/ISOはAndroid版では未対応です。通常フォルダーの単一FLAC＋CUEに対応しました（実音声の曲頭一致はAndroidでは未検証）。タグ編集や画像の加工・用途設定はWindows版で行います。タグキャッシュは永続化していますが、初回取得には時間がかかります。
 
-Android版は [0.10.0プレリリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/android-v0.10.0)、Windows版は [v0.85.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/v0.85.0) から入手できます。Androidは従来と同じデバッグ署名の試作APKです。更新時にアンインストールする必要はありません。
+Android版は [0.11.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/android-v0.11.0)、Windows版は [v0.85.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/v0.85.0) から入手できます。Androidは従来と同じ署名を維持しています。更新時にアンインストールする必要はありません。
 
 - [Android版の説明・ビルド手順](android-player/README.md)
 - [Windowsからの3Dデータ出力](MOBILE_3D.md)

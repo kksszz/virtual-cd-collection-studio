@@ -14,6 +14,7 @@ import jp.virtualcd.player.archive.ZipTrackDataSource;
 public final class PlaybackService extends MediaSessionService {
     private MediaSession session;
     private ExoPlayer player;
+    private PlaybackArtwork artwork;
     private jp.virtualcd.player.library.ListeningState state;
     private final android.os.Handler handler=new android.os.Handler(android.os.Looper.getMainLooper());
     private boolean historyPending=true;
@@ -44,6 +45,7 @@ public final class PlaybackService extends MediaSessionService {
         android.util.Log.i("AutoStopTimer","reason=timer at="+stoppedAt+" limitMs="+timerLimit+" usedMs="+budget.used()+" recorded="+recorded);
         budget.reset(android.os.SystemClock.elapsedRealtime());saveTimer();
         if(session!=null){removeSession(session);session.release();session=null;}
+        if(artwork!=null){artwork.close();artwork=null;}
         player.release();player=null;
         TimerNotice.announce(this);
         AutoStopSettings.finishScreens();
@@ -83,6 +85,7 @@ public final class PlaybackService extends MediaSessionService {
         handler.postDelayed(checkpoint,5000);
         var activity=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
         session=new MediaSession.Builder(this,player).setSessionActivity(activity).build();
+        artwork=new PlaybackArtwork(this,player);
     }
     @Override public MediaSession onGetSession(MediaSession.ControllerInfo controller) { return session; }
     private void recordHistory(){if(historyPending&&player.isPlaying()){state.played(player.getCurrentMediaItem());historyPending=false;}}
@@ -92,6 +95,7 @@ public final class PlaybackService extends MediaSessionService {
         if(budget!=null&&!expiring){budget.update(android.os.SystemClock.elapsedRealtime(),false);saveTimer();}
         if(sound!=null)sound.preferences.unregisterOnSharedPreferenceChangeListener(soundChanged);
         handler.removeCallbacksAndMessages(null);if(player!=null)state.save(player);
+        if(artwork!=null){artwork.close();artwork=null;}
         if(session!=null) {session.getPlayer().release();session.release();session=null;}
         player=null;
         super.onDestroy();

@@ -23,7 +23,6 @@ final class SoundSettingsDialog {
     private Spinner mode,preset;
     private final SeekBar[] bands=new SeekBar[10];
     private SeekBar amount;
-    private SeekBar speed,pitch;
     private boolean binding;
     static Dialog show(Activity activity){return new SoundSettingsDialog(activity).dialog;}
     private SoundSettingsDialog(Activity activity){
@@ -34,12 +33,6 @@ final class SoundSettingsDialog {
         Button close=new Button(activity);PlayerStyle.button(close);close.setText(jp.virtualcd.player.LanguageStrings.text("閉じる","Close"));close.setOnClickListener(v->dialog.dismiss());header.addView(close,new LinearLayout.LayoutParams(dp(64),dp(44)));
         ScrollView scroll=new ScrollView(activity);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));body=new LinearLayout(activity);body.setOrientation(LinearLayout.VERTICAL);scroll.addView(body);
         note(jp.virtualcd.player.LanguageStrings.text("再生中に反映・自動保存。元の音楽ファイルは変更しません。","Applied during playback and saved automatically. Original music files are not changed."));
-        body.addView(text(jp.virtualcd.player.LanguageStrings.text("再生速度・ピッチ","Playback speed / pitch"),16));
-        speed=slider(jp.virtualcd.player.LanguageStrings.text("速度","Speed"),30,(store.speedPercent()-50)/5,false,v->saveTuning(),v->String.format(java.util.Locale.ROOT,"%.2f×",(50+v*5)/100.0));
-        pitch=slider(jp.virtualcd.player.LanguageStrings.text("ピッチ","Pitch"),24,store.pitchSemitones()+12,false,v->saveTuning(),v->String.format(java.util.Locale.ROOT,jp.virtualcd.player.LanguageStrings.text("%+d 半音","%+d semitones"),v-12));
-        Button resetTuning=new Button(activity);PlayerStyle.button(resetTuning);resetTuning.setText(jp.virtualcd.player.LanguageStrings.text("速度・ピッチを標準に戻す","Reset speed and pitch"));body.addView(resetTuning,new LinearLayout.LayoutParams(-1,dp(44)));
-        resetTuning.setOnClickListener(v->{binding=true;speed.setProgress(10);pitch.setProgress(12);binding=false;saveTuning();});
-        note(jp.virtualcd.player.LanguageStrings.text("速度：0.50〜2.00倍（0.05刻み）／ピッチ：±12半音。独立して調整できます。原音忠実モードとは別設定です。標準は1.00倍・0半音です。","Speed: 0.50–2.00× in 0.05 steps. Pitch: ±12 semitones. Adjust independently of original sound mode. Defaults: 1.00× and 0 semitones."));
         gapless=check(jp.virtualcd.player.LanguageStrings.text("ギャップレス再生","Gapless playback"),store.gapless(),false);note(jp.virtualcd.player.LanguageStrings.text("ON：連続再生。OFF：曲ごとに再開します。音源内の無音は除去しません。","ON: continuous playback. OFF: restart for each track. Silence within source audio is not removed."));
         faithful=check(jp.virtualcd.player.LanguageStrings.text("原音忠実モード","Original sound mode"),initial.faithful,false);note(jp.virtualcd.player.LanguageStrings.text("ON：以下の補正をバイパス（設定値は保持）。Androidの出力経路を含むビットパーフェクトを保証する機能ではありません。","ON bypasses the enhancements below while retaining their settings. This does not guarantee bit-perfect output through Android."));
         body.addView(text(jp.virtualcd.player.LanguageStrings.text("音質向上（リアルタイム）","Sound enhancement (real-time)"),16));mode=spinner(MODES,initial.mode);effects.add(mode);
@@ -61,7 +54,6 @@ final class SoundSettingsDialog {
             var p=window.getAttributes();p.width=activity.getResources().getDisplayMetrics().widthPixels-dp(16);p.height=(int)(activity.getResources().getDisplayMetrics().heightPixels*.88);p.gravity=Gravity.BOTTOM;p.dimAmount=.6f;window.setAttributes(p);}
     }
     private void applyCurve(int index){binding=true;for(int i=0;i<10;i++)bands[i].setProgress(CURVES[index][i]+12);binding=false;save();}
-    private void saveTuning(){if(!binding)store.saveTuning(50+speed.getProgress()*5,pitch.getProgress()-12);}
     private int[] currentGains(){int[] gains=new int[10];for(int i=0;i<10;i++)gains[i]=bands[i].getProgress()-12;return gains;}
     private void save(){if(binding)return;store.save(new SoundConfig(faithful.isChecked(),mode.getSelectedItemPosition(),normalize.isChecked(),clarity.isChecked(),eq.isChecked(),bass.isChecked(),amount.getProgress(),currentGains()),gapless.isChecked());updateEnabled();}
     private void updateEnabled(){for(View view:effects){view.setEnabled(!faithful.isChecked());view.setAlpha(faithful.isChecked()?.4f:1);}}

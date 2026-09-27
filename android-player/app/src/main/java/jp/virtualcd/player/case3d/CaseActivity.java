@@ -29,7 +29,8 @@ public final class CaseActivity extends Activity {
     private MediaController player;
     private ListenableFuture<MediaController> connection;
     private TextView playingTitle;
-    private Button previousTrack,playTrack,nextTrack,stopTrack;
+    private Button previousTrack,playTrack,nextTrack,stopTrack,playbackOptions;
+    private AlertDialog playbackOptionsDialog;
     private LinearLayout shell,body,bar,playbackRow,side;
     private HorizontalScrollView toolbar;
     private ScrollView sidebar;
@@ -69,7 +70,7 @@ public final class CaseActivity extends Activity {
         if(wide!=null&&wide==landscape)return;wide=landscape;
         // Leave the GL surface attached: rotation must not reload textures or reset the pose.
         detach(caption);detach(playingTitle);for(Button b:caseButtons)detach(b);
-        Button[] transport={previousTrack,playTrack,nextTrack,stopTrack};for(Button b:transport)detach(b);
+        Button[] transport={previousTrack,playTrack,nextTrack,stopTrack,playbackOptions};for(Button b:transport)detach(b);
         side.removeAllViews();toolbar.setVisibility(landscape?android.view.View.GONE:android.view.View.VISIBLE);
         hint.setVisibility(landscape?android.view.View.GONE:android.view.View.VISIBLE);playbackRow.setVisibility(landscape?android.view.View.GONE:android.view.View.VISIBLE);sidebar.setVisibility(landscape?android.view.View.VISIBLE:android.view.View.GONE);
         caption.setMaxLines(landscape?2:Integer.MAX_VALUE);caption.setEllipsize(android.text.TextUtils.TruncateAt.END);caption.setTextSize(landscape?12:14);
@@ -99,6 +100,7 @@ public final class CaseActivity extends Activity {
         playTrack=transport(row,"play",jp.virtualcd.player.LanguageStrings.text("再生","Play"),()->{if(player!=null){if(player.getPlayWhenReady()&&player.getPlaybackState()!=Player.STATE_IDLE&&player.getPlaybackState()!=Player.STATE_ENDED)player.pause();else{if(player.getPlaybackState()==Player.STATE_IDLE)player.prepare();if(player.getPlaybackState()==Player.STATE_ENDED)player.seekToDefaultPosition();player.play();}}});
         nextTrack=transport(row,"next",jp.virtualcd.player.LanguageStrings.text("次の曲","Next track"),()->{if(player!=null)player.seekToNextMediaItem();});
         stopTrack=transport(row,"stop",jp.virtualcd.player.LanguageStrings.text("停止","Stop"),()->{if(player!=null)player.stop();});
+        playbackOptions=transport(row,"options",jp.virtualcd.player.LanguageStrings.text("再生オプション","Playback options"),()->{if(player!=null){if(playbackOptionsDialog!=null)playbackOptionsDialog.dismiss();playbackOptionsDialog=jp.virtualcd.player.PlaybackOptions.show(this,player);}});
         playTrack.setSelected(true);updatePlayback();
     }
     private Button transport(LinearLayout row,String icon,String label,Runnable action){
@@ -106,6 +108,7 @@ public final class CaseActivity extends Activity {
     }
     private void updatePlayback(){
         if(playingTitle==null)return;
+        jp.virtualcd.player.PlaybackOptions.bind(playbackOptions,player);
         boolean ready=player!=null&&player.isConnected()&&player.getCurrentMediaItem()!=null;
         boolean playing=ready&&player.getPlayWhenReady()&&player.getPlaybackState()!=Player.STATE_ENDED&&player.getPlaybackState()!=Player.STATE_IDLE;
         ControlIcon.button(playTrack,playing?"pause":"play",playing?jp.virtualcd.player.LanguageStrings.text("一時停止","Pause"):jp.virtualcd.player.LanguageStrings.text("再生","Play"));
@@ -126,6 +129,7 @@ public final class CaseActivity extends Activity {
         pendingConnection.addListener(()->{if(destroyed||connection!=pendingConnection)return;try{player=pendingConnection.get();player.addListener(playbackListener);updatePlayback();}catch(Exception error){playingTitle.setText(jp.virtualcd.player.LanguageStrings.text("再生機能へ接続できません","Unable to connect to playback"));}},getMainExecutor());
     }
     @Override protected void onStop(){
+        if(playbackOptionsDialog!=null)playbackOptionsDialog.dismiss();
         if(player!=null)player.removeListener(playbackListener);
         if(connection!=null){MediaController.releaseFuture(connection);connection=null;}player=null;updatePlayback();super.onStop();
     }

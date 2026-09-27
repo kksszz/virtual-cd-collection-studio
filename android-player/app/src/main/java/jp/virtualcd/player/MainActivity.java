@@ -31,7 +31,7 @@ public final class MainActivity extends Activity {
     private android.app.AlertDialog deletionProgress;
     private final Runnable syncTick=new Runnable(){public void run(){checkMobileSync();handler.postDelayed(this,15000);}};
     @Override protected void onResume(){super.onResume();handler.removeCallbacks(syncTick);handler.post(syncTick);}
-    @Override protected void onPause(){handler.removeCallbacks(syncTick);super.onPause();}
+    @Override protected void onPause(){if(playbackOptionsDialog!=null)playbackOptionsDialog.dismiss();handler.removeCallbacks(syncTick);super.onPause();}
     private void checkMobileSync(){
         if(libraryTree==null||restoringLibrary||scanning||syncChecking||syncDialogOpen||deletingAlbum)return;syncChecking=true;
         final Uri tree=libraryTree;final int job=scanGeneration;final var base=library;var snapshot=new ArrayList<>(base);
@@ -44,6 +44,7 @@ public final class MainActivity extends Activity {
             boolean changed=library.size()!=updated.size();if(!changed){var previous=new HashSet<String>();for(var a:library)previous.add(a.key());for(var a:updated)if(!previous.contains(a.key())){changed=true;break;}}
             library=updated;if(libraryVisible&&changed)albumAdapter.setAlbums(library,search.getText().toString());
             refreshAlbumFavorite();tracks.invalidateViews();albumAdapter.notifyDataSetChanged();
+            if(!libraryVisible&&selectedAlbum!=null)refreshAssetButtons(false);
         });}catch(Exception ex){handler.post(()->{syncChecking=false;if(!isDestroyed())status.setText(jp.virtualcd.player.LanguageStrings.text("同期を反映できません。前のデータを保持しています: ","Unable to apply sync. Previous data is preserved: ")+ex.getMessage());});}});
     }
     static boolean canApplyLibrarySync(List<?> base,List<?> current,boolean restoring,boolean scanning){
@@ -61,6 +62,11 @@ public final class MainActivity extends Activity {
     private SyncStatusView syncStatus;
     private void showSyncProgress(String message){handler.post(()->{if(!isDestroyed()){syncStatus.showProgress(message);}});}
     private Button play, choose;
+    private Button caseButton,jacketButton;
+    private final java.util.concurrent.ExecutorService assetWorker=Executors.newSingleThreadExecutor();
+    private java.util.concurrent.Future<?> assetJob;
+    private int assetGeneration;
+    private String assetStamp="";
     private Button returnToPlaying;
     private SeekBar seek;
     private ListView tracks;
@@ -90,14 +96,14 @@ public final class MainActivity extends Activity {
     private Button albumStar,backToAlbums,historyButton,favoritesButton;
     private ArtworkGallery gallery;
     private ListeningState listening;
-    private Button shuffle,repeat;
+    private Button playbackOptions;
+    private android.app.AlertDialog playbackOptionsDialog;
     private Uri selectedAlbum;
     private String selectedAlbumTitle="";
     private boolean resumeFocusAllowed=true;
     private android.app.Dialog savedDialog;
     private android.app.Dialog soundDialog;
     private android.app.Dialog propertiesDialog;
-    @Player.RepeatMode private int repeatIconMode=Player.REPEAT_MODE_OFF;
     private boolean playIconPlaying;
     private String highlightedId;
     private final Runnable tick=new Runnable() {public void run(){ updatePlayer();handler.postDelayed(this,500);}};
@@ -178,10 +184,11 @@ public final class MainActivity extends Activity {
         albumTitle=label("",18);albumTitle.setGravity(android.view.Gravity.CENTER);albumTitle.setMaxLines(2);
         albumInfo=label("",13);albumInfo.setGravity(android.view.Gravity.CENTER);albumInfo.setMaxLines(2);
         albumStar=FavoriteButton.create(this);
-        Button case3d=button(artworkSide,"3D",()->{if(selectedAlbum!=null&&!selectedAlbumTitle.isEmpty())startActivity(new Intent(this,jp.virtualcd.player.case3d.CaseActivity.class).putExtra("album",selectedAlbum.toString()).putExtra("title",selectedAlbumTitle));});
+        Button case3d=caseButton=button(artworkSide,"3D",()->{if(caseButton.isEnabled()&&selectedAlbum!=null&&!selectedAlbumTitle.isEmpty())startActivity(new Intent(this,jp.virtualcd.player.case3d.CaseActivity.class).putExtra("album",selectedAlbum.toString()).putExtra("title",selectedAlbumTitle));});
         case3d.setLayoutParams(new LinearLayout.LayoutParams(PlayerStyle.dp(this,48),PlayerStyle.dp(this,44)));ControlIcon.button(case3d,"case3d",jp.virtualcd.player.LanguageStrings.text("このアルバムの3Dケース","3D case for this album"));
-        Button jacket=button(artworkSide,jp.virtualcd.player.LanguageStrings.text("ジャケット","Artwork"),this::openJacketGallery);
+        Button jacket=jacketButton=button(artworkSide,jp.virtualcd.player.LanguageStrings.text("ジャケット","Artwork"),this::openJacketGallery);
         var jacketParams=new LinearLayout.LayoutParams(PlayerStyle.dp(this,48),PlayerStyle.dp(this,44));jacketParams.setMargins(0,PlayerStyle.dp(this,6),0,PlayerStyle.dp(this,6));jacket.setLayoutParams(jacketParams);ControlIcon.button(jacket,"booklet",jp.virtualcd.player.LanguageStrings.text("ジャケット・ブックレットを読む","Read artwork / booklet"));
+        setAssetButtons(false,false);
         artworkSide.addView(albumStar,new LinearLayout.LayoutParams(PlayerStyle.dp(this,48),PlayerStyle.dp(this,48)));albumStar.setOnClickListener(v->toggleAlbumFavorite());
         albumHeader.addView(albumTitle,new LinearLayout.LayoutParams(-1,-2));albumHeader.addView(albumInfo,new LinearLayout.LayoutParams(-1,-2));
         trackPane.addView(albumHeader,new LinearLayout.LayoutParams(-1,0,1));
@@ -208,13 +215,13 @@ public final class MainActivity extends Activity {
             public void onStopTrackingTouch(SeekBar s){if(player!=null&&player.getDuration()>0)player.seekTo(player.getDuration()*s.getProgress()/1000);dragging=false;}
         });
         var controls=new LinearLayout(this);playbackControls=controls;playbackPane.addView(controls);
-        shuffle=button(controls,"",()->{if(player!=null)player.setShuffleModeEnabled(!player.getShuffleModeEnabled());});ControlIcon.button(shuffle,"shuffle",jp.virtualcd.player.LanguageStrings.text("シャッフル OFF","Shuffle OFF"));
         ControlIcon.button(button(controls,jp.virtualcd.player.LanguageStrings.text("前へ","Previous"),()->{if(player!=null)player.seekToPreviousMediaItem();}),"previous",jp.virtualcd.player.LanguageStrings.text("前の曲","Previous track"));
         play=button(controls,jp.virtualcd.player.LanguageStrings.text("再生","Play"),()->{if(player!=null){if(player.isPlaying())player.pause();else {if(player.getPlaybackState()==Player.STATE_IDLE)player.prepare();player.play();}}});
         ControlIcon.button(play,"play",jp.virtualcd.player.LanguageStrings.text("再生","Play"));
         ControlIcon.button(button(controls,jp.virtualcd.player.LanguageStrings.text("停止","Stop"),()->{if(player!=null)player.stop();}),"stop",jp.virtualcd.player.LanguageStrings.text("停止","Stop"));
         ControlIcon.button(button(controls,jp.virtualcd.player.LanguageStrings.text("次へ","Next"),()->{if(player!=null)player.seekToNextMediaItem();}),"next",jp.virtualcd.player.LanguageStrings.text("次の曲","Next track"));
-        repeat=button(controls,"",()->{if(player!=null)player.setRepeatMode((player.getRepeatMode()+1)%3);});ControlIcon.button(repeat,"repeat",jp.virtualcd.player.LanguageStrings.text("リピート OFF","Repeat OFF"));
+        playbackOptions=button(controls,"",()->{if(player!=null){if(playbackOptionsDialog!=null)playbackOptionsDialog.dismiss();playbackOptionsDialog=PlaybackOptions.show(this,player);}});
+        ControlIcon.button(playbackOptions,"options",LanguageStrings.text("再生オプション","Playback options"));PlaybackOptions.bind(playbackOptions,null);
         setContentView(screenLayout);
         applyDisplayLayout(getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE);
         screenLayout.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{if(r>l&&b>t)applyDisplayLayout(r-l>b-t);});
@@ -506,8 +513,33 @@ public final class MainActivity extends Activity {
     private void loadAlbum(Uri document){
         loadAlbum(document,null);
     }
+    private void setAssetButtons(boolean hasCase,boolean hasImages){
+        caseButton.setEnabled(hasCase);caseButton.setAlpha(hasCase?1f:.4f);
+        jacketButton.setEnabled(hasImages);jacketButton.setAlpha(hasImages?1f:.4f);
+        albumCover.setEnabled(hasImages);
+    }
+    private void refreshAssetButtons(boolean reset){
+        if(reset){if(assetJob!=null)assetJob.cancel(true);assetStamp="";setAssetButtons(false,false);}
+        else if(assetJob!=null&&!assetJob.isDone())return;
+        final Uri document=selectedAlbum;final int token=++assetGeneration;
+        final String previousStamp=assetStamp;
+        if(document==null)return;
+        assetJob=assetWorker.submit(()->{
+            boolean hasCase=false,hasImages=false;String stamp="";
+            try{
+                var source=AlbumLibrary.describe(this,document);
+                stamp=source.key()+"|"+ArtworkLoader.frontStamp(this,source);
+                if(stamp.equals(previousStamp))return;
+                hasCase=AlbumIndicators.has3d(this,source);
+                hasImages=!ArtworkLoader.listImages(this,source).isEmpty();
+            }catch(Exception ignored){stamp="";/* Missing/inaccessible artwork must not interrupt audio. */}
+            final boolean availableCase=hasCase,availableImages=hasImages;
+            final String checkedStamp=stamp;
+            handler.post(()->{if(!isDestroyed()&&token==assetGeneration&&document.equals(selectedAlbum)){assetStamp=checkedStamp;setAssetButtons(availableCase,availableImages);}});
+        });
+    }
     private void openJacketGallery(){
-        if(selectedAlbum==null||selectedAlbumTitle.isEmpty())return;
+        if(selectedAlbum==null||selectedAlbumTitle.isEmpty()||!jacketButton.isEnabled())return;
         if(gallery!=null)gallery.close();
         gallery=ArtworkGallery.show(this,selectedAlbum);
     }
@@ -532,6 +564,7 @@ public final class MainActivity extends Activity {
         if(deletingAlbum||AlbumDeletion.removed(this,document))return;
         cancelAlbumLoad();
         resumeFocusAllowed=false;selectedAlbum=document;selectedAlbumTitle="";
+        refreshAssetButtons(true);
         libraryVisible=false;albums.setVisibility(View.GONE);search.setVisibility(View.GONE);trackPane.setVisibility(View.VISIBLE);tracks.setVisibility(View.VISIBLE);
         updateNavigation();
         albumHeader.setVisibility(View.VISIBLE);albumCover.setImageResource(R.drawable.ic_album);albumTitle.setText(jp.virtualcd.player.LanguageStrings.text("読み込み中…","Loading…"));albumInfo.setText("");
@@ -583,9 +616,7 @@ public final class MainActivity extends Activity {
     private void updatePlayer(){if(player==null)return;if(playIconPlaying!=player.isPlaying()){playIconPlaying=player.isPlaying();ControlIcon.button(play,playIconPlaying?"pause":"play",playIconPlaying?jp.virtualcd.player.LanguageStrings.text("一時停止","Pause"):jp.virtualcd.player.LanguageStrings.text("再生","Play"));}
         returnToPlaying.setEnabled(playingAlbum(player.getCurrentMediaItem())!=null);
         syncTrackFocus();
-        play.setSelected(true);shuffle.setSelected(player.getShuffleModeEnabled());repeat.setSelected(player.getRepeatMode()!=Player.REPEAT_MODE_OFF);
-        String shuffleLabel=player.getShuffleModeEnabled()?jp.virtualcd.player.LanguageStrings.text("シャッフル ON","Shuffle ON"):jp.virtualcd.player.LanguageStrings.text("シャッフル OFF","Shuffle OFF");shuffle.setContentDescription(shuffleLabel);shuffle.setTooltipText(shuffleLabel);
-        if(repeatIconMode!=player.getRepeatMode()){repeatIconMode=player.getRepeatMode();ControlIcon.button(repeat,repeatIconMode==Player.REPEAT_MODE_ONE?"repeat-one":"repeat",repeatIconMode==Player.REPEAT_MODE_ONE?jp.virtualcd.player.LanguageStrings.text("リピート 1曲","Repeat one"):repeatIconMode==Player.REPEAT_MODE_ALL?jp.virtualcd.player.LanguageStrings.text("リピート 全曲","Repeat all"):jp.virtualcd.player.LanguageStrings.text("リピート OFF","Repeat OFF"));}
+        play.setSelected(true);PlaybackOptions.bind(playbackOptions,player);
         var metadata=player.getMediaMetadata();
         String playingLabel=nowPlayingLabel(metadata,Boolean.TRUE.equals(wideLayout));
         now.setText(nowPlayingText(metadata,Boolean.TRUE.equals(wideLayout)));now.setContentDescription(jp.virtualcd.player.LanguageStrings.text("再生中：","Now playing: ")+playingLabel);now.setTooltipText(playingLabel);
@@ -651,5 +682,5 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onStart(){super.onStart();handler.post(tick);}
     @Override protected void onStop(){handler.removeCallbacks(tick);super.onStop();}
-@Override protected void onDestroy(){if(deletionProgress!=null)deletionProgress.dismiss();generation++;scanGeneration++;cancelAlbumLoad();syncWorker.shutdownNow();cacheWorker.shutdownNow();coverWorker.shutdownNow();if(propertiesDialog!=null)propertiesDialog.dismiss();if(soundDialog!=null)soundDialog.dismiss();if(savedDialog!=null)savedDialog.dismiss();if(gallery!=null)gallery.close();scanner.shutdownNow();worker.shutdownNow();if(albumAdapter!=null)albumAdapter.close();handler.removeCallbacksAndMessages(null);if(connection!=null)MediaController.releaseFuture(connection);player=null;super.onDestroy();}
+@Override protected void onDestroy(){assetGeneration++;assetWorker.shutdownNow();if(deletionProgress!=null)deletionProgress.dismiss();generation++;scanGeneration++;cancelAlbumLoad();syncWorker.shutdownNow();cacheWorker.shutdownNow();coverWorker.shutdownNow();if(propertiesDialog!=null)propertiesDialog.dismiss();if(soundDialog!=null)soundDialog.dismiss();if(savedDialog!=null)savedDialog.dismiss();if(gallery!=null)gallery.close();scanner.shutdownNow();worker.shutdownNow();if(albumAdapter!=null)albumAdapter.close();handler.removeCallbacksAndMessages(null);if(connection!=null)MediaController.releaseFuture(connection);player=null;super.onDestroy();}
 }

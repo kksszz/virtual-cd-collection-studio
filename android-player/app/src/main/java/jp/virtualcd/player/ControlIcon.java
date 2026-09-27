@@ -43,6 +43,7 @@ public final class ControlIcon extends Drawable {
             case "current":c.drawCircle(12,12,6,paint);lines(c,12,2,12,5);lines(c,12,19,12,22);lines(c,2,12,5,12);lines(c,19,12,22,12);paint.setStyle(Paint.Style.FILL);c.drawCircle(12,12,2,paint);break;
             case "back":lines(c,13,4,5,12,13,20);lines(c,5,12,21,12);break;
             case "settings":c.drawCircle(12,12,6,paint);c.drawCircle(12,12,2,paint);for(int i=0;i<8;i++){c.save();c.rotate(i*45,12,12);lines(c,12,2,12,5);c.restore();}break;
+            case "options":paint.setStyle(Paint.Style.FILL);for(int x=5;x<=19;x+=7)c.drawCircle(x,12,1.8f,paint);break;
             case "play":lines(c,7,3,20,12,7,21,7,3);break;
             case "pause":lines(c,8,4,8,20);lines(c,16,4,16,20);break;
             case "stop":c.drawRect(5,5,19,19,paint);break;
