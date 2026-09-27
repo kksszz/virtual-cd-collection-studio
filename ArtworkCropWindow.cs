@@ -21,6 +21,8 @@ internal sealed class ArtworkCropWindow : Window
     private readonly TextBlock _angleLabel=new() { Foreground=Brushes.White,Margin=new Thickness(0,6,0,6) };
     private BitmapSource _working;
     private Point? _anchor;
+    private Int32Rect _dragRect;
+    private int _dragEdges;
     public Int32Rect Crop { get; private set; }
     public double FineAngle => Math.Round(_angle.Value,1);
 
@@ -36,7 +38,7 @@ internal sealed class ArtworkCropWindow : Window
         var root = new DockPanel { Margin = new Thickness(20) };
         var heading = new TextBlock
         {
-            Text = "角度を整え、残したい範囲をドラッグで囲んでください",
+            Text = "範囲を選択後、辺・四隅をドラッグして調整できます（枠内は移動）",
             FontSize = 20, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 10)
         };
         DockPanel.SetDock(heading, Dock.Top); root.Children.Add(heading);
@@ -55,7 +57,7 @@ internal sealed class ArtworkCropWindow : Window
         _save.Click += (_, _) => { if (_save.IsEnabled) DialogResult = true; }; buttons.Children.Add(_save);
         footer.Children.Add(new TextBlock
         {
-            Text = "「保存」を押すまで元画像は変更されません。",
+            Text = "線の中心が切り抜き境界です。保存前は元画像を変更しません。",
             VerticalAlignment = VerticalAlignment.Center, Foreground = Brushes.LightGray
         });
         var body = new Grid();
@@ -68,8 +70,8 @@ internal sealed class ArtworkCropWindow : Window
         _selection = new Rectangle
         {
             Stroke = new SolidColorBrush(Color.FromRgb(255, 183, 77)),
-            StrokeThickness = Math.Max(source.PixelWidth, source.PixelHeight) / 400.0,
-            Fill = new SolidColorBrush(Color.FromArgb(40, 255, 183, 77)), IsHitTestVisible = false
+            StrokeThickness = Math.Max(source.PixelWidth, source.PixelHeight) / 1100.0,
+            Fill = Brushes.Transparent, IsHitTestVisible = false
         };
         _canvas.Children.Add(_selection);
         var viewbox = new Viewbox { Stretch = Stretch.Uniform, Child = _canvas };
@@ -98,17 +100,20 @@ internal sealed class ArtworkCropWindow : Window
         _canvas.MouseLeftButtonDown += (_, e) =>
         {
             _anchor = Clamp(e.GetPosition(_canvas));
+            _dragRect=Crop;_dragEdges=HitEdges(_anchor.Value);
             _canvas.CaptureMouse();
-            SetSelection(_anchor.Value, _anchor.Value, false); e.Handled = true;
+            if(_dragEdges==0)SetSelection(_anchor.Value, _anchor.Value, false); e.Handled = true;
         };
         _canvas.MouseMove += (_, e) =>
         {
-            if (_anchor is { } start) SetSelection(start, Clamp(e.GetPosition(_canvas)), false);
+            var point=Clamp(e.GetPosition(_canvas));
+            if (_anchor is { } start) UpdateDrag(start,point,false);
+            else _canvas.Cursor=HitEdges(point) switch{1 or 2=>Cursors.SizeWE,4 or 8=>Cursors.SizeNS,5 or 10=>Cursors.SizeNWSE,6 or 9=>Cursors.SizeNESW,16=>Cursors.SizeAll,_=>Cursors.Cross};
         };
         _canvas.MouseLeftButtonUp += (_, e) =>
         {
             if (_anchor is not { } start) return;
-            SetSelection(start, Clamp(e.GetPosition(_canvas)), true);
+            UpdateDrag(start, Clamp(e.GetPosition(_canvas)), true);
             _anchor = null; _canvas.ReleaseMouseCapture(); e.Handled = true;
         };
         _canvas.LostMouseCapture += (_, _) => { _anchor = null; RefreshPreview(); };
@@ -117,6 +122,28 @@ internal sealed class ArtworkCropWindow : Window
     }
 
     private Point Clamp(Point point) => new(Math.Clamp(point.X, 0, _canvas.Width), Math.Clamp(point.Y, 0, _canvas.Height));
+    private int HitEdges(Point p)
+    {
+        if(Crop.Width<2||Crop.Height<2)return 0;
+        double tolerance=Math.Max(_canvas.Width,_canvas.Height)/90;int edges=0;
+        if(p.Y>=Crop.Y-tolerance&&p.Y<=Crop.Y+Crop.Height+tolerance){if(Math.Abs(p.X-Crop.X)<tolerance)edges|=1;else if(Math.Abs(p.X-Crop.X-Crop.Width)<tolerance)edges|=2;}
+        if(p.X>=Crop.X-tolerance&&p.X<=Crop.X+Crop.Width+tolerance){if(Math.Abs(p.Y-Crop.Y)<tolerance)edges|=4;else if(Math.Abs(p.Y-Crop.Y-Crop.Height)<tolerance)edges|=8;}
+        if(edges!=0)return edges;
+        return Crop.Width<_canvas.Width||Crop.Height<_canvas.Height? (p.X>Crop.X&&p.X<Crop.X+Crop.Width&&p.Y>Crop.Y&&p.Y<Crop.Y+Crop.Height?16:0):0;
+    }
+    private void UpdateDrag(Point start,Point current,bool preview)
+    {
+        var area=DragSelection(_dragRect,_dragEdges,start,current,(int)_canvas.Width,(int)_canvas.Height);
+        SetSelection(new Point(area.X,area.Y),new Point(area.X+area.Width,area.Y+area.Height),preview);
+    }
+    internal static Int32Rect DragSelection(Int32Rect rect,int edges,Point start,Point current,int width,int height)
+    {
+        if(edges==0)return SelectionRect(start,current,width,height);
+        double l=rect.X,t=rect.Y,r=l+rect.Width,b=t+rect.Height;
+        if(edges==16){double dx=Math.Clamp(current.X-start.X,-l,width-r),dy=Math.Clamp(current.Y-start.Y,-t,height-b);l+=dx;r+=dx;t+=dy;b+=dy;}
+        else{if((edges&1)!=0)l=Math.Clamp(current.X,0,r-2);if((edges&2)!=0)r=Math.Clamp(current.X,l+2,width);if((edges&4)!=0)t=Math.Clamp(current.Y,0,b-2);if((edges&8)!=0)b=Math.Clamp(current.Y,t+2,height);}
+        return SelectionRect(new Point(l,t),new Point(r,b),width,height);
+    }
 
     private void ApplyAngle()
     {

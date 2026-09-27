@@ -38,7 +38,7 @@ Android 10以上向けの音楽プレーヤーです。現在は **0.11.0** で�
 
 圧縮された音声エントリー、暗号化ZIP、ZIP64、分割ZIP、BIN/ISOはAndroid版では未対応です。通常フォルダーの単一FLAC＋CUEに対応しました（実音声の曲頭一致はAndroidでは未検証）。タグ編集や画像の加工・用途設定はWindows版で行います。タグキャッシュは永続化していますが、初回取得には時間がかかります。
 
-Android版は [0.11.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/android-v0.11.0)、Windows版は [v0.85.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/v0.85.0) から入手できます。Androidは従来と同じ署名を維持しています。更新時にアンインストールする必要はありません。
+Android版は [0.11.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/android-v0.11.0)、Windows版は [v0.87.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/v0.87.0) から入手できます。Androidは従来と同じ署名を維持しています。更新時にアンインストールする必要はありません。
 
 - [Android版の説明・ビルド手順](android-player/README.md)
 - [Windowsからの3Dデータ出力](MOBILE_3D.md)

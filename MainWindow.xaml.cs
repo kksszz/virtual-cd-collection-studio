@@ -1931,6 +1931,8 @@ public partial class MainWindow : Window
         {
             if (Equals(menuItem.Tag, "AlbumProperties") || Equals(menuItem.Tag, "WikipediaAlbum") || Equals(menuItem.Tag, "WikipediaAlbumEn"))
                 menuItem.IsEnabled = selected is not null;
+            else if (Equals(menuItem.Tag, "RefreshAlbum"))
+                menuItem.IsEnabled = selected is not null && !_manualAlbumRefreshInProgress;
             else if (Equals(menuItem.Tag, "WikipediaArtist") || Equals(menuItem.Tag, "WikipediaArtistEn"))
                 menuItem.IsEnabled = selected is not null && IsKnownArtist(selected.Artist);
         }
@@ -5006,7 +5008,7 @@ public partial class MainWindow : Window
         }));
     }
 
-    private static BitmapImage LoadBitmap(string path, int decodePixelWidth)
+    private static BitmapSource LoadBitmap(string path, int decodePixelWidth)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         return LoadBitmap(stream, decodePixelWidth);
@@ -5014,7 +5016,7 @@ public partial class MainWindow : Window
 
     private static BitmapSource LoadBitmap(AlbumImageSource source, int decodePixelWidth)
     {
-        BitmapImage bitmap;
+        BitmapSource bitmap;
         var quarterTurn = source.RotationDegrees is 90 or 270;
         if (source.FilePath is not null)
         {
@@ -5077,8 +5079,13 @@ public partial class MainWindow : Window
         return -1;
     }
 
-    private static BitmapImage LoadBitmap(Stream stream, int decodePixelWidth, bool decodeByHeight = false)
+    private static BitmapSource LoadBitmap(Stream stream, int decodePixelWidth, bool decodeByHeight = false)
     {
+        var position=stream.Position;
+        var frame=BitmapDecoder.Create(stream,BitmapCreateOptions.PreservePixelFormat,BitmapCacheOption.None).Frames[0];
+        var orientation=ArtworkOrientation.Read(frame);
+        stream.Position=position;
+        if(orientation is >=5 and <=8)decodeByHeight=!decodeByHeight;
         var image = new BitmapImage();
         image.BeginInit();
         image.CacheOption = BitmapCacheOption.OnLoad;
@@ -5090,7 +5097,7 @@ public partial class MainWindow : Window
         image.StreamSource = stream;
         image.EndInit();
         image.Freeze();
-        return image;
+        return ArtworkOrientation.Apply(image,orientation);
     }
 
     private static BitmapSource RotateArtworkBitmap(BitmapSource source, int degrees)
@@ -5324,6 +5331,8 @@ public partial class MainWindow : Window
             controls.Children.Add(zoomOutButton); controls.Children.Add(zoomText); controls.Children.Add(zoomInButton);
             controls.Children.Add(actualSizeButton); controls.Children.Add(fitButton); controls.Children.Add(fullScreenButton);
             controls.Children.Add(cropButton);
+            var undoImageButton=new System.Windows.Controls.Button{Content="元に戻す",Padding=new Thickness(10,6,10,6),Margin=new Thickness(3),ToolTip="切り抜き・回転前の画像をバックアップから復元"};
+            controls.Children.Add(undoImageButton);
             controls.Children.Add(deleteImageButton);
             var popupGrid = new System.Windows.Controls.Grid();
             popupGrid.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -5456,6 +5465,14 @@ public partial class MainWindow : Window
                     if (images.Count > 0) UpdatePopup();
                 }
                 finally { popupGrid.IsEnabled = true; }
+            };
+            undoImageButton.Click += async (_, _) =>
+            {
+                if(_album?.Path!=popupAlbumPath||_editingArtworkCrop||_artworkRotationSaving||deletingImage)return;
+                var key=images[popupIndex].RoleKey;var current=_albumImages.FirstOrDefault(image=>image.RoleKey==key);if(current is null)return;
+                popupGrid.IsEnabled=false;
+                try{await UndoArtworkEditAsync(current,popup);if(_album?.Path!=popupAlbumPath)return;images.Clear();images.AddRange(_albumImages);popupIndex=Math.Max(0,images.FindIndex(image=>image.RoleKey==key));fitToWindow=true;if(images.Count>0)UpdatePopup();}
+                finally{popupGrid.IsEnabled=true;}
             };
             deleteImageButton.Click += async (_, _) =>
             {
@@ -5639,7 +5656,7 @@ public partial class MainWindow : Window
     private async Task<bool> SetArtworkRotationAsync(AlbumImageSource source, int degrees)
         => await SaveArtworkEditAsync(source, degrees, null);
 
-    private async Task<bool> SaveArtworkEditAsync(AlbumImageSource source, int degrees, Int32Rect? crop,double fineAngle=0)
+    private async Task<bool> SaveArtworkEditAsync(AlbumImageSource source, int degrees, Int32Rect? crop,double fineAngle=0,Point[]? corners=null,DiscCrop? disc=null)
     {
         if (_album is null || _artworkRotationSaving) return false;
         using var operation = _dataOperations.Begin();
@@ -5663,7 +5680,11 @@ public partial class MainWindow : Window
                 StopPlayback(resetPosition: false);
             StatusText.Text = crop is not null ? "選択範囲を切り抜いて保存しています…"
                 : source.ZipEntry is null ? "画像ファイルを回転して保存しています…" : "ZIP内画像を回転・再構築して検証しています…";
-            var backup = await Task.Run(() => crop is { } area
+            var backup = await Task.Run(() => disc is not null
+                ? ArtworkRotationWriter.Disc(source.FilePath ?? album.Path,source.ZipEntry?.FileName,NormalizeArtworkRotation(degrees),disc,backupFolder,progress)
+                : corners is not null
+                ? ArtworkRotationWriter.Perspective(source.FilePath ?? album.Path,source.ZipEntry?.FileName,NormalizeArtworkRotation(degrees),corners,backupFolder,progress)
+                : crop is { } area
                 ? ArtworkRotationWriter.CropWithAngle(source.FilePath ?? album.Path, source.ZipEntry?.FileName,
                     NormalizeArtworkRotation(degrees), area, fineAngle,backupFolder, progress)
                 : ArtworkRotationWriter.Rotate(source.FilePath ?? album.Path, source.ZipEntry?.FileName,
@@ -5722,11 +5743,11 @@ public partial class MainWindow : Window
         {
             var bitmap = await Task.Run(() => LoadBitmap(source, 0));
             if (_album?.Path != albumPath || _artworkRotationSaving) return;
-            var editor = new ArtworkCropWindow(source.DisplayName, bitmap) { Owner = owner };
+            var editor = new ArtworkPerspectiveWindow(source.DisplayName, bitmap) { Owner = owner };
             if (editor.ShowDialog() != true) return;
             // Reveal the main saving overlay instead of leaving it behind the fullscreen viewer.
             owner.Hide();
-            try { await SaveArtworkEditAsync(source, source.RotationDegrees, editor.Crop,editor.FineAngle); }
+            try { await SaveArtworkEditAsync(source, source.RotationDegrees, editor.ManualCrop,editor.ManualAngle,editor.Corners,editor.Disc); }
             finally { if (!_dataOperations.CloseRequested) { owner.Show(); owner.Activate(); } }
         }
         catch (Exception ex)
@@ -6480,7 +6501,7 @@ public partial class MainWindow : Window
         {
             var sourcePath = source.FilePath ?? source.ZipEntry?.SourcePath;
             var file = !string.IsNullOrWhiteSpace(sourcePath) && File.Exists(sourcePath) ? new FileInfo(sourcePath) : null;
-            var identity = string.Join('|', source.RoleKey, role, source.RotationDegrees,
+            var identity = string.Join('|', "exif-v1", source.RoleKey, role, source.RotationDegrees,
                 file?.Length ?? 0, file?.LastWriteTimeUtc.Ticks ?? 0,
                 source.ZipEntry?.DataOffset ?? 0, source.ZipEntry?.CompressedSize ?? 0);
             static string Key(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..20];

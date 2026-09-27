@@ -12,6 +12,15 @@ internal static class Program
 {
     [STAThread] static void Main(string[] args)
     {
+        if(args.Length>0&&args[0]=="--disc-crop"){
+            try{DiscCropChecks.Run(args.Length>1?args[1]:null);}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
+        }
+        if(args.Length>0&&args[0]=="--perspective"){
+            try{PerspectiveChecks.Run(args.Length>1?args[1]:null);}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
+        }
+        if(args.Length==1&&args[0]=="--orientation"){
+            try{OrientationChecks.Run();}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
+        }
         if(args.Length==1&&args[0]=="--scan-resume"){
             try{ScanResumeChecks.Run();}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
         }

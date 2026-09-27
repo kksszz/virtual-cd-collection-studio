@@ -8,7 +8,8 @@ internal static class ArtworkThumbnailCache
     // Shared with generation: deletion cannot race an in-progress thumbnail write.
     internal static readonly object SyncRoot=new();
     internal sealed record ClearResult(int Deleted,long Bytes,int Failed);
-    internal static ClearResult Clear(string dataDirectory)
+    internal static ClearResult Clear(string dataDirectory) => ClearAlbum(dataDirectory,null);
+    internal static ClearResult ClearAlbum(string dataDirectory, string? albumPath)
     {
         lock(SyncRoot)
         {
@@ -20,10 +21,13 @@ internal static class ArtworkThumbnailCache
             if((File.GetAttributes(directory)&FileAttributes.ReparsePoint)!=0)
                 throw new IOException("リンクされたキャッシュフォルダーは削除しません。");
             int deleted=0,failed=0;long bytes=0;
+            var prefix=albumPath is null?null:Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(Path.GetFullPath(albumPath).ToUpperInvariant())))[..20]+"-";
             // Only files created by LoadFrontSpreadThumbnail; no recursion or broad deletion.
             foreach(var path in Directory.EnumerateFiles(directory,"*.png",SearchOption.TopDirectoryOnly))
             {
                 if(!Regex.IsMatch(Path.GetFileName(path),@"\A[0-9A-Fa-f]{20}-[0-9A-Fa-f]{20}\.png\z"))continue;
+                if(prefix is not null&&!Path.GetFileName(path).StartsWith(prefix,StringComparison.OrdinalIgnoreCase))continue;
                 try{
                     var file=new FileInfo(path);
                     if((file.Attributes&FileAttributes.ReparsePoint)!=0){failed++;continue;}

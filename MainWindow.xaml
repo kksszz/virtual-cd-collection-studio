@@ -273,6 +273,8 @@
                    ScrollViewer.VerticalScrollBarVisibility="Visible">
             <ListBox.ContextMenu>
               <ContextMenu Opened="AlbumContextMenu_Opened">
+                <MenuItem Header="最新の状態に更新" Tag="RefreshAlbum" Click="RefreshAlbum_Click" ToolTip="このアルバムの画像・曲情報をファイルから再読み込みします"/>
+                <Separator/>
                 <MenuItem Header="3Dケースをフルスクリーン表示" Click="ShowAlbum3DFullScreen_Click"/>
                 <Separator/>
                 <MenuItem Header="エクスプローラーで場所を開く" Click="OpenAlbumInExplorer_Click"/>
@@ -388,6 +390,7 @@
                     ScrollViewer.VerticalScrollBarVisibility="Visible">
             <TreeView.ContextMenu>
               <ContextMenu Opened="AlbumPropertiesContextMenu_Opened">
+                <MenuItem Header="最新の状態に更新" Tag="RefreshAlbum" Click="RefreshAlbum_Click"/>
                 <MenuItem Header="3Dケースをフルスクリーン表示" Click="ShowAlbum3DFullScreen_Click"/>
                 <Separator/>
                 <MenuItem Header="エクスプローラーで場所を開く" Click="OpenAlbumInExplorer_Click"/>

@@ -12,6 +12,13 @@ internal static class ArtworkCacheChecks
         int Count(object result,string property)=>(int)result.GetType().GetProperty(property)!.GetValue(result)!;
         if(Count(clear.Invoke(null,[root])!,"Deleted")!=0)throw new Exception("Missing cache");
         var cache=Path.Combine(root,"thumbnail-cache");Directory.CreateDirectory(cache);
+        var albumPath=Path.Combine(root,"album");
+        var albumKey=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Path.GetFullPath(albumPath).ToUpperInvariant())))[..20];
+        var target=Path.Combine(cache,albumKey+"-"+new string('E',20)+".png");
+        var other=Path.Combine(cache,new string('F',20)+"-"+new string('E',20)+".png");
+        File.WriteAllBytes(target,[1]);File.WriteAllBytes(other,[2]);
+        if(ArtworkThumbnailCache.ClearAlbum(root,albumPath).Deleted!=1||File.Exists(target)||!File.Exists(other))throw new Exception("Album-only invalidation");
+        File.Delete(other);
         var valid=Path.Combine(cache,new string('A',20)+"-"+new string('B',20)+".png");
         var locked=Path.Combine(cache,new string('C',20)+"-"+new string('D',20)+".png");
         File.WriteAllBytes(valid,[1,2,3]);File.WriteAllBytes(locked,[4,5]);

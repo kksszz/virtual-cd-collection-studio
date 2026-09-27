@@ -9,6 +9,42 @@ namespace ZipMp3Player;
 
 internal static class ArtworkRotationWriter
 {
+    internal static byte[] ReadImage(string path,string? entryName)
+    {
+        if(entryName is null)return File.ReadAllBytes(path);
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        using var input=File.OpenRead(path);using var zip=new ZipArchive(input,ZipArchiveMode.Read,false,Encoding.GetEncoding(932));
+        var entry=zip.Entries.Single(e=>e.FullName==entryName);using var image=entry.Open();using var bytes=new MemoryStream();image.CopyTo(bytes);return bytes.ToArray();
+    }
+    internal static string? FindUndoBackup(string path,string? entryName,string? backupFolder)
+    {
+        var current=SHA256.HashData(ReadImage(path,entryName));
+        var directories=new[]{Path.GetDirectoryName(Path.GetFullPath(path))!,backupFolder}.Where(d=>!string.IsNullOrWhiteSpace(d)&&Directory.Exists(d)).Distinct(StringComparer.OrdinalIgnoreCase);
+        var prefix=Path.GetFileName(path);
+        foreach(var file in directories.SelectMany(d=>Directory.EnumerateFiles(d!,"*",SearchOption.TopDirectoryOnly))
+            .Where(p=>System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(p),"\\A"+System.Text.RegularExpressions.Regex.Escape(prefix)+"\\.(crop|rotation)-backup-[0-9a-fA-F]{32}\\z"))
+            .OrderByDescending(File.GetLastWriteTimeUtc))
+        {
+            try{
+                // A shared backup directory can contain identically named files from other albums.
+                if(!string.Equals(Path.GetDirectoryName(Path.GetFullPath(file)),Path.GetDirectoryName(Path.GetFullPath(path)),StringComparison.OrdinalIgnoreCase)
+                    &&(!File.Exists(file+".origin")||!string.Equals(File.ReadAllText(file+".origin"),Path.GetFullPath(path),StringComparison.OrdinalIgnoreCase)))continue;
+                var bytes=ReadImage(file,entryName);if(SHA256.HashData(bytes).SequenceEqual(current))continue;
+                using var stream=new MemoryStream(bytes);_ = BitmapDecoder.Create(stream,BitmapCreateOptions.None,BitmapCacheOption.OnLoad).Frames[0];return file;
+            }catch(IOException){}catch(InvalidOperationException){}catch(NotSupportedException){}catch(UnauthorizedAccessException){}
+        }
+        return null;
+    }
+    internal static string Restore(string path,string? entryName,string backup,string? backupFolder)
+    {
+        var bytes=ReadImage(backup,entryName);
+        using(var image=new MemoryStream(bytes))_ = BitmapDecoder.Create(image,BitmapCreateOptions.None,BitmapCacheOption.OnLoad).Frames[0];
+        return Save(path,entryName,0,null,backupFolder,null,0,null,bytes);
+    }
+    internal static string Perspective(string path,string? entryName,int degrees,System.Windows.Point[] corners,string? backupFolder,IProgress<string>? progress=null)
+        => Save(path,entryName,degrees,null,backupFolder,progress,0,corners);
+    internal static string Disc(string path,string? entryName,int degrees,DiscCrop disc,string? backupFolder,IProgress<string>? progress=null)
+        => Save(path,entryName,degrees,null,backupFolder,progress,0,null,null,disc);
     // Work on a sibling copy; only the validated result replaces the original.
     // Keep the backup even when later UI/cache refresh fails.
     public static string Rotate(string path, string? entryName, int degrees, string? backupFolder, IProgress<string>? progress = null)
@@ -23,21 +59,21 @@ internal static class ArtworkRotationWriter
         => Save(path,entryName,degrees,crop,backupFolder,progress,fineAngle);
 
     private static string Save(string path, string? entryName, int degrees, System.Windows.Int32Rect? crop,
-        string? backupFolder, IProgress<string>? progress,double fineAngle)
+        string? backupFolder, IProgress<string>? progress,double fineAngle,System.Windows.Point[]? corners=null,byte[]? restoreBytes=null,DiscCrop? disc=null)
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         path = Path.GetFullPath(path);
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".rotationtmp";
         var folder = string.IsNullOrWhiteSpace(backupFolder) ? Path.GetDirectoryName(path)! : backupFolder;
         Directory.CreateDirectory(folder);
-        var backup = Path.Combine(folder, Path.GetFileName(path) + (crop is null ? ".rotation-backup-" : ".crop-backup-") + Guid.NewGuid().ToString("N"));
+        var backup = Path.Combine(folder, Path.GetFileName(path) + (crop is null && corners is null && disc is null ? ".rotation-backup-" : ".crop-backup-") + Guid.NewGuid().ToString("N"));
         try
         {
             if (entryName is null)
             {
                 progress?.Report(crop is null ? "画像を回転し、保存用ファイルを作成しています…" : "選択範囲を切り抜き、保存用ファイルを作成しています…");
                 using var input = File.OpenRead(path);
-                var bytes = RotateBytes(input, Path.GetExtension(path), degrees, crop,fineAngle);
+                var bytes = restoreBytes ?? RotateBytes(input, Path.GetExtension(path), degrees, crop,fineAngle,corners,disc);
                 File.WriteAllBytes(temporary, bytes);
             }
             else
@@ -63,7 +99,7 @@ internal static class ArtworkRotationWriter
                         replacement.ExternalAttributes = entry.ExternalAttributes;
                         using var input = entry.Open();
                         using var output = replacement.Open();
-                        if (target) output.Write(RotateBytes(input, Path.GetExtension(entryName), degrees, crop,fineAngle));
+                        if (target) output.Write(restoreBytes ?? RotateBytes(input, Path.GetExtension(entryName), degrees, crop,fineAngle,corners,disc));
                         else input.CopyTo(output);
                     }
                 }
@@ -83,6 +119,7 @@ internal static class ArtworkRotationWriter
             }
             progress?.Report(entryName is null ? "元の画像をバックアップしています…" : "4 / 4　元のZIPをバックアップしています…");
             File.Copy(path, backup, false);
+            if(!string.Equals(Path.GetDirectoryName(backup),Path.GetDirectoryName(path),StringComparison.OrdinalIgnoreCase))File.WriteAllText(backup+".origin",path);
             // No unsafe overwrite fallback: an unsupported atomic replacement leaves the original intact.
             progress?.Report("検証済みのファイルに置き換えています…");
             File.Replace(temporary, path, null);
@@ -108,7 +145,7 @@ internal static class ArtworkRotationWriter
         return result;
     }
 
-    private static byte[] RotateBytes(Stream input, string extension, int degrees, System.Windows.Int32Rect? crop,double fineAngle)
+    private static byte[] RotateBytes(Stream input, string extension, int degrees, System.Windows.Int32Rect? crop,double fineAngle,System.Windows.Point[]? corners=null,DiscCrop? disc=null)
     {
         // WIC exposes a delayed 1x1 placeholder for non-seekable ZIP streams.
         using var seekable = new MemoryStream();
@@ -117,7 +154,10 @@ internal static class ArtworkRotationWriter
         var decoder = BitmapDecoder.Create(seekable, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
         if (decoder.Frames.Count != 1) throw new NotSupportedException("複数ページ・アニメーション画像の編集には対応していません。");
         var normalized = ((degrees % 360) + 360) % 360;
-        BitmapSource rotated = new TransformedBitmap(decoder.Frames[0], new RotateTransform(normalized));
+        var oriented=ArtworkOrientation.Apply(decoder.Frames[0],ArtworkOrientation.Read(decoder.Frames[0]));
+        BitmapSource rotated = new TransformedBitmap(oriented, new RotateTransform(normalized));
+        if(corners is not null)rotated=ArtworkPerspective.Render(rotated,corners);
+        if(disc is not null)rotated=ArtworkDisc.Render(rotated,disc);
         rotated=ArtworkDeskew.Render(rotated,fineAngle);
         if (crop is { } area)
         {
