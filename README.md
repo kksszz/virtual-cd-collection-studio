@@ -12,15 +12,15 @@ CDドライブから音楽を取り込み、スキャナーでパッケージを
 
 Wi-Fi転送は同じ信頼できる家庭内LANで使用します。スキャナーには対応ドライバーが必要です。デジパック2枚組の3D表示は現在Windows専用で、Androidへの3D出力には未対応です。
 
-取り込みから持ち出しまでの流れ・対応範囲は [連携概要](INTEGRATION_OVERVIEW.md) を参照してください。Windows v0.88.0／Android 0.11.0の構成です。旧リリースでは搭載機能が異なります。
+取り込みから持ち出しまでの流れ・対応範囲は [連携概要](docs/INTEGRATION_OVERVIEW.md) を参照してください。Windows v0.88.0／Android 0.11.0の構成です。旧リリースでは搭載機能が異なります。
 
 ZIP.MP3アルバムと一般的な音声ファイルの管理・再生にも対応しています。Windowsでコレクションを管理・編集し、Androidでは再生・鑑賞する使い方を想定しています。
 
-Third-party assets and their licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Third-party assets and their licenses are listed in [THIRD_PARTY_NOTICES.md](licenses/THIRD_PARTY_NOTICES.md).
 
 ## Android版 — Virtual CD Player
 
-Windows v0.85.0／Android 0.10.0では、アルバムを複数選んで音楽・画像・GLBを一括転送する **[モバイル同期](MOBILE_SYNC.md)** に対応しています。Wi-Fi同期は接続QRコードを使い、USBデバッグ不要です。
+Windows v0.85.0／Android 0.10.0では、アルバムを複数選んで音楽・画像・GLBを一括転送する **[モバイル同期](docs/MOBILE_SYNC.md)** に対応しています。Wi-Fi同期は接続QRコードを使い、USBデバッグ不要です。
 
 Android 10以上向けの音楽プレーヤーです。現在は **0.11.0** で、Xperia 1 IIで検証しています。端末内に保存済みの音楽はSIMカードやネット接続なしで再生できます。Windows版の全機能を移植したものではありません。
 
@@ -53,19 +53,19 @@ Android 10以上向けの音楽プレーヤーです。現在は **0.11.0** で�
 Android版は [0.11.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/android-v0.11.0)、Windows版は [v0.88.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/v0.88.0) から入手できます。Androidは従来と同じ署名を維持しています。更新時にアンインストールする必要はありません。
 
 - [Android版の説明・ビルド手順](android-player/README.md)
-- [Windowsからの3Dデータ出力](MOBILE_3D.md)
+- [Windowsからの3Dデータ出力](docs/MOBILE_3D.md)
 - [3Dデータ形式と制約](android-player/CASE3D_FORMAT.md)
 - [Windows版との機能比較・今後の対応](android-player/WINDOWS_PARITY.md)
 
 ## Windows版の主な機能
 
 最新版と過去の変更内容は [リリースノート](RELEASE_NOTES.md) を参照してください。
-画像のないアルバムの自動ジャケット取得（既定OFF）は [自動取得ガイド](AUTOMATIC_ARTWORK.md) を参照してください。
+画像のないアルバムの自動ジャケット取得（既定OFF）は [自動取得ガイド](docs/AUTOMATIC_ARTWORK.md) を参照してください。
 
 - ZIP / ZIP.MP3内のMP3を展開管理せずに一覧化・再生
-- 音楽CDをFLAC／MP3へ取り込み。MusicBrainzの曲情報取得、各曲の試聴・シーク、CD取り出しに対応（[CD取り込み](CD_IMPORT.md)）。
-- スキャナーから複数枚を取り込み、自動切り抜き・角度・台形・円形補正後にアルバムへ保存（[スキャン](ALBUM_SCANNING.md)）。
-- 標準CDケースに加え、デジパック2枚組（3面）のWindows用3D試作モデルをアルバムごとに選択（[デジパック](DIGIPAK_MODEL.md)）。
+- 音楽CDをFLAC／MP3へ取り込み。MusicBrainzの曲情報取得、各曲の試聴・シーク、CD取り出しに対応（[CD取り込み](docs/CD_IMPORT.md)）。
+- スキャナーから複数枚を取り込み、自動切り抜き・角度・台形・円形補正後にアルバムへ保存（[スキャン](docs/ALBUM_SCANNING.md)）。
+- 標準CDケースに加え、デジパック2枚組（3面）のWindows用3D試作モデルをアルバムごとに選択（[デジパック](docs/DIGIPAK_MODEL.md)）。
 - 圧縮ZIP.MP3を無圧縮ZIP.MP3へ変換
 - CBR/VBR MP3、WAV、FLAC、M4Aの再生（VBR MP3の時間指定頭出しに対応）
 - 次の曲を先読みするギャップレス再生（アルバム間・お気に入り一覧にも対応）
@@ -105,7 +105,7 @@ Android版は [0.11.0リリース](https://github.com/kksszz/virtual-cd-collecti
 - **保存先**：1枚組はアルバム直下、複数枚組はDisc1／Disc2などのフォルダーへ保存します。既存のアルバムやDiscは上書きしません。
 - **検証**：各ブロックを複数回読み取り、FLACは保存後の全デコードでPCMを照合します。MP3は全デコード・曲長・タグを確認します。
 
-通常の音楽CDが対象です。AccurateRip照合や読み取りオフセット補正には未対応で、読み取り結果が一致しても原盤との完全一致を保証するものではありません。対応範囲や安全性は [CD取り込みの詳細](CD_IMPORT.md) を参照してください。
+通常の音楽CDが対象です。AccurateRip照合や読み取りオフセット補正には未対応で、読み取り結果が一致しても原盤との完全一致を保証するものではありません。対応範囲や安全性は [CD取り込みの詳細](docs/CD_IMPORT.md) を参照してください。
 
 ## スキャナーからの直接スキャン（Windows）
 
@@ -126,7 +126,7 @@ Android版は [0.11.0リリース](https://github.com/kksszz/virtual-cd-collecti
 - **保存**：初期値はJPG（品質95）で、PNGも選べます。アルバム内のImagesフォルダーがなければ自動作成し、既存の同名画像は上書きしません。ZIP／ZIP.MP3内のアルバムへの保存にも対応します。
 - **音楽の保持**：画像だけの追加・変更では既存の曲情報を維持し、音楽を再エンコードしません。保存まで元アルバムは変更しません。
 
-直接スキャンにも対応ドライバーが必要です。配布ZIPの `ScannerTools` フォルダーも含めて配置し、EPSON Scanの単独アプリは閉じて使用してください。自動切り抜きは保存前にプレビューを確認してください。折り目による曲面の湾曲は完全には補正できません。詳しくは [アルバム画像のスキャン](ALBUM_SCANNING.md) を参照してください。
+直接スキャンにも対応ドライバーが必要です。配布ZIPの `ScannerTools` フォルダーも含めて配置し、EPSON Scanの単独アプリは閉じて使用してください。自動切り抜きは保存前にプレビューを確認してください。折り目による曲面の湾曲は完全には補正できません。詳しくは [アルバム画像のスキャン](docs/ALBUM_SCANNING.md) を参照してください。
 
 ## 圧縮ZIPの一括変換
 
@@ -159,7 +159,7 @@ Windows x64用ZIPを展開し、`Virtual CD Collection Studio.exe` を起動し�
 設定・履歴は既存のデータ保存先を引き続き使用します。
 
 実物のCDから3D CD BOX用画像を作成する場合は、配布物に同梱している
-[CD BOX用スキャン画像の保存方法](CD_BOX_SCAN_GUIDE.md) を参照してください。
+[CD BOX用スキャン画像の保存方法](docs/CD_BOX_SCAN_GUIDE.md) を参照してください。
 
 ## 3Dカバーフローの操作
 
@@ -322,6 +322,8 @@ Windows x64用ZIPを展開し、`Virtual CD Collection Studio.exe` を起動し�
 
 ## ビルド
 
+リポジトリのルートで実行してください。Windows本体は `src/windows`、テストは `tests`、説明資料は `docs` に配置しています。
+
 ```powershell
 dotnet restore
 dotnet build -c Release
@@ -330,7 +332,7 @@ dotnet build -c Release
 単一実行ファイルとして発行する例:
 
 ```powershell
-dotnet publish -c Release -r win-x64 --self-contained true `
+dotnet publish src/windows/ZipMp3Player.csproj -c Release -r win-x64 --self-contained true `
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
 ```
 
@@ -343,7 +345,9 @@ AIモデルやその実行環境は同梱していません。
 
 ## 開発時の追加テスト
 
-`dotnet run --project GaplessDevHarness` で、曲境界のPCM連続性、シーク・リピート、形式変更、ZIP内のCBR/VBR、LAME余白補正と画面連携を検証できます。テスト用エンコーダーはプレイヤー配布版には含めません。
+配置と実行方法は [テストガイド](tests/README.md) を参照してください。
+
+`dotnet run --project tests/GaplessDevHarness` で、曲境界のPCM連続性、シーク・リピート、形式変更、ZIP内のCBR/VBR、LAME余白補正と画面連携を検証できます。テスト用エンコーダーはプレイヤー配布版には含めません。
 
 手元の音源を使う任意テストでは、次の環境変数を設定できます。
 
@@ -355,4 +359,4 @@ AIモデルやその実行環境は同梱していません。
 
 本ソフトウェアの独自コードは **GNU General Public License v3.0 only（GPL-3.0-only）** で公開しています。詳細は [LICENSE](LICENSE) を参照してください。
 
-配布物に含まれる第三者ライブラリと3D素材には、それぞれのライセンスが適用されます。著作権表示、出典、改変内容は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)、各ライセンス全文は `THIRD_PARTY_LICENSES` フォルダーに収録しています。
+配布物に含まれる第三者ライブラリと3D素材には、それぞれのライセンスが適用されます。著作権表示、出典、改変内容は [THIRD_PARTY_NOTICES.md](licenses/THIRD_PARTY_NOTICES.md)、各ライセンス全文は `licenses/third-party` フォルダーに収録しています。

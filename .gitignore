@@ -22,6 +22,10 @@ AiDevHarness/model-cache/
 AiDevHarness/app-integration-data/
 AiDevHarness/input-*.wav
 AiDevHarness/ai-*.wav
+tests/AiDevHarness/model-cache/
+tests/AiDevHarness/app-integration-data/
+tests/AiDevHarness/input-*.wav
+tests/AiDevHarness/ai-*.wav
 
 # Runtime data, temporary files, and logs
 *.log

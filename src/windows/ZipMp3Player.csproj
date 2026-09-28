@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Virtual CD Collection Studio</AssemblyName>
+    <RootNamespace>ZipMp3Player</RootNamespace>
+    <Title>Virtual CD Collection Studio</Title>
+    <Product>Virtual CD Collection Studio</Product>
+    <Description>Preserve, explore and play complete CD collections in a virtual library</Description>
+    <Copyright>Copyright (C) 2026 kksszz</Copyright>
+    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+    <Version>0.88.0</Version>
+    <InformationalVersion>0.88.0</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <AssemblyVersion>0.88.0.0</AssemblyVersion>
+    <FileVersion>0.88.0.0</FileVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="ScannerTwainBridge\**\*.cs" />
+    <None Include="obj\ScannerTools\ScannerTwainBridge.exe" Link="ScannerTools\ScannerTwainBridge.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <Resource Include="Assets\AppIcon.ico" />
+    <Resource Include="Assets\AppIcon.png" />
+    <EmbeddedResource Include="Assets\ThirdParty\CdDvdCase\CdCaseBottom.stl" LogicalName="ZipMp3Player.Assets.CdCaseBottom.stl" />
+    <EmbeddedResource Include="Assets\ThirdParty\CdDvdCase\CdCaseTop.stl" LogicalName="ZipMp3Player.Assets.CdCaseTop.stl" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="FlakeNAudioAdapter" Version="1.0.2" />
+    <PackageReference Include="QRCoder" Version="1.7.0" />
+    <PackageReference Include="TagLibSharp" Version="2.3.0" />
+    <PackageReference Include="HelixToolkit.Wpf.SharpDX" Version="3.1.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\README.md" Link="README.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\RELEASE_NOTES.md" Link="RELEASE_NOTES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\docs\**\*.md" Link="docs\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\docs\images\integration-overview.png" Link="docs\images\integration-overview.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\licenses\**\*" Link="licenses\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="AiGuitarPreviewService.cs" />
+    <None Remove="AiGuitarPreviewService.cs" />
+  </ItemGroup>
+  <Target Name="BuildScannerTwainBridge" BeforeTargets="PrepareForBuild" Inputs="$(MSBuildProjectDirectory)\ScannerTwainBridge\Program.cs" Outputs="$(MSBuildProjectDirectory)\obj\ScannerTools\ScannerTwainBridge.exe">
+    <MakeDir Directories="$(MSBuildProjectDirectory)\obj\ScannerTools" />
+    <Exec Command="&quot;$(SystemRoot)\Microsoft.NET\Framework\v4.0.30319\csc.exe&quot; /nologo /platform:x86 /target:exe /r:System.Windows.Forms.dll /r:System.Drawing.dll /out:&quot;$(MSBuildProjectDirectory)\obj\ScannerTools\ScannerTwainBridge.exe&quot; &quot;$(MSBuildProjectDirectory)\ScannerTwainBridge\Program.cs&quot;" />
+  </Target>
+</Project>

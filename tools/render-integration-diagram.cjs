@@ -7,7 +7,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 
 async function main() {
   const root = path.resolve(__dirname, '..');
-  const source = fs.readFileSync(path.join(root, 'INTEGRATION_OVERVIEW.md'), 'utf8');
+  const source = fs.readFileSync(path.join(root, 'docs', 'INTEGRATION_OVERVIEW.md'), 'utf8');
   const match = source.match(/```mermaid\r?\n([\s\S]*?)```/);
   if (!match) throw new Error('Editable Mermaid diagram not found');
   const browser = await chromium.launch({

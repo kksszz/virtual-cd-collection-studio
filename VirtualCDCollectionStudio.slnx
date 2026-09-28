@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/src/windows/">
+    <Project Path="src/windows/ZipMp3Player.csproj" />
+  </Folder>
+</Solution>
