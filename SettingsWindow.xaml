@@ -25,7 +25,7 @@
           <TextBlock x:Name="LibrarySizeScopeText" Foreground="#A9B3C0" FontSize="11" TextWrapping="Wrap" Margin="0,3,8,0"/>
         </StackPanel>
       </DockPanel>
-      <TextBlock Text="チェックを外したフォルダは登録を残したままアルバム一覧から非表示になります。登録解除しても元のファイルは削除されません。"
+      <TextBlock Text="チェックを外したフォルダは登録・保存済み一覧を残し、表示と自動更新・スキャンの対象外になります。再スキャンはチェック済みフォルダのみ。元ファイルは削除されません。"
                  Foreground="#A9B3C0" Margin="0,5,0,0" TextWrapping="Wrap"/>
     </StackPanel>
     <Border Grid.Row="1" MinHeight="100" MaxHeight="180" Background="#1E2127" BorderBrush="#3E4652" BorderThickness="1" CornerRadius="4">

@@ -14,6 +14,7 @@ internal sealed class ArtworkPerspectiveWindow:Window
     private readonly TextBlock status=new(){TextWrapping=TextWrapping.Wrap,Margin=new(0,10,0,10)};
     private readonly Button save=new(){Content="補正して保存"};
     private readonly List<Ellipse> handles=[];
+    private readonly List<Ellipse> handleTargets=[];
     private int dragging=-1;
     private int edge=-1;
     private Point dragStart;
@@ -43,22 +44,26 @@ internal sealed class ArtworkPerspectiveWindow:Window
         canvas=new Canvas{Width=source.PixelWidth,Height=source.PixelHeight,Background=Brushes.Black};canvas.Children.Add(new Image{Source=source,Width=source.PixelWidth,Height=source.PixelHeight,Stretch=Stretch.Fill});
         outline.StrokeThickness=Math.Max(source.PixelWidth,source.PixelHeight)/1100d;canvas.Children.Add(outline);
         for(int i=0;i<4;i++){var handle=new Ellipse{Fill=Brushes.Orange,Stroke=Brushes.Black,StrokeThickness=outline.StrokeThickness/3,IsHitTestVisible=false};handles.Add(handle);canvas.Children.Add(handle);}
+        for(int i=0;i<4;i++){var target=new Ellipse{Fill=Brushes.Transparent,Cursor=Cursors.SizeAll};handleTargets.Add(target);canvas.Children.Add(target);}
         root.Children.Add(new Viewbox{Stretch=Stretch.Uniform,Child=canvas});
         canvas.MouseLeftButtonDown+=(_,e)=>{if(detecting||Corners is null)return;var p=e.GetPosition(canvas);var nearest=Enumerable.Range(0,4).MinBy(i=>(Corners[i]-p).LengthSquared);
-            dragging=-1;edge=-1;double tolerance=Math.Max(source.PixelWidth,source.PixelHeight)/65d;
-            if((Corners[nearest]-p).Length<tolerance)dragging=nearest;
-            else{int n=Enumerable.Range(0,4).MinBy(i=>Distance(p,Corners[i],Corners[(i+1)%4]));if(Distance(p,Corners[n],Corners[(n+1)%4])<tolerance)edge=n;}
+            dragging=-1;edge=-1;double scale=DisplayScale();
+            if((Corners[nearest]-p).Length<=22/scale)dragging=nearest;
+            else{int n=Enumerable.Range(0,4).MinBy(i=>Distance(p,Corners[i],Corners[(i+1)%4]));if(Distance(p,Corners[n],Corners[(n+1)%4])<=10/scale)edge=n;}
             if(dragging<0&&edge<0)return;dragStart=p;dragCorners=Corners.ToArray();canvas.CaptureMouse();e.Handled=true;};
         canvas.MouseMove+=(_,e)=>{if(Corners is null)return;var p=e.GetPosition(canvas);
-            if(dragging>=0)Corners[dragging]=new Point(Math.Clamp(p.X,0,source.PixelWidth),Math.Clamp(p.Y,0,source.PixelHeight));
+            if(dragging>=0&&dragCorners is not null){var moved=dragCorners[dragging]+(p-dragStart);Corners[dragging]=new Point(Math.Clamp(moved.X,0,source.PixelWidth),Math.Clamp(moved.Y,0,source.PixelHeight));}
             else if(edge>=0&&dragCorners is not null){int next=(edge+1)%4;var delta=p-dragStart;var a=dragCorners[edge];var b=dragCorners[next];delta.X=Math.Clamp(delta.X,-Math.Min(a.X,b.X),source.PixelWidth-Math.Max(a.X,b.X));delta.Y=Math.Clamp(delta.Y,-Math.Min(a.Y,b.Y),source.PixelHeight-Math.Max(a.Y,b.Y));Corners[edge]=a+delta;Corners[next]=b+delta;}else return;Draw();};
         canvas.MouseLeftButtonUp+=(_,_)=>{dragging=edge=-1;canvas.ReleaseMouseCapture();Refresh();};
         canvas.LostMouseCapture+=(_,_)=>{dragging=edge=-1;};
-        Reset();Loaded+=async(_,_)=>await Detect();
+        Reset();SizeChanged+=(_,_)=>Draw();Loaded+=async(_,_)=>await Detect();
     }
     private void Reset(){Corners=[new(0,0),new(source.PixelWidth,0),new(source.PixelWidth,source.PixelHeight),new(0,source.PixelHeight)];Draw();}
     private static double Distance(Point p,Point a,Point b){var v=b-a;double t=v.LengthSquared==0?0:Math.Clamp(Vector.Multiply(p-a,v)/v.LengthSquared,0,1);return (p-(a+v*t)).Length;}
-    private void Draw(){if(Corners is null)return;outline.Points=new PointCollection(Corners);double r=Math.Max(source.PixelWidth,source.PixelHeight)/70d;for(int i=0;i<4;i++){handles[i].Width=handles[i].Height=r;Canvas.SetLeft(handles[i],Corners[i].X-r/2);Canvas.SetTop(handles[i],Corners[i].Y-r/2);}save.IsEnabled=!detecting&&ArtworkPerspective.Valid(Corners,source.PixelWidth,source.PixelHeight);}
+    private double DisplayScale(){var transform=canvas.TransformToAncestor((Visual)Content);return Math.Max(.001,(transform.Transform(new Point(1,0))-transform.Transform(new Point(0,0))).Length);}
+    private void Draw(){if(Corners is null)return;outline.Points=new PointCollection(Corners);double scale=DisplayScale();outline.StrokeThickness=1/scale;for(int i=0;i<4;i++){
+        foreach(var (shape,size) in new[]{(handles[i],10/scale),(handleTargets[i],44/scale)}){shape.Width=shape.Height=size;Canvas.SetLeft(shape,Corners[i].X-size/2);Canvas.SetTop(shape,Corners[i].Y-size/2);}
+    }save.IsEnabled=!detecting&&ArtworkPerspective.Valid(Corners,source.PixelWidth,source.PixelHeight);}
     private async System.Threading.Tasks.Task Detect()
     {
         if(detecting)return;detecting=true;save.IsEnabled=false;status.Text="外周を検出しています…";

@@ -1,10 +1,46 @@
 # Virtual CD Collection Studio
 
+## CDを丸ごと保存し、持ち出す
+
+音楽だけでなく、ジャケット・帯・ブックレット・ディスクの絵柄・包装まで。実物のCDと手持ちの音楽・画像を、一つのコレクションにまとめるWindowsアプリです。
+
+CDドライブから音楽を取り込み、スキャナーでパッケージを読み取り、画像を補正してアルバムとして管理。PCで再生・閲覧・3D鑑賞し、Wi-FiでAndroid版 **Virtual CD Player** へ転送すれば、外出先でも楽しめます。
+
+```mermaid
+flowchart LR
+    subgraph INPUT["① 取り込む"]
+        CD["💿 音楽CD<br/>CDドライブから読み取り"]
+        MUSIC["📁 音楽ファイル<br/>フォルダー・ZIP / ZIP.MP3"]
+        IMAGE["🖼️ 画像ファイル<br/>ジャケット・ブックレット・盤面"]
+        SCANNER["🖨️ スキャナー<br/>実物の表紙・帯・ブックレット・盤面"]
+    end
+
+    subgraph LIBRARY["② 整えて、まとめる"]
+        APP[["🎵 Virtual CD Collection Studio<br/>Windows<br/>画像補正・アルバム管理"]]
+    end
+
+    subgraph ENJOY["③ 楽しむ・持ち出す"]
+        PC["🖥️ PCで楽しむ<br/>音楽再生・画像閲覧・3Dケース"]
+        PHONE["📱 Androidで持ち出す<br/>Virtual CD Player<br/>保存後はオフラインで楽しめる"]
+    end
+
+    META["🌐 MusicBrainz<br/>アルバム・曲情報"]
+    CD -->|"FLAC / MP3"| APP
+    MUSIC -->|"登録"| APP
+    IMAGE -->|"追加"| APP
+    SCANNER -->|"スキャン"| APP
+    META -.->|"曲情報取得・任意"| APP
+    APP -->|"再生・鑑賞"| PC
+    APP -->|"QRコードで接続<br/>Wi-Fiで転送"| PHONE
+```
+
+Wi-Fi転送は同じ信頼できる家庭内LANで使用します。スキャナーには対応ドライバーが必要です。デジパック2枚組の3D表示は現在Windows専用で、Androidへの3D出力には未対応です。
+
+取り込みから持ち出しまでの流れ・対応範囲は [連携概要](INTEGRATION_OVERVIEW.md) を参照してください。Windows v0.88.0／Android 0.11.0の構成です。旧リリースでは搭載機能が異なります。
+
+ZIP.MP3アルバムと一般的な音声ファイルの管理・再生にも対応しています。Windowsでコレクションを管理・編集し、Androidでは再生・鑑賞する使い方を想定しています。
+
 Third-party assets and their licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-CDの音楽だけでなく、ジャケット、Spine Card（帯）、ブックレット、ディスク、包装まで丸ごと保存・鑑賞・再生するWindows向けCDコレクションライブラリです。ZIP.MP3アルバムと一般的な音声ファイルの管理・再生にも対応しています。
-
-このリポジトリには、Windows版に加えて、音楽とジャケット・3Dケースを持ち出して楽しむAndroid版 **Virtual CD Player** も含まれます。Windowsでコレクションを管理・編集し、Androidでは再生・鑑賞する使い方を想定しています。
 
 ## Android版 — Virtual CD Player
 
@@ -38,7 +74,7 @@ Android 10以上向けの音楽プレーヤーです。現在は **0.11.0** で�
 
 圧縮された音声エントリー、暗号化ZIP、ZIP64、分割ZIP、BIN/ISOはAndroid版では未対応です。通常フォルダーの単一FLAC＋CUEに対応しました（実音声の曲頭一致はAndroidでは未検証）。タグ編集や画像の加工・用途設定はWindows版で行います。タグキャッシュは永続化していますが、初回取得には時間がかかります。
 
-Android版は [0.11.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/android-v0.11.0)、Windows版は [v0.87.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/v0.87.0) から入手できます。Androidは従来と同じ署名を維持しています。更新時にアンインストールする必要はありません。
+Android版は [0.11.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/android-v0.11.0)、Windows版は [v0.88.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/v0.88.0) から入手できます。Androidは従来と同じ署名を維持しています。更新時にアンインストールする必要はありません。
 
 - [Android版の説明・ビルド手順](android-player/README.md)
 - [Windowsからの3Dデータ出力](MOBILE_3D.md)
@@ -51,6 +87,9 @@ Android版は [0.11.0リリース](https://github.com/kksszz/virtual-cd-collecti
 画像のないアルバムの自動ジャケット取得（既定OFF）は [自動取得ガイド](AUTOMATIC_ARTWORK.md) を参照してください。
 
 - ZIP / ZIP.MP3内のMP3を展開管理せずに一覧化・再生
+- 音楽CDをFLAC／MP3へ取り込み。MusicBrainzの曲情報取得、各曲の試聴・シーク、CD取り出しに対応（[CD取り込み](CD_IMPORT.md)）。
+- スキャナーから複数枚を取り込み、自動切り抜き・角度・台形・円形補正後にアルバムへ保存（[スキャン](ALBUM_SCANNING.md)）。
+- 標準CDケースに加え、デジパック2枚組（3面）のWindows用3D試作モデルをアルバムごとに選択（[デジパック](DIGIPAK_MODEL.md)）。
 - 圧縮ZIP.MP3を無圧縮ZIP.MP3へ変換
 - CBR/VBR MP3、WAV、FLAC、M4Aの再生（VBR MP3の時間指定頭出しに対応）
 - 次の曲を先読みするギャップレス再生（アルバム間・お気に入り一覧にも対応）

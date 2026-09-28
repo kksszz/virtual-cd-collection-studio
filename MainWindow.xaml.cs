@@ -256,8 +256,8 @@ public partial class MainWindow : Window
         await LoadLibraryCacheAsync();
         HideLibraryLoading();
         var args = Environment.GetCommandLineArgs();
-        if (args.Length > 1 && File.Exists(args[1])) await OpenAlbumAsync(args[1]);
-        else if (_folders.Count > 0 && (_albums.Count == 0 || _cacheNeedsRefresh || File.Exists(ScanCheckpointPath)))
+        if (args.Length > 1 && (File.Exists(args[1]) || Directory.Exists(args[1]))) await OpenAlbumAsync(args[1]);
+        else if (_folders.Count > 0 && _albums.Count == 0)
         {
             await ScanFoldersAsync();
             if (_albums.Count > 0) RestoreLastSelection();
@@ -295,7 +295,7 @@ public partial class MainWindow : Window
             // network existence checks and cover preparation until the window
             // has become interactive, then process one album at a time.
             await Task.Delay(350, cancellationToken);
-            var roots = _folders.ToArray();
+            var roots = LibraryScanScope.EnabledRoots(_folders,_disabledFolders);
             var availableRoots = await Task.Run(() => roots
                 .Where(root =>
                 {
@@ -315,6 +315,7 @@ public partial class MainWindow : Window
             foreach (var item in ordered)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if(!IsAlbumFolderEnabled(item.Album.Path))continue;
                 if (!availableRoots.Any(root => PathsEqual(item.Album.Path, root)
                     || IsPathWithin(item.Album.Path, root))) continue;
                 try
@@ -418,15 +419,19 @@ public partial class MainWindow : Window
             if (CueAlbumReader.IsImage(path)) path = CueAlbumReader.ResolveCue(path);
             var standardAudio = ZipAlbumReader.IsStandardAudioPath(path);
             var albumPath = standardAudio ? Path.GetDirectoryName(Path.GetFullPath(path))! : path;
-            var album = await Task.Run(() => standardAudio
+            var folderAlbum=Directory.Exists(albumPath);
+            var album = await Task.Run(() => standardAudio || folderAlbum
                 ? ZipAlbumReader.OpenFolder(albumPath)
                 : ZipAlbumReader.Open(path));
             var item = new AlbumListItem(album);
             var existing = _albums.FirstOrDefault(a => string.Equals(a.Album.Path, albumPath, StringComparison.OrdinalIgnoreCase)
                 || CueAlbumIdentity.IsCoveredBy(album, a.Album));
             if (existing is null) { InsertAlbumSorted(item); existing = item; }
+            if(!MatchesAlbumFilter(existing))AlbumFilterTextBox.Clear();
             AlbumList.SelectedItem = existing;
             SetCurrentAlbum(existing.Album);
+            AlbumList.ScrollIntoView(existing);
+            SaveLibraryCache();
             if (standardAudio)
             {
                 var trackIndex = existing.Album.Tracks.ToList().FindIndex(track =>
@@ -569,6 +574,7 @@ public partial class MainWindow : Window
         }
         var foldersChanged = !_folders.SequenceEqual(dialog.Folders, StringComparer.OrdinalIgnoreCase);
         var visibilityChanged = !_disabledFolders.SetEquals(dialog.DisabledFolders);
+        if(foldersChanged||visibilityChanged){_scanCancellation?.Cancel();_cachedLibraryMaintenanceCancellation?.Cancel();}
         var priorityFolders = dialog.Folders.Where(folder =>
             !_folders.Contains(folder, StringComparer.OrdinalIgnoreCase)
             || (_disabledFolders.Contains(folder) && !dialog.DisabledFolders.Contains(folder, StringComparer.OrdinalIgnoreCase))).ToArray();
@@ -656,6 +662,9 @@ public partial class MainWindow : Window
     private static string ScanCheckpointPath => Path.Combine(DataDirectory,"library-scan-resume.jsonl");
     private async Task ScanFoldersAsync()
     {
+        var scanRoots=LibraryScanScope.EnabledRoots(_folders,_disabledFolders);
+        var excludedRoots=_disabledFolders.ToArray();
+        if(scanRoots.Length==0){_scanCancellation?.Cancel();_fullLibraryScanInProgress=false;HideLibraryLoading();StatusText.Text="表示・スキャンするフォルダーを設定で選択してください。保存済みの一覧は保持します。";return;}
         _cachedLibraryMaintenanceCancellation?.Cancel();
         _incrementalRefreshCancellation?.Cancel();
         var scanGeneration = ++_scanGeneration;
@@ -664,13 +673,6 @@ public partial class MainWindow : Window
         _scanCancellation = new CancellationTokenSource();
         var token = _scanCancellation.Token;
         _libraryCacheComplete = false;
-        if (_folders.Count == 0)
-        {
-            _albums.Clear();
-            _artistTreeRoots.Clear();
-            StatusText.Text = "音楽フォルダを登録してください";
-            return;
-        }
 
         _fullLibraryScanInProgress = true;
 
@@ -699,7 +701,7 @@ public partial class MainWindow : Window
         };
         try
         {
-            var folders = _folders.ToArray();
+            var folders = scanRoots;
             var progress = new DirectProgress<ScanUpdate>(update =>
             {
                 if (!token.IsCancellationRequested) Interlocked.Exchange(ref latestUpdate, update);
@@ -708,13 +710,16 @@ public partial class MainWindow : Window
             var found = await Task.Run(() =>
             {
                 Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
-                return ScanWorker(folders, progress, token, new LibraryScanCheckpoint(ScanCheckpointPath));
+                return ScanWorker(folders, progress, token, new LibraryScanCheckpoint(ScanCheckpointPath),excludedRoots);
             }, token);
             if (token.IsCancellationRequested) return;
             var finalUpdate = Interlocked.Exchange(ref latestUpdate, null);
             if (finalUpdate is not null)
                 UpdateLibraryLoading(finalUpdate.Message, finalUpdate.Current, finalUpdate.Total);
-            ApplyScannedLibrary(found);
+            var merged=LibraryScanScope.Merge(_albums.Select(item=>item.Album).ToArray(),found.Select(item=>item.Album).ToArray(),scanRoots,excludedRoots);
+            var scannedItems=found.ToDictionary(item=>item.Album.Path,StringComparer.OrdinalIgnoreCase);
+            var previousItems=_albums.ToDictionary(item=>item.Album.Path,StringComparer.OrdinalIgnoreCase);
+            ApplyScannedLibrary(merged.Select(album=>scannedItems.GetValueOrDefault(album.Path)??previousItems[album.Path]).ToArray());
             _completedScanGeneration = scanGeneration;
             _libraryCacheComplete = true;
             _cacheNeedsRefresh = false;
@@ -757,7 +762,7 @@ public partial class MainWindow : Window
         _libraryWatcherNeedsRescan = false;
         _incrementalRefreshCancellation?.Cancel();
 
-        foreach (var folder in _folders
+        foreach (var folder in LibraryScanScope.EnabledRoots(_folders,_disabledFolders)
                      .Select(NormalizeLibraryPath)
                      .Where(path => path is not null && Directory.Exists(path))
                      .Cast<string>()
@@ -813,7 +818,7 @@ public partial class MainWindow : Window
         var foundMissing = false;
         try
         {
-            var roots = _folders.OrderBy(folder => _disabledFolders.Contains(folder)).ToArray();
+            var roots = LibraryScanScope.EnabledRoots(_folders,_disabledFolders);
             var knownPaths = _albums.Select(item => item.Album.Path).ToArray();
             var missing = await Task.Run(() => DiscoverUntrackedAlbums(roots, knownPaths, token), token);
             if (token.IsCancellationRequested || missing.Count == 0) return;
@@ -962,6 +967,7 @@ public partial class MainWindow : Window
         if (normalized is null) return;
         _ = Dispatcher.BeginInvoke(() =>
         {
+            if(!IsAlbumFolderEnabled(normalized))return;
             _pendingLibraryChanges[normalized] = 0;
             _libraryChangeRetryCounts[normalized] = 0;
             _libraryChangeTimer.Stop();
@@ -972,7 +978,7 @@ public partial class MainWindow : Window
     private async void LibraryChangeTimer_Tick(object? sender, EventArgs e)
     {
         _libraryChangeTimer.Stop();
-        if (_fullLibraryScanInProgress || _incrementalRefreshInProgress)
+        if (_fullLibraryScanInProgress || _incrementalRefreshInProgress || _scanningAlbumArtwork || _artworkRotationSaving || _dataOperations.ActiveCount>0)
         {
             _libraryChangeTimer.Start();
             return;
@@ -1000,8 +1006,8 @@ public partial class MainWindow : Window
         var token = _incrementalRefreshCancellation.Token;
         try
         {
-            var existing = _albums.Select(item => new ExistingLibraryAlbum(
-                item.Album.Path, item.IsArchive)).ToArray();
+            var existing = _albums.Where(item=>IsAlbumFolderEnabled(item.Album.Path)).Select(item => new ExistingLibraryAlbum(
+                item.Album.Path, item.IsArchive,item.Album)).ToArray();
             var result = await Task.Run(() => RefreshChangedAlbums(changes, existing, token), token);
             if (token.IsCancellationRequested) return;
             ApplyIncrementalLibraryRefresh(result);
@@ -1097,7 +1103,11 @@ public partial class MainWindow : Window
             try
             {
                 ZipAlbum? album = null;
-                if (ZipAlbumReader.IsSupportedArchivePath(candidate) || CueAlbumReader.IsCue(candidate))
+                var previous=existing.FirstOrDefault(item=>PathsEqual(item.Path,candidate));
+                var relatedChanges=changes.Where(path=>PathsEqual(path,candidate)||IsPathWithin(path,candidate)||IsPathWithin(candidate,path)).ToArray();
+                bool artworkOnly=previous is {IsArchive:false,Album:not null}&&Directory.Exists(candidate)&&relatedChanges.Length>0&&relatedChanges.All(IsArtworkOnlyChange);
+                if(artworkOnly)album=ZipAlbumReader.RefreshFolderArtwork(previous!.Album!);
+                else if (ZipAlbumReader.IsSupportedArchivePath(candidate) || CueAlbumReader.IsCue(candidate))
                 {
                     if (File.Exists(candidate)) album = ZipAlbumReader.Open(candidate);
                 }
@@ -1108,7 +1118,7 @@ public partial class MainWindow : Window
                     album = ZipAlbumReader.OpenFolder(candidate);
                 }
 
-                if (album is null) removed.Add(candidate);
+                if (album is null){if(LibraryAlbumAvailability.IsConfirmedMissing(candidate))removed.Add(candidate);else retry.Add(candidate);}
                 else
                 {
                     UpdateLyricsIndicators(album);
@@ -1228,6 +1238,13 @@ public partial class MainWindow : Window
             || extension.Equals(".png", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".txt", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".lrc", StringComparison.OrdinalIgnoreCase);
+    }
+    private static bool IsArtworkOnlyChange(string path)
+    {
+        var extension=Path.GetExtension(path);
+        return extension.Equals(".jpg",StringComparison.OrdinalIgnoreCase)||extension.Equals(".jpeg",StringComparison.OrdinalIgnoreCase)
+            ||extension.Equals(".png",StringComparison.OrdinalIgnoreCase)
+            ||new[]{"artwork-roles.json","artwork-rotations.json","spine-card-folds.json","case-appearance.json"}.Contains(Path.GetFileName(path),StringComparer.OrdinalIgnoreCase);
     }
 
     private static string? NormalizeLibraryPath(string path)
@@ -1499,7 +1516,7 @@ public partial class MainWindow : Window
                 album.BackCoverThumbnail, album.SpineThumbnail,
                 album.RightSpineThumbnail, album.InlayThumbnail, album.DiscThumbnail, album.IsPlaying)
                 { LoadBooklet = album.HasFrontSpread ? album.LoadBooklet : null, SpineCard = album.SpineCardThumbnail, SpineCardReverse = album.SpineCardReverseThumbnail,
-                    SecondDiscImage = album.SecondDiscThumbnail })
+                    SecondDiscImage = album.SecondDiscThumbnail, Digipak = album.Digipak })
             .ToList();
         AlbumCoverFlow.SetItems(items, selectedPath);
     }
@@ -1582,15 +1599,22 @@ public partial class MainWindow : Window
         }
     }
 
-    private static List<AlbumListItem> ScanWorker(string[] folders, IProgress<ScanUpdate> progress, CancellationToken token, LibraryScanCheckpoint? checkpoint = null)
+    private static List<AlbumListItem> ScanWorker(string[] folders, IProgress<ScanUpdate> progress, CancellationToken token, LibraryScanCheckpoint? checkpoint = null,string[]? excludedRoots=null)
     {
         var archivePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var albumFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint };
-        foreach (var folder in folders)
+        var options = new EnumerationOptions { RecurseSubdirectories = false, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint };
+        var directories=new Queue<string>(folders);
+        while(directories.Count>0)
         {
+            var folder=directories.Dequeue();
             token.ThrowIfCancellationRequested();
+            if(excludedRoots?.Any(hidden=>LibraryScanScope.Contains(hidden,folder))==true)continue;
             if (!Directory.Exists(folder)) continue;
+            foreach(var child in Directory.EnumerateDirectories(folder,"*",options)){
+                if(FolderAlbumLayout.IsTemporary(child)||excludedRoots?.Any(hidden=>LibraryScanScope.Contains(hidden,child))==true)continue;
+                directories.Enqueue(child);
+            }
             foreach (var file in Directory.EnumerateFiles(folder, "*", options))
             {
                 token.ThrowIfCancellationRequested();
@@ -1628,10 +1652,12 @@ public partial class MainWindow : Window
             progress.Report(new ScanUpdate($"解析中 {number}/{total}: {Path.GetFileName(folder)}", null, number, total));
             try
             {
-                var stamp = checkpoint is null ? "" : LibraryScanCheckpoint.Stamp(folder, token);
-                var album = new AlbumListItem(checkpoint?.Find(folder,stamp) ?? ZipAlbumReader.OpenFolder(folder));
+                // A full-folder checkpoint could include tracks from an excluded child.
+                var folderCheckpoint = excludedRoots?.Any(hidden => LibraryScanScope.Contains(folder, hidden)) == true ? null : checkpoint;
+                var stamp = folderCheckpoint is null ? "" : LibraryScanCheckpoint.Stamp(folder, token);
+                var album = new AlbumListItem(folderCheckpoint?.Find(folder,stamp) ?? ZipAlbumReader.OpenFolder(folder,excludedRoots));
                 UpdateLyricsIndicators(album.Album);
-                checkpoint?.Save(folder,stamp,album.Album,token);
+                folderCheckpoint?.Save(folder,stamp,album.Album,token);
                 result.Add(album);
                 progress.Report(new ScanUpdate($"完了 {number}/{total}: {album.Title}", album, number, total));
             }
@@ -1788,7 +1814,7 @@ public partial class MainWindow : Window
             album.InsideFrontThumbnail, album.BackCoverThumbnail, album.SpineThumbnail,
             album.RightSpineThumbnail, album.InlayThumbnail, album.DiscThumbnail, album.IsPlaying)
         { LoadBooklet = album.HasFrontSpread ? album.LoadBooklet : null, SpineCard = album.SpineCardThumbnail, SpineCardReverse = album.SpineCardReverseThumbnail,
-            SecondDiscImage = album.SecondDiscThumbnail };
+            SecondDiscImage = album.SecondDiscThumbnail, Digipak = album.Digipak };
         return new AlbumLibraryBrowserItem(CreateCaseItem(), album.CoverThumbnail, async (width, cancellationToken) =>
         {
             await album.EnsureCaseArtworkLoadedAsync(width, cancellationToken);
@@ -2047,7 +2073,7 @@ public partial class MainWindow : Window
                 item.InlayThumbnail,
                 item.DiscThumbnail,
                 item.IsPlaying) { LoadBooklet = item.HasFrontSpread ? item.LoadBooklet : null, SpineCard = item.SpineCardThumbnail, SpineCardReverse = item.SpineCardReverseThumbnail,
-                    SecondDiscImage = item.SecondDiscThumbnail };
+                    SecondDiscImage = item.SecondDiscThumbnail, Digipak = item.Digipak };
 
             StatusText.Text = LocalizationService.Select(
                 $"3Dケースを表示しています: {item.Title}",
@@ -2913,6 +2939,9 @@ public partial class MainWindow : Window
 
     private void ReplaceLibraryAlbum(ZipAlbum previous, ZipAlbum refreshed, string? selectedFileName)
     {
+        // Validate/build the replacement before touching the registered item.
+        var newItem = new AlbumListItem(refreshed);
+        PrepareAlbumItem(newItem);
         var oldItem = _albums.FirstOrDefault(item => string.Equals(item.Album.Path, previous.Path, StringComparison.OrdinalIgnoreCase));
         if (oldItem is not null)
         {
@@ -2920,7 +2949,6 @@ public partial class MainWindow : Window
             _albums.Remove(oldItem);
             _albumPaths.Remove(previous.Path);
         }
-        var newItem = new AlbumListItem(refreshed);
         InsertAlbumSorted(newItem);
         AlbumList.SelectedItem = newItem;
         SetCurrentAlbum(refreshed);
@@ -4614,8 +4642,10 @@ public partial class MainWindow : Window
     {
         var path = GetCaseAppearancePath(albumPath);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var appearance = LoadCaseAppearance(albumPath);
+        appearance.TrayColor = trayColor;
         File.WriteAllText(path, JsonSerializer.Serialize(
-            new CaseAppearanceSettings { TrayColor = trayColor },
+            appearance,
             new JsonSerializerOptions { WriteIndented = true }));
     }
 
@@ -4702,6 +4732,7 @@ public partial class MainWindow : Window
     private sealed class CaseAppearanceSettings
     {
         public string TrayColor { get; set; } = "Auto";
+        public string CaseType { get; set; } = "Standard";
     }
 
     private static Dictionary<string, string> LoadArtworkRoles(string albumPath)
@@ -4773,7 +4804,7 @@ public partial class MainWindow : Window
                     && _selectedAlbumImageIndex >= 0 && _selectedAlbumImageIndex < _albumImages.Count
                     && GetEffectiveArtworkRole(_albumImages[_selectedAlbumImageIndex], _currentArtworkRoles) is "SpineCard" or "SpineCardReverse";
                 AdjustSpineCardFoldsButton.Visibility = showSpineAdjustment
-                    ? Visibility.Visible : Visibility.Hidden;
+                    ? Visibility.Visible : Visibility.Collapsed;
                 AdjustSpineCardFoldsButton.IsEnabled = showSpineAdjustment;
                 AdjustSpineCardFoldsButton.Content = showSpineAdjustment
                     && GetEffectiveArtworkRole(_albumImages[_selectedAlbumImageIndex], _currentArtworkRoles) == "SpineCardReverse"
@@ -4849,6 +4880,7 @@ public partial class MainWindow : Window
 
     private void UpdateTrayColorCombo()
     {
+        UpdateCaseTypeCombo();
         if (TrayColorCombo is null) return;
         _updatingTrayColorCombo = true;
         try
@@ -5091,8 +5123,14 @@ public partial class MainWindow : Window
         image.CacheOption = BitmapCacheOption.OnLoad;
         if (decodePixelWidth > 0)
         {
-            if (decodeByHeight) image.DecodePixelHeight = decodePixelWidth;
-            else image.DecodePixelWidth = decodePixelWidth;
+            // A narrow spine must not be enlarged to the requested cover width:
+            // its other axis can exceed the Direct3D texture limit.
+            int axis=decodeByHeight?frame.PixelHeight:frame.PixelWidth;
+            int other=decodeByHeight?frame.PixelWidth:frame.PixelHeight;
+            int requested=Math.Max(1,Math.Min(decodePixelWidth,axis));
+            requested=Math.Min(requested,Math.Max(1,(int)Math.Floor(8192d*axis/Math.Max(axis,other))));
+            if (decodeByHeight) image.DecodePixelHeight = requested;
+            else image.DecodePixelWidth = requested;
         }
         image.StreamSource = stream;
         image.EndInit();
@@ -5898,7 +5936,7 @@ public partial class MainWindow : Window
         RotateAlbumImageLeftButton.IsEnabled = false;
         RotateAlbumImageRightButton.IsEnabled = false;
         AdjustSpineCardFoldsButton.IsEnabled = false;
-        AdjustSpineCardFoldsButton.Visibility = Visibility.Hidden;
+        AdjustSpineCardFoldsButton.Visibility = Visibility.Collapsed;
         ArtworkRoleCombo.IsEnabled = false;
         TrayColorCombo.IsEnabled = _album is not null;
     }
@@ -6111,7 +6149,7 @@ public partial class MainWindow : Window
         public List<ZipAlbum> Albums { get; set; } = [];
     }
     private sealed record ScanUpdate(string Message, AlbumListItem? Album, int Current, int Total);
-    private sealed record ExistingLibraryAlbum(string Path, bool IsArchive);
+    private sealed record ExistingLibraryAlbum(string Path, bool IsArchive,ZipAlbum? Album=null);
     private sealed record IncrementalLibraryResult(
         IReadOnlyList<AlbumListItem> Refreshed,
         HashSet<string> Removed,
@@ -6146,7 +6184,7 @@ public partial class MainWindow : Window
         };
     }
 
-    private sealed class AlbumListItem : INotifyPropertyChanged
+    private sealed partial class AlbumListItem : INotifyPropertyChanged
     {
         public ZipAlbum Album { get; }
         public string Title { get; }
@@ -6197,6 +6235,7 @@ public partial class MainWindow : Window
         public BitmapSource? InlayThumbnail => _inlayThumbnail;
         public BitmapSource? DiscThumbnail => _discThumbnail;
         public BitmapSource? SecondDiscThumbnail => _secondDiscThumbnail;
+        public DigipakArtwork? Digipak { get; private set; }
         public BitmapSource? SpineCardThumbnail => _spineCardThumbnail;
         public BitmapSource? SpineCardReverseThumbnail => _spineCardReverseThumbnail;
         public int CaseArtworkDecodeWidth => _caseArtworkDecodeWidth;
@@ -6208,6 +6247,8 @@ public partial class MainWindow : Window
 
         public BookletContent LoadBooklet()
         {
+            if(LoadCaseAppearance(Album.Path).CaseType=="Digipak2" && (Title.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase)||Album.Path.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase)))
+                return LoadDigipakBooklet();
             var roles = LoadArtworkRoles(Album.Path);
             var sources = GetCaseArtworkSources(Album, GetDownloadedArtworkDirectory(Album.Path));
             var spread = sources.FirstOrDefault(source => GetEffectiveArtworkRole(source, roles)
@@ -6343,6 +6384,7 @@ public partial class MainWindow : Window
             var hasFrontSpread = roleSet.Contains("FrontSpread") || roleSet.Contains("FrontSpreadReversed")
                 || roleSet.Contains("FrontSpreadVertical")
                 || (roleSet.Contains("Front") && roleSet.Contains("FrontInside"));
+            if(LoadCaseAppearance(Album.Path).CaseType=="Digipak2" && (Title.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase)||Album.Path.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase)))hasFrontSpread=sources.Any(s=>Path.GetFileName(s.DisplayName).Equals("Booklet003.jpg",StringComparison.OrdinalIgnoreCase));
             var trayColorMode = HasInlayArtwork(sources, roles)
                 ? "Clear" : LoadTrayColor(Album.Path);
             var downloadedImageCount = Directory.Exists(directory)
@@ -6365,6 +6407,7 @@ public partial class MainWindow : Window
             _mediumCaseFrontThumbnail = _mediumInsideFrontThumbnail = _mediumBackCoverThumbnail = _mediumSpineThumbnail = _mediumRightSpineThumbnail = null;
             _mediumInlayThumbnail = _mediumDiscThumbnail = _mediumSecondDiscThumbnail = _mediumSpineCardThumbnail = _mediumSpineCardReverseThumbnail = null;
             _caseArtworkLoaded = false;
+            Digipak = null;
             _caseArtworkDecodeWidth = 0;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ImageCount)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasImages)));
@@ -6394,6 +6437,7 @@ public partial class MainWindow : Window
             (_caseFrontThumbnail, _insideFrontThumbnail, _backCoverThumbnail, _spineThumbnail,
                 _rightSpineThumbnail, _inlayThumbnail, _discThumbnail, _secondDiscThumbnail, _spineCardThumbnail, _spineCardReverseThumbnail, _)
                 = LoadCaseArtwork(directory, decodePixelWidth);
+            Digipak = LoadDigipakArtwork(directory, decodePixelWidth);
             if (decodePixelWidth <= 640)
             {
                 _mediumCaseFrontThumbnail = _caseFrontThumbnail;
@@ -6415,6 +6459,7 @@ public partial class MainWindow : Window
             if (_caseArtworkLoaded && _caseArtworkDecodeWidth >= decodePixelWidth) return;
             var directory = GetDownloadedArtworkDirectory(Album.Path);
             var artwork = await Task.Run(() => LoadCaseArtwork(directory, decodePixelWidth), cancellationToken);
+            var digipak = await Task.Run(() => LoadDigipakArtwork(directory, decodePixelWidth), cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (_caseArtworkLoaded && _caseArtworkDecodeWidth >= decodePixelWidth) return;
             _caseFrontThumbnail = artwork.Front;
@@ -6429,11 +6474,13 @@ public partial class MainWindow : Window
             _spineCardReverseThumbnail = artwork.SpineCardReverse;
             _caseArtworkLoaded = true;
             _caseArtworkDecodeWidth = decodePixelWidth;
+            Digipak = digipak;
         }
 
         public void ReleaseHighResolutionCaseArtwork(int decodePixelWidth = 640)
         {
             if (_caseArtworkDecodeWidth <= decodePixelWidth) return;
+            if (Digipak is not null) { _caseArtworkLoaded = false; _caseArtworkDecodeWidth = 0; Digipak = null; EnsureCaseArtworkLoaded(decodePixelWidth); return; }
             if (_mediumCaseFrontThumbnail is not null || _mediumSpineCardThumbnail is not null)
             {
                 _caseFrontThumbnail = _mediumCaseFrontThumbnail;
@@ -6540,6 +6587,14 @@ public partial class MainWindow : Window
         {
             var sources = GetCaseArtworkSources(Album, downloadedDirectory);
             if (sources.Count == 0) return (null, null, null, null, null, null, null, null, null, null, "画像はありません");
+            if (LoadCaseAppearance(Album.Path).CaseType == "Digipak2")
+            {
+                var packRoles = LoadArtworkRoles(Album.Path);
+                bool prototype = Title.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase)||Album.Path.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase);
+                BitmapSource? Picture(string role, string fallback) => LoadDigipakPicture(sources, packRoles, role, prototype?fallback:"", targetWidth);
+                return (Picture("Front","Booklet001.jpg"), Picture("FrontInside","Booklet010.jpg"), Picture("Back","Booklet002.jpg"), null, null, null,
+                    Picture("Disc","Booklet008.jpg"), Picture("Disc2","Booklet009.jpg"), null, null, "デジパック2枚組");
+            }
 
             var roles = LoadArtworkRoles(Album.Path);
             var candidates = new List<(AlbumImageSource Source, string Role, double Aspect, bool IsManual)>();

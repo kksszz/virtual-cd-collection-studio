@@ -28,6 +28,7 @@ public sealed record JewelCaseCoverFlowItem(
     public BitmapSource? SpineCard { get; init; }
     public BitmapSource? SpineCardReverse { get; init; }
     public BitmapSource? SecondDiscImage { get; init; }
+    public DigipakArtwork? Digipak { get; init; }
     internal bool CollectionPresentation { get; init; }
     // Inlay is the inside of the rear insert, not the booklet or exterior Back.
     // A standard full scan is 6 + 138 + 6 mm wide by 118 mm high.
@@ -628,7 +629,8 @@ public sealed partial class JewelCaseCoverFlow : Grid
         && ReferenceEquals(left.InlayCover, right.InlayCover)
         && ReferenceEquals(left.SpineCard, right.SpineCard)
         && ReferenceEquals(left.SpineCardReverse, right.SpineCardReverse)
-        && string.Equals(left.TrayColorMode, right.TrayColorMode, StringComparison.OrdinalIgnoreCase);
+        && string.Equals(left.TrayColorMode, right.TrayColorMode, StringComparison.OrdinalIgnoreCase)
+        && ReferenceEquals(left.Digipak, right.Digipak);
 
     public void SelectByKey(string key, bool notify = false)
     {
@@ -1334,6 +1336,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
         var angle = selected ? selectedYaw : relative < 0
             ? collectionPresentation ? -72 : 67
             : collectionPresentation ? 72 : -67;
+        if(item.Digipak is not null)return CreateDigipakExterior(item,x,y,z,scale,angle,selected?selectedPitch:0);
 
         var group = new Model3DGroup();
         var frame = CreateMaterial(selected
@@ -2344,6 +2347,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
         _discButton.Content = _isDiscRemoved
             ? LocalizationService.Select("◉ CDを戻す", "◉ Insert CD")
             : LocalizationService.Select("◎ CDを取り出す", "◎ Remove CD");
+        if(_selectedIndex>=0&&_selectedIndex<_items.Count&&_items[_selectedIndex].Digipak is not null)_discButton.Content=_isDiscRemoved?"◉ CD1・2を戻す":"◎ CD1・2を取り出す";
         _discButton.ToolTip = LocalizationService.Select(
             _isCaseOpen ? "CDを取り出す／戻す (D)。取り出したCDは左ドラッグで移動できます" : "先にケースを開いてください",
             _isCaseOpen ? "Remove/insert the CD (D). Left-drag an extracted CD to move it" : "Open the case first");

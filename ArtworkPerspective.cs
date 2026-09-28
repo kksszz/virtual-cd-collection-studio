@@ -38,7 +38,7 @@ internal static class ArtworkPerspective
     // Detect the dominant non-background component. A proposal, never an automatic save.
     internal static Point[]? Detect(BitmapSource source)
     {
-        var small=ArtworkDeskew.Render(source,0,700);var image=new FormatConvertedBitmap(small,PixelFormats.Bgra32,null,0);
+        var small=ArtworkDeskew.Render(source,0,1000);var image=new FormatConvertedBitmap(small,PixelFormats.Bgra32,null,0);
         int w=image.PixelWidth,h=image.PixelHeight;var data=new byte[w*h*4];image.CopyPixels(data,w*4,0);
         var background=new double[3];for(int c=0;c<3;c++)background[c]=new[]{data[c],data[(w-1)*4+c],data[((h-1)*w)*4+c],data[(w*h-1)*4+c]}.OrderBy(v=>v).Skip(1).Take(2).Average(v=>(double)v);
         // Average local ink density instead of requiring individual halftone dots to touch.
@@ -78,7 +78,25 @@ internal static class ArtworkPerspective
             var samples=boundary.Where(p=>{double t=Vector.Multiply(p-start,v)/v.LengthSquared;return t>.1&&t<.9&&Math.Abs(Vector.CrossProduct(p-start,v))/v.Length<5;}).ToArray();
             if(samples.Length<2)samples=[start,hull[(i+1)%4]];
             double mx=samples.Average(p=>p.X),my=samples.Average(p=>p.Y),xx=samples.Sum(p=>(p.X-mx)*(p.X-mx)),yy=samples.Sum(p=>(p.Y-my)*(p.Y-my)),xy=samples.Sum(p=>(p.X-mx)*(p.Y-my));
-            double angle=.5*Math.Atan2(2*xy,xx-yy),a=-Math.Sin(angle),b=Math.Cos(angle);lines[i]=(a,b,a*mx+b*my);
+            double angle=.5*Math.Atan2(2*xy,xx-yy),a=-Math.Sin(angle),b=Math.Cos(angle);
+            // The density mask intentionally joins printed dots, but its blurred edge
+            // can leave a white fringe. Refine the fitted side against the original
+            // pixels, averaging along the side rather than following individual dots.
+            double cx=points.Average(p=>p.X),cy=points.Average(p=>p.Y);
+            double inward=a*(cx-mx)+b*(cy-my)>=0?1:-1;
+            double Contrast(double x,double y){
+                x=Math.Clamp(x,0,w-1);y=Math.Clamp(y,0,h-1);int ix=(int)x,iy=(int)y,nx=Math.Min(ix+1,w-1),ny=Math.Min(iy+1,h-1);double fx=x-ix,fy=y-iy;
+                double Pixel(int px,int py){int index=(py*w+px)*4;return Math.Max(Math.Abs(data[index]-background[0]),Math.Max(Math.Abs(data[index+1]-background[1]),Math.Abs(data[index+2]-background[2])));}
+                return Pixel(ix,iy)*(1-fx)*(1-fy)+Pixel(nx,iy)*fx*(1-fy)+Pixel(ix,ny)*(1-fx)*fy+Pixel(nx,ny)*fx*fy;
+            }
+            double Profile(double offset){double sum=0;for(int sample=0;sample<64;sample++){
+                var p=start+v*(.15+.7*(sample+.5)/64);double correction=a*(mx-p.X)+b*(my-p.Y);
+                sum+=Contrast(p.X+a*(correction+inward*offset),p.Y+b*(correction+inward*offset));
+            }return sum/64;}
+            double bestOffset=0,bestGradient=0;for(double offset=-3;offset<=3;offset+=.25){double gradient=Profile(offset+.75)-Profile(offset-.75);if(gradient>bestGradient){bestGradient=gradient;bestOffset=offset;}}
+            // Do not shrink faint/ambiguous artwork just to eliminate all white.
+            double refinement=bestGradient>8?inward*bestOffset:0;
+            lines[i]=(a,b,a*mx+b*my+refinement);
         }
         var fitted=new Point[4];for(int i=0;i<4;i++){var a=lines[(i+3)%4];var b=lines[i];double det=a.A*b.B-b.A*a.B;if(Math.Abs(det)<.01)return null;fitted[i]=new Point(Math.Clamp((a.C*b.B-b.C*a.B)/det,0,w),Math.Clamp((a.A*b.C-b.A*a.C)/det,0,h));}
         hull=fitted.ToList();

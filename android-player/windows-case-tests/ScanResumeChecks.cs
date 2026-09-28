@@ -32,12 +32,12 @@ internal static class ScanResumeChecks
         var updateType=worker.GetParameters()[1].ParameterType.GetGenericArguments()[0];
         using var stopAfterAlbum=new CancellationTokenSource();
         var progress=Activator.CreateInstance(typeof(CancelAfterAlbum<>).MakeGenericType(updateType),stopAfterAlbum)!;
-        try{worker.Invoke(null,[new[]{scanRoot},progress,stopAfterAlbum.Token,new LibraryScanCheckpoint(path)]);throw new Exception("scan did not stop");}
+        try{worker.Invoke(null,[new[]{scanRoot},progress,stopAfterAlbum.Token,new LibraryScanCheckpoint(path),Array.Empty<string>()]);throw new Exception("scan did not stop");}
         catch(System.Reflection.TargetInvocationException ex)when(ex.InnerException is OperationCanceledException){Console.WriteLine("PASS worker stops between albums");}
         // Exclusive audio lock proves the resumed scanner uses the completed album rather than decoding it again.
         using var locked=File.Open(Path.Combine(scanRoot,"A","01.wav"),FileMode.Open,FileAccess.ReadWrite,FileShare.None);
         var silent=Activator.CreateInstance(typeof(Progress<>).MakeGenericType(updateType))!;
-        var result=(System.Collections.ICollection)worker.Invoke(null,[new[]{scanRoot},silent,CancellationToken.None,new LibraryScanCheckpoint(path)])!;
+        var result=(System.Collections.ICollection)worker.Invoke(null,[new[]{scanRoot},silent,CancellationToken.None,new LibraryScanCheckpoint(path),Array.Empty<string>()])!;
         Check(result.Count==2,"resumed worker reuses first album and parses remaining album");
     }
     public sealed class CancelAfterAlbum<T>(CancellationTokenSource cancellation):IProgress<T>

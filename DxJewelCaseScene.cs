@@ -333,6 +333,7 @@ internal sealed partial class DxJewelCaseScene : IDisposable
 
     public void SetItem(JewelCaseCoverFlowItem item, double yaw, double pitch)
     {
+        ResetCaseTransforms();
         if (!string.Equals(_discItemKey, item.Key, StringComparison.OrdinalIgnoreCase))
         {
             // A scene can be retained while CoverFlow selects another album.
@@ -376,6 +377,7 @@ internal sealed partial class DxJewelCaseScene : IDisposable
         _secondDiscRoot.Children.Clear();
         _baseRoot.Children.Add(_secondDiscRoot);
         _baseRoot.Children.Add(_discRoot);
+        if(item.Digipak is not null){BuildDigipak(item);ApplyRotation(yaw,pitch);RequestRender();return;}
         const float width = 2.42f;
         const float height = 2.12f;
         const float depth = StandardCaseDepth;
@@ -730,6 +732,7 @@ internal sealed partial class DxJewelCaseScene : IDisposable
         SetWrappingProgress(_wrappingProgress);
 
         ApplyRotation(yaw, pitch);
+        SetCaseOpen(_caseIsOpen,false);
         RequestRender();
     }
 
@@ -774,8 +777,8 @@ internal sealed partial class DxJewelCaseScene : IDisposable
             CompositionTarget.Rendering -= OnInteractiveRenderFrame;
             _interactiveRenderPending = false;
         }
-        Viewport.EnableSSAO = true;
-        Viewport.IsShadowMappingEnabled = true;
+        Viewport.EnableSSAO = !_isDigipak;
+        Viewport.IsShadowMappingEnabled = !_isDigipak;
         Viewport.FXAALevel = FXAALevel.Medium;
         // Produce the final still frame immediately at full quality.
         RequestRender();
@@ -1070,6 +1073,8 @@ internal sealed partial class DxJewelCaseScene : IDisposable
 
     public void SetCaseOpen(bool open, bool animate = true)
     {
+        _caseIsOpen=open;
+        if(_isDigipak){SetDigipakOpen(open,animate);return;}
         var animationGeneration = ++_caseAnimationGeneration;
         // Negative rotation lifts the lid toward the viewer instead of passing
         // it through the tray. At -180 degrees both inner faces are coplanar.
@@ -1432,6 +1437,7 @@ internal sealed partial class DxJewelCaseScene : IDisposable
     {
         _bookletProgress = Math.Clamp(progress, 0, 1);
         var pose = BookletPose(_bookletProgress);
+        if(_isDigipak){_bookletTranslation.OffsetX=0;_bookletTranslation.OffsetY=D(132)*(float)_bookletProgress;_bookletTranslation.OffsetZ=D(8)*(float)Math.Clamp((_bookletProgress-.92)/.08,0,1);_bookletTilt.Angle=0;RequestRender();return;}
         _bookletTranslation.OffsetX = pose.X;
         _bookletTranslation.OffsetY = pose.Y;
         _bookletTranslation.OffsetZ = pose.Z;
@@ -1479,7 +1485,7 @@ internal sealed partial class DxJewelCaseScene : IDisposable
     {
         if (!_discRemoved || Viewport.Camera is not DxPerspectiveCamera camera) return false;
         var hit = Viewport.FindHits(position)?.OrderBy(result => result.Distance).FirstOrDefault();
-        if (hit is null || !_discRoot.Children.OfType<MeshGeometryModel3D>().Any(mesh =>
+        if (hit is null || !_discRoot.Children.OfType<MeshGeometryModel3D>().Concat(_isDigipak?_secondDiscRoot.Children.OfType<MeshGeometryModel3D>():[]).Any(mesh =>
             ReferenceEquals(hit.ModelHit, mesh) || ReferenceEquals(hit.ModelHit, mesh.SceneNode))) return false;
         // Stop the extraction animation at its current position, without snapping
         // to the animation's destination when the user grabs a moving disc.
@@ -3092,6 +3098,14 @@ internal sealed partial class DxJewelCaseScene : IDisposable
         if (_textureCache.TryGetValue(bitmap, out var cached)) return cached;
 
         BitmapSource source = bitmap;
+        const int maximumTextureSide=8192;
+        int longest=Math.Max(source.PixelWidth,source.PixelHeight);
+        if(longest>maximumTextureSide)
+        {
+            double scale=(maximumTextureSide-1d)/longest;
+            var resized=new TransformedBitmap(source,new ScaleTransform(scale,scale));
+            resized.Freeze();source=resized;
+        }
         if (source.Format != PixelFormats.Bgra32)
         {
             var converted = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
@@ -3111,6 +3125,7 @@ internal sealed partial class DxJewelCaseScene : IDisposable
 
     public void Dispose()
     {
+        CancelDigipakAnimation();
         _disposed = true;
         if (_interactiveRenderPending)
         {

@@ -12,6 +12,17 @@ internal static class Program
 {
     [STAThread] static void Main(string[] args)
     {
+        if(args.Length==2&&args[0]=="--digipak-gpu"){try{DigipakGpuChecks.Run(args[1]);}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;}
+        if(args.Length>0&&args[0]=="--digipak"){try{DigipakChecks.Run(args.Length>1?args[1]:null);}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;}
+        if(args.Length==1&&args[0]=="--library-scope"){
+            try{LibraryScopeChecks.Run();}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
+        }
+        if(args.Length==2&&args[0] is "--scanner-check" or "--scanner-device" or "--scanner-album"){
+            try{if(args[0]=="--scanner-device")ScannerChecks.Device(args[1]);else if(args[0]=="--scanner-album")ScannerChecks.Album(args[1]);else ScannerChecks.Run(args[1]);}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
+        }
+        if(args.Length>0&&args[0]=="--cd-preview"){
+            try{CdPreviewChecks.Run(args.Length>1?args[1]:null);}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
+        }
         if(args.Length>0&&args[0]=="--disc-crop"){
             try{DiscCropChecks.Run(args.Length>1?args[1]:null);}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
         }

@@ -13,13 +13,15 @@
     <Copyright>Copyright (C) 2026 kksszz</Copyright>
     <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
-    <Version>0.87.0</Version>
-    <InformationalVersion>0.87.0</InformationalVersion>
+    <Version>0.88.0</Version>
+    <InformationalVersion>0.88.0</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <AssemblyVersion>0.87.0.0</AssemblyVersion>
-    <FileVersion>0.87.0.0</FileVersion>
+    <AssemblyVersion>0.88.0.0</AssemblyVersion>
+    <FileVersion>0.88.0.0</FileVersion>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="ScannerTwainBridge\**\*.cs" />
+    <None Include="obj\ScannerTools\ScannerTwainBridge.exe" Link="ScannerTools\ScannerTwainBridge.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
     <Resource Include="Assets\AppIcon.ico" />
     <Resource Include="Assets\AppIcon.png" />
     <EmbeddedResource Include="Assets\ThirdParty\CdDvdCase\CdCaseBottom.stl" LogicalName="ZipMp3Player.Assets.CdCaseBottom.stl" />
@@ -40,6 +42,9 @@
     <None Update="AUTOMATIC_ARTWORK.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="THIRD_PARTY_NOTICES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="CD_BOX_SCAN_GUIDE.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="ALBUM_SCANNING.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="DIGIPAK_MODEL.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="INTEGRATION_OVERVIEW.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="MOBILE_SYNC.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="MOBILE_3D.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="THIRD_PARTY_LICENSES\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
@@ -74,4 +79,8 @@
     <None Remove=".ai-dev\**\*" />
     <None Remove="ai_guitar_preview.py" />
   </ItemGroup>
+  <Target Name="BuildScannerTwainBridge" BeforeTargets="PrepareForBuild" Inputs="$(MSBuildProjectDirectory)\ScannerTwainBridge\Program.cs" Outputs="$(MSBuildProjectDirectory)\obj\ScannerTools\ScannerTwainBridge.exe">
+    <MakeDir Directories="$(MSBuildProjectDirectory)\obj\ScannerTools" />
+    <Exec Command="&quot;$(SystemRoot)\Microsoft.NET\Framework\v4.0.30319\csc.exe&quot; /nologo /platform:x86 /target:exe /r:System.Windows.Forms.dll /r:System.Drawing.dll /out:&quot;$(MSBuildProjectDirectory)\obj\ScannerTools\ScannerTwainBridge.exe&quot; &quot;$(MSBuildProjectDirectory)\ScannerTwainBridge\Program.cs&quot;" />
+  </Target>
 </Project>

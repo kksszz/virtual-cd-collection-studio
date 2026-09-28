@@ -22,7 +22,16 @@ internal static class FolderAlbumLayout
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { return null; }
     }
-    internal static bool IsRoot(string root) => Read(root) is not null;
+    internal static bool IsRoot(string root) => Read(root) is not null || HasMultipleDiscFolders(root);
+    // A manually arranged Disc1/Disc2 album need not have a conversion marker.
+    // Require at least two named disc folders, not arbitrary nested artist folders.
+    private static bool HasMultipleDiscFolders(string root)
+    {
+        try{return Directory.EnumerateDirectories(root,"*",SearchOption.TopDirectoryOnly)
+            .Where(path=>Regex.IsMatch(Path.GetFileName(path),@"^(Disc|CD)[ _-]*0*[1-9]\d*$",RegexOptions.IgnoreCase))
+            .Take(2).Count()==2;}
+        catch(IOException){return false;}catch(UnauthorizedAccessException){return false;}
+    }
     internal static string RootFor(string directory)
     {
         for (var parent = new DirectoryInfo(directory); parent is not null; parent = parent.Parent)

@@ -14,16 +14,40 @@ internal static class CdImportChecks
         var format=(System.Windows.Controls.ComboBox)Field("format");var bitrate=(System.Windows.Controls.ComboBox)Field("bitrate");
         if(bitrate.IsEnabled)throw new Exception("FLAC bitrate must be disabled");format.SelectedItem="MP3";if(!bitrate.IsEnabled)throw new Exception("MP3 bitrate must be enabled");
         var grid=(System.Windows.Controls.DataGrid)Field("tracks");
+        var previewButton=(System.Windows.Controls.Button)Field("previewSelected");
+        if(previewButton.IsEnabled)throw new Exception("Preview enabled before CD load");
+        typeof(CdImportWindow).GetField("disc",flags)!.SetValue(window,new CueAlbumReader.Disc("","","","",1,180000,Enumerable.Range(1,10).Select(i=>new CueAlbumReader.CueTrack(i,(i-1)*18000,"Track "+i,"")).ToList(),""));
+        grid.SelectedIndex=0;
+        if(!previewButton.IsEnabled||!grid.Columns[2].IsReadOnly)throw new Exception("Loaded track preview control");
+        typeof(CdImportWindow).GetField("busy",flags)!.SetValue(window,true);
+        typeof(CdImportWindow).GetMethod("UpdatePreviewControls",flags)!.Invoke(window,null);
+        if(previewButton.IsEnabled)throw new Exception("Preview enabled during import");
+        typeof(CdImportWindow).GetField("busy",flags)!.SetValue(window,false);
+        typeof(CdImportWindow).GetMethod("UpdatePreviewControls",flags)!.Invoke(window,null);
         ((System.Windows.Controls.TextBox)Field("year")).Text="1990";
-        if(grid.Columns.Count!=14||((List<CdImportTrack>)grid.ItemsSource)[0].Album!="Dream Horizon")throw new Exception("Tag columns/common sync");
+        if(grid.Columns.Count!=15||((List<CdImportTrack>)grid.ItemsSource)[0].Album!="Dream Horizon")throw new Exception("Tag columns/common sync");
         var bar=(System.Windows.Controls.ProgressBar)Field("progressBar");
         window.UpdateImportProgress(new CdImportProgress(2,1,10,null,"エンコード中"));if(!bar.IsIndeterminate)throw new Exception("Encoding progress");
         window.UpdateImportProgress(new CdImportProgress(2,1,10,42,"曲 2 を読み取り中…"));if(bar.IsIndeterminate||bar.Value!=42)throw new Exception("Read progress");
+        format.SelectedItem="FLAC";
         var root=(System.Windows.Controls.DockPanel)window.Content;root.Background=window.Background;
         root.Measure(new System.Windows.Size(1192,700));root.Arrange(new System.Windows.Rect(0,0,1192,700));root.UpdateLayout();
+        CheckAlignment();
         var image=new System.Windows.Media.Imaging.RenderTargetBitmap(1192,700,96,96,System.Windows.Media.PixelFormats.Pbgra32);image.Render(root);
-        var png=new System.Windows.Media.Imaging.PngBitmapEncoder();png.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(image));using var file=File.Create(output);png.Save(file);
+        var png=new System.Windows.Media.Imaging.PngBitmapEncoder();png.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(image));using(var file=File.Create(output))png.Save(file);
+        root.Measure(new System.Windows.Size(984,660));root.Arrange(new System.Windows.Rect(0,0,984,660));root.UpdateLayout();
+        CheckAlignment();
+        var narrow=new System.Windows.Media.Imaging.RenderTargetBitmap(984,660,96,96,System.Windows.Media.PixelFormats.Pbgra32);narrow.Render(root);
+        var narrowPng=new System.Windows.Media.Imaging.PngBitmapEncoder();narrowPng.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(narrow));using(var file=File.Create(Path.Combine(Path.GetDirectoryName(output)!,Path.GetFileNameWithoutExtension(output)+"-narrow.png")))narrowPng.Save(file);
         Console.WriteLine("PASS CD import UI: format toggle; rendered "+output);
+        void CheckAlignment(){
+            System.Windows.Rect Bounds(string name){var element=(System.Windows.FrameworkElement)Field(name);return element.TransformToAncestor(root).TransformBounds(new System.Windows.Rect(0,0,element.ActualWidth,element.ActualHeight));}
+            var reference=Bounds("album");
+            foreach(var name in new[]{"drives","candidates","artist","format","destination"})if(Math.Abs(Bounds(name).Left-reference.Left)>.5)throw new Exception("Misaligned field: "+name);
+            if(Math.Abs(Bounds("artist").Right-reference.Right)>.5)throw new Exception("Metadata field widths differ");
+            if(Bounds("readOnOpen").Right>root.ActualWidth||Bounds("autoApply").Right>root.ActualWidth)throw new Exception("Import options clipped");
+            Console.WriteLine("PASS aligned import labels/fields at width "+root.ActualWidth);
+        }
     }
     internal static void Run(string? drive,bool full=false)
     {

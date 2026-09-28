@@ -59,7 +59,7 @@ public partial class SettingsWindow : Window
         LocalizationService.SetLanguage(displayLanguage);
         LocalizationService.Apply(this);
         UpdateCount();
-        Loaded += async (_, _) => await RefreshLibrarySizeAsync();
+        Loaded += (_, _) => {UpdateLibrarySizeScope();LibrarySizeText.Text=LocalizationService.Select("容量の集計は「容量を再計算」で実行します。","Use Recalculate size to calculate library storage.");};
         Closed += (_, _) => _sizeCancellation.Cancel();
         Closing+=(_,e)=>{if(_clearingArtworkCache)e.Cancel=true;};
     }

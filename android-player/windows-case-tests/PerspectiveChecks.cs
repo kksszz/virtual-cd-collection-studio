@@ -21,6 +21,21 @@ internal static class PerspectiveChecks
         var blank=BitmapSource.Create(600,400,96,96,PixelFormats.Gray8,null,Enumerable.Repeat((byte)255,600*400).ToArray(),600);
         if(ArtworkPerspective.Detect(blank)!=null)throw new Exception("Blank page false positive");
         Console.WriteLine("PASS pale halftone, central gap, blank rejection");
+        var straightPixels=Enumerable.Repeat((byte)255,1000*700).ToArray();
+        for(int y=120;y<580;y++)for(int x=140;x<860;x++)straightPixels[y*1000+x]=110;
+        var straight=BitmapSource.Create(1000,700,96,96,PixelFormats.Gray8,null,straightPixels,1000);straight.Freeze();
+        var straightCorners=ArtworkPerspective.Detect(straight)??throw new Exception("Straight boundary not detected");
+        Point[] straightExpected=[new(140,120),new(860,120),new(860,580),new(140,580)];
+        for(int i=0;i<4;i++)if((straightCorners[i]-straightExpected[i]).Length>1.6)throw new Exception("Straight crop leaves fringe: "+straightCorners[i]);
+        Console.WriteLine("PASS straight crop boundary within 1.6 pixels");
+        _=new Application();var dragWindow=new ArtworkPerspectiveWindow("drag test",straight);
+        var dragContent=(FrameworkElement)dragWindow.Content;dragContent.Measure(new Size(1100,720));dragContent.Arrange(new Rect(0,0,1100,720));dragContent.UpdateLayout();
+        var dragFlags=System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance;
+        typeof(ArtworkPerspectiveWindow).GetMethod("Draw",dragFlags)!.Invoke(dragWindow,null);
+        var targets=(List<System.Windows.Shapes.Ellipse>)typeof(ArtworkPerspectiveWindow).GetField("handleTargets",dragFlags)!.GetValue(dragWindow)!;
+        var scale=(double)typeof(ArtworkPerspectiveWindow).GetMethod("DisplayScale",dragFlags)!.Invoke(dragWindow,null)!;
+        if(targets.Any(target=>Math.Abs(target.Width*scale-44)>.01||!target.IsHitTestVisible))throw new Exception("Corner drag target too small");
+        Console.WriteLine("PASS corner drag target 44 display units, independent of image scale");
         var visual=new DrawingVisual();using(var draw=visual.RenderOpen()){
             draw.DrawRectangle(Brushes.White,null,new Rect(0,0,600,400));
             var geometry=new StreamGeometry();using(var g=geometry.Open()){g.BeginFigure(corners[0],true,true);g.PolyLineTo(corners.Skip(1).ToArray(),true,false);}draw.DrawGeometry(Brushes.DarkBlue,null,geometry);
@@ -54,7 +69,7 @@ internal static class PerspectiveChecks
             var quad=ArtworkPerspective.Detect(actual)??throw new Exception("Real scan requires manual corners");
             Save(ArtworkPerspective.Render(actual,quad,1200),Path.Combine(root,"corrected.png"));
             Console.WriteLine("Detected corners: "+string.Join("; ",quad.Select(p=>p.ToString())));Console.WriteLine("Preview: "+Path.Combine(root,"corrected.png"));
-            _=new Application();var window=new ArtworkPerspectiveWindow("Booklet1.jpg",actual);
+            var window=new ArtworkPerspectiveWindow("Booklet1.jpg",actual);
             var flags=System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance;
             typeof(ArtworkPerspectiveWindow).GetProperty("Corners",flags)!.SetValue(window,quad);
             typeof(ArtworkPerspectiveWindow).GetMethod("Refresh",flags)!.Invoke(window,null);

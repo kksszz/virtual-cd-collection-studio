@@ -13,6 +13,7 @@ public static class MobileCaseExporter
 {
     public static void Export(JewelCaseCoverFlowItem item, string destination)
     {
+        if(item.Digipak is not null)throw new NotSupportedException("デジパック2枚組のAndroid用3D出力はまだ対応していません。音楽・画像の転送には3Dモデルを含めないでください。");
         if (string.Equals(Path.GetExtension(destination), ".glb", StringComparison.OrdinalIgnoreCase)) { MobileGlbExporter.Export(item,destination); return; }
         if (!string.Equals(Path.GetExtension(destination), ".vcd3d", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("保存先の拡張子は .vcd3d にしてください。");

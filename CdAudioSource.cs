@@ -13,6 +13,17 @@ internal sealed class CdAudioSource : IDisposable
     private static extern SafeFileHandle CreateFile(string name,uint access,uint share,IntPtr security,uint creation,uint flags,IntPtr template);
     [DllImport("kernel32.dll", SetLastError=true)]
     private static extern bool DeviceIoControl(SafeFileHandle file,uint code,byte[]? input,int inputSize,byte[] output,int outputSize,out int returned,IntPtr overlapped);
+    internal static void Eject(string drive)
+    {
+        if(drive.Length<2||!char.IsAsciiLetter(drive[0])||drive[1]!=':')throw new ArgumentException("CDドライブを選択してください。");
+        if(new DriveInfo(drive[..2]).DriveType!=DriveType.CDRom)throw new IOException("CDドライブではありません。");
+        // Open independently of the audio TOC: an empty tray or data CD can also be ejected.
+        using var device=CreateFile(@"\\.\"+drive[..2],0x80000000,3,IntPtr.Zero,3,0,IntPtr.Zero);
+        if(device.IsInvalid)throw new Win32Exception(Marshal.GetLastWin32Error(),"CDドライブを開けません。");
+        const uint ioctlStorageEjectMedia=0x2D4808;
+        if(!DeviceIoControl(device,ioctlStorageEjectMedia,null,0,[],0,out _,IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastWin32Error(),"CDを取り出せませんでした。他のアプリがCDを使用していないか、ドライブの接続を確認してください。");
+    }
     internal CdAudioSource(string drive)
     {
         if(drive.Length<2||!char.IsAsciiLetter(drive[0])||drive[1]!=':')throw new ArgumentException("CDドライブを選択してください。");

@@ -284,11 +284,10 @@ public static class ZipAlbumReader
         };
     }
 
-    public static ZipAlbum OpenFolder(string folderPath)
+    public static ZipAlbum OpenFolder(string folderPath,IReadOnlyList<string>? excludedFolders=null)
     {
         var grouped = FolderAlbumLayout.IsRoot(folderPath);
-        var files = Directory.EnumerateFiles(folderPath, "*", new EnumerationOptions
-            { RecurseSubdirectories = grouped, AttributesToSkip = FileAttributes.ReparsePoint })
+        var files = LibraryScanScope.Files(folderPath,grouped,excludedFolders)
             .Where(IsStandardAudioPath)
             .OrderBy(path => Path.GetRelativePath(folderPath, path), StringComparer.CurrentCultureIgnoreCase)
             .ToList();
@@ -436,6 +435,12 @@ public static class ZipAlbumReader
         }
     }
 
+    internal static ZipAlbum RefreshFolderArtwork(ZipAlbum album)=>new()
+    {
+        Path=album.Path,Tracks=album.Tracks,Images=album.Images,TextFiles=album.TextFiles,
+        ArchiveHasCompressedEntries=album.ArchiveHasCompressedEntries,
+        ImageCount=CountExternalImages(album.Path,isFolderAlbum:true)
+    };
     private static int CountExternalImages(string albumPath, bool isFolderAlbum)
     {
         try

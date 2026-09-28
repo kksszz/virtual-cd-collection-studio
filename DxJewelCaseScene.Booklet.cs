@@ -91,6 +91,7 @@ internal sealed partial class DxJewelCaseScene
     {
         progress = Math.Clamp(progress, 0, 1);
         _bookletCoverRotation.Angle = 180 * progress;
+        if(_isDigipak){_bookletTranslation.OffsetX=D(100)*(float)progress;return;}
         // Keep the expanded spread near the case centre instead of opening off an edge.
         // Move only the extracted booklet; preserve the user's camera, zoom, case and obi.
         var fold = _bookletLift.Transform(new Point3D(_bookletOpeningBounds.Left, 0, _bookletOpeningBounds.Z));
@@ -104,7 +105,7 @@ internal sealed partial class DxJewelCaseScene
         if (_bookletOpeningRoot is not null) _bookletRoot.Children.Remove(_bookletOpeningRoot);
         _bookletOpeningRoot = null;
         _bookletCoverRotation.Angle = 0;
-        _bookletTranslation.OffsetX = BookletPose(_bookletProgress).X;
+        _bookletTranslation.OffsetX = _isDigipak ? 0 : BookletPose(_bookletProgress).X;
         if (_bookletRearArtwork is not null) _bookletRearArtwork.Visibility = Visibility.Visible;
         foreach (var image in _bookletPreviewTextures) _textureCache.Remove(image);
         _bookletPreviewTextures.Clear();
