@@ -57,6 +57,32 @@ are rejected before replacing a saved model. Original music and artwork are neve
 
 ## Verification
 
+### Development profile: two-disc digipak
+
+The unreleased `digipak-two-disc-glb-1` profile stores the Windows digipak meshes,
+not the third-party standard-case STL. Its eight parts (IDs 0–7) are `Center`,
+`LeftPanel`, `Disc1`, `RightPanel`, `Disc2`, `Booklet`, `LeftFold`, `RightFold`.
+Vertices are the flat/open bind pose in centimetres before the existing 0.1 root scale.
+Part nodes include bounded initial translation/quaternion rotation for the closed pose;
+their scales are always one. The clips are `Open`, `DiscOut`, and `BookletOut`.
+Additional image roles are `disc2`, `innerLeft`, `outerRight`, `trays`, `leftFold`,
+and `rightFold`; generated crop textures retain the bounded `detailN` convention.
+Obi and wrapping are not supported by this profile.
+
+Android uses interruption-safe staged opening (left panel first, right panel second),
+returns both discs and the booklet before closing, and deforms the fold strips with
+the desktop quadratic curve. Generic glTF viewers use the simpler rigid fold animation.
+The 32 MiB / 600,000 vertex / 32 image limits and no-external-resource rule still apply.
+Android 0.12.0 supports this profile; Android 0.11.0 and older reject it.
+Legacy profiles are unchanged. Export requires the matching Windows development build;
+the published Windows v0.88.0 release does not export digipak GLB.
+
+`tests/WindowsCaseTests --mobile-model` generates synthetic digipak fixtures for all
+four tray colors. Copy the generated `digipak-<Color>.glb` files into Android test assets
+as `case3d-digipak-<Color>.glb` to reproduce them. `test-core.ps1` checks fold endpoint
+continuity and staged angles. Android instrumentation mode `digipak` checks parsing,
+malformed rejection, GPU poses, removal/return, interrupted reset and context recreation.
+
 - `tools/validate-glb.cjs`: Khronos glTF-Validator, errors/warnings checked.
 - `tools/verify-glb-browser.cjs`: Three.js GLTFLoader in local headless Chromium; strips every
   `extras` field first, then checks the standard scene, metre scale and animation, and captures

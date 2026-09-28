@@ -12,6 +12,16 @@ internal static class Program
 {
     [STAThread] static void Main(string[] args)
     {
+        if(args.Length==3&&args[0]=="--mobile-album-export"){
+            _=new Application();var album=Directory.Exists(args[1])?ZipAlbumReader.OpenFolder(args[1]):ZipAlbumReader.Open(args[1]);
+            var type=typeof(MainWindow).GetNestedType("AlbumListItem",BindingFlags.NonPublic)!;var model=Activator.CreateInstance(type,album)!;
+            type.GetMethod("EnsureCaseArtworkLoaded")!.Invoke(model,[1024]);object? Get(string name)=>type.GetProperty(name)!.GetValue(model);
+            var exportedItem=new JewelCaseCoverFlowItem(album.Path,(string)Get("Title")!,(string)Get("Artist")!,"",(string)Get("TrayColorMode")!,
+                (BitmapSource?)Get("CaseFrontThumbnail"),(BitmapSource?)Get("InsideFrontThumbnail"),(BitmapSource?)Get("BackCoverThumbnail"),
+                (BitmapSource?)Get("SpineThumbnail"),(BitmapSource?)Get("RightSpineThumbnail"),(BitmapSource?)Get("InlayThumbnail"),(BitmapSource?)Get("DiscThumbnail"),false){
+                SpineCard=(BitmapSource?)Get("SpineCardThumbnail"),SpineCardReverse=(BitmapSource?)Get("SpineCardReverseThumbnail"),SecondDiscImage=(BitmapSource?)Get("SecondDiscThumbnail"),Digipak=(DigipakArtwork?)Get("Digipak")};
+            MobileGlbExporter.Export(exportedItem,args[2]);Console.WriteLine("PASS read-only album GLB export: "+args[2]);return;
+        }
         if(args.Length==2&&args[0]=="--digipak-gpu"){try{DigipakGpuChecks.Run(args[1]);}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;}
         if(args.Length>0&&args[0]=="--digipak"){try{DigipakChecks.Run(args.Length>1?args[1]:null);}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;}
         if(args.Length==1&&args[0]=="--library-scope"){

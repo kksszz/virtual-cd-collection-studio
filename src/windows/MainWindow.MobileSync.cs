@@ -88,7 +88,7 @@ public partial class MainWindow
                     status.Text=$"{count+1}/{selected.Length} 3D生成: {album.Title}";
                     if(album.Album.HasCompressedArchiveContent)throw new IOException(album.Title+": 先に無圧縮ZIP.MP3へ変換してください。");
                     await album.EnsureCaseArtworkLoadedAsync(1024,CancellationToken.None);
-                    var item=new JewelCaseCoverFlowItem(album.Album.Path,album.Title,album.Artist,album.SourceBadge,album.TrayColorMode,album.CaseFrontThumbnail??album.CoverThumbnail,album.InsideFrontThumbnail,album.BackCoverThumbnail,album.SpineThumbnail,album.RightSpineThumbnail,album.InlayThumbnail,album.DiscThumbnail,false){SpineCard=album.SpineCardThumbnail,SpineCardReverse=album.SpineCardReverseThumbnail,SecondDiscImage=album.SecondDiscThumbnail};
+                    var item=new JewelCaseCoverFlowItem(album.Album.Path,album.Title,album.Artist,album.SourceBadge,album.TrayColorMode,album.CaseFrontThumbnail??album.CoverThumbnail,album.InsideFrontThumbnail,album.BackCoverThumbnail,album.SpineThumbnail,album.RightSpineThumbnail,album.InlayThumbnail,album.DiscThumbnail,false){SpineCard=album.SpineCardThumbnail,SpineCardReverse=album.SpineCardReverseThumbnail,SecondDiscImage=album.SecondDiscThumbnail,Digipak=album.Digipak};
                     var glb=Path.Combine(temporary,"case.glb");MobileGlbExporter.Export(item,glb);
                     var progress=new Progress<string>(s=>status.Text=$"{(method==0?"PC内の転送準備（端末への受信はAndroidに表示）":"保存先への同期")} · {count+1}/{selected.Length} {album.Title}\n{s}");
                     var lyrics=await Task.Run(()=>ExportMobileLyrics(album.Album,temporary));

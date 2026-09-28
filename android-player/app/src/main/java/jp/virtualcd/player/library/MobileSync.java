@@ -100,7 +100,7 @@ public final class MobileSync {
     }
     private static String fingerprint(Context c,AlbumLibrary.Album album)throws Exception{
         var hashes=new ArrayList<String>();
-        if(album.directory){for(var child:AlbumLibrary.children(c,album.uri))if(!child.directory&&AudioFormats.audio(child.name))try(var in=c.getContentResolver().openInputStream(child.uri)){if(in==null)throw new IOException(jp.virtualcd.player.LanguageStrings.text("音源を開けません","Unable to open audio"));hashes.add(hashAudio(in,child.size));}}
+        if(album.directory){for(var entry:AlbumTracks.directoryAudioFiles(c,album,AlbumLibrary.children(c,album.uri))){var child=entry.source;try(var in=c.getContentResolver().openInputStream(child.uri)){if(in==null)throw new IOException(jp.virtualcd.player.LanguageStrings.text("音源を開けません","Unable to open audio"));hashes.add(hashAudio(in,child.size));}}}
         else{var fd=c.getContentResolver().openFileDescriptor(album.uri,"r");if(fd==null)throw new IOException(jp.virtualcd.player.LanguageStrings.text("音源を開けません","Unable to open audio"));try(var in=new android.os.ParcelFileDescriptor.AutoCloseInputStream(fd)){var channel=in.getChannel();for(var entry:jp.virtualcd.player.archive.StoredZipIndex.read(channel)){if(entry.method!=0)throw new IOException(jp.virtualcd.player.LanguageStrings.text("圧縮音源は照合できません","Unable to verify compressed audio"));channel.position(entry.offset);hashes.add(hashAudio(in,entry.length));}}}
         Collections.sort(hashes);return CasePackage.hash(String.join("\n",hashes).getBytes(StandardCharsets.UTF_8));
     }

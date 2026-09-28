@@ -17,7 +17,7 @@ public final class AlbumIndicators {
     /** Names only: do not decode every track to render the list. */
     public static Info read(Context context,AlbumLibrary.Album album)throws Exception{
         var names=new ArrayList<String>();
-        if(album.directory){var children=AlbumLibrary.children(context,album.uri);var cue=CueTracks.read(context,album,children);if(cue!=null)return new Info("FLAC · CUE",cue.tracks.size());for(var file:children)if(!file.directory)names.add(file.name);}
+        if(album.directory){var children=AlbumLibrary.children(context,album.uri);var cue=CueTracks.read(context,album,children);if(cue!=null)return new Info("FLAC · CUE",cue.tracks.size());for(var file:AlbumTracks.directoryAudioFiles(context,album,children))names.add(file.source.name);}
         else if(AudioFormats.archive(album.name)){
             var fd=context.getContentResolver().openFileDescriptor(album.uri,"r");if(fd==null)return new Info("",-1);
             try(var input=new ParcelFileDescriptor.AutoCloseInputStream(fd)){for(var entry:StoredZipIndex.read(input.getChannel()))names.add(entry.name);}

@@ -41,6 +41,11 @@ public final class FavoriteSyncTest {
         var track=new AlbumTracks.Track();track.file="disc.flac · Track 2";track.title="Same";track.number=2;track.disc=1;
         var target=new JSONObject().put("file",track.file).put("title","Same").put("number",2).put("disc",1);
         if(FavoriteSync.match(target,List.of(track))!=track||FavoriteSync.match(target,List.of(track,track))!=null)throw new AssertionError("CUE/ambiguous match");
+        var first=new AlbumTracks.Track();first.file="01.flac";first.title="Opening";first.disc=1;first.number=1;
+        var second=new AlbumTracks.Track();second.file="01.flac";second.title="Opening";second.disc=2;second.number=1;
+        var multi=new JSONObject().put("file","01.flac").put("title","Opening").put("number",1).put("disc",2);
+        if(FavoriteSync.match(multi,List.of(first,second))!=second)throw new AssertionError("Cross-disc basename match");
+        multi.put("disc",0);if(FavoriteSync.match(multi,List.of(first,second))!=null)throw new AssertionError("Ambiguous basename accepted");
         p.edit().clear().commit();c.getSharedPreferences("listening-v1",0).edit().clear().commit();
     }
 }

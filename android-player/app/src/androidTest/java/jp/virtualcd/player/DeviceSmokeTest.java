@@ -124,6 +124,8 @@ public final class DeviceSmokeTest extends Instrumentation {
                 }finally{c.getSharedPreferences("album-added-v1",0).edit().clear().commit();}
                 result.putString("recentOrder","PASS baseline, repeat scan, sync revision identity");finish(-1,result);return;
             }
+            if(testMode.equals("multiDisc")){MultiDiscChecks.run(getTargetContext());FavoriteSyncTest.run(getTargetContext());result.putString("multiDisc","PASS recursive SAF discovery, album scope, natural order, disc fallback, cancellation and favorite matching");finish(-1,result);return;}
+            if(testMode.equals("multiDiscTransferred")){result.putString("multiDiscTransferred",MultiDiscChecks.runTransferred(getTargetContext()));finish(-1,result);return;}
             if(testMode.equals("favoriteSync")){FavoriteSyncTest.run(getTargetContext());result.putString("favoriteSync","PASS first/always/never/one-shot, Android edits, revision binding, legacy, CUE");finish(-1,result);return;}
             if(testMode.equals("lyrics")){
                 var entries=new org.json.JSONArray().put(new org.json.JSONObject().put("file","disc.flac · Track 2").put("title","Song").put("number",2).put("disc",1).put("text","[ar:Artist]\n[00:01.00]一行目\n[00:02.00][00:03.00]二行目"));
@@ -219,6 +221,8 @@ public final class DeviceSmokeTest extends Instrumentation {
                 result.putString("qr","PASS Windows QRCoder -> Android ZXing exact URL, LAN validation and non-sync QR rejection (camera optics not tested)");finish(-1,result);return;
             }
             if(testMode.equals("sync")){SyncDeviceChecks.run(getTargetContext(),syncAddress);result.putString("sync","PASS LAN download, checksum, unchanged skip, automatic GLB binding and incomplete-transfer rejection");finish(-1,result);return;}
+            if(testMode.equals("digipakReal")){CaseDeviceChecks.runDigipakReal(this);result.putString("digipakReal","PASS real album GLB, two discs, booklet, closing, interruption and context restoration");finish(-1,result);return;}
+            if(testMode.equals("digipak")){CaseDeviceChecks.runDigipak(this);result.putString("digipak","PASS four trays, panels, two discs, booklet, interruption recovery, context restoration and malformed GLB rejection");finish(-1,result);return;}
             if(testMode.equals("desktopGlb")){CaseDeviceChecks.runDesktop(this);result.putString("desktopGlb","PASS desktop geometry GPU poses, controls, lifecycle and malformed rejection");finish(-1,result);return;}
             if(testMode.equals("glb")||testMode.equals("glbReal")){CaseDeviceChecks.runGlb(this,testMode.equals("glbReal"));result.putString("glb","PASS legacy/GLB image comparison closed/open/disc, controls, reset, context restore and malformed GLB rejection");finish(-1,result);return;}
             if(testMode.equals("albumOrder")){testAlbumOrder();result.putString("albumOrder","PASS album/artist order, artist ties, unknown last, filter and persisted choice");finish(-1,result);return;}

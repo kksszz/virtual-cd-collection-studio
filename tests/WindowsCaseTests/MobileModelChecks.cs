@@ -52,6 +52,7 @@ internal static class MobileModelChecks
         var path=Path.Combine(Path.GetTempPath(),"mobile-model-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(path);
         BitmapSource Picture(int w,int h){
             var pixels=Enumerable.Repeat((byte)255,w*h*4).ToArray();
+            for(int i=0;i<pixels.Length;i+=4){pixels[i]=(byte)(80+w%130);pixels[i+1]=(byte)(80+h%130);pixels[i+2]=(byte)(100+(w+h)%100);}
             var bmp=BitmapSource.Create(w,h,96,96,PixelFormats.Bgra32,null,pixels,w*4);bmp.Freeze();return bmp;
         }
         var image=Picture(150,118);
@@ -72,6 +73,23 @@ internal static class MobileModelChecks
             if(doc.RootElement.GetProperty("extras").GetProperty("virtualCd").GetProperty("profile").GetString()!="jewel-case-glb-2")throw new Exception("Desktop geometry profile");
         }
         Console.WriteLine("PASS mobile: four tray modes, Back/Spine and Inlay folds, front stop, both obi sides, v3 snapshot and GLB");
+        foreach(string tray in new[]{"Clear","Black","White","Gray"}) {
+            var digipak=item with {SpineCard=null,SpineCardReverse=null,TrayColorMode=tray,SecondDiscImage=Picture(180,180),Digipak=new(image,image,Picture(282,124)){LeftFold=Picture(12,124),RightFold=Picture(10,124)}};
+            var output=Path.Combine(path,"digipak-"+tray+".glb");MobileCaseExporter.Export(digipak,output);
+            using var input=new BinaryReader(File.OpenRead(output));input.ReadBytes(12);int size=input.ReadInt32();input.ReadInt32();using var doc=JsonDocument.Parse(input.ReadBytes(size));var model=doc.RootElement;
+            if(model.GetProperty("extras").GetProperty("virtualCd").GetProperty("profile").GetString()!="digipak-two-disc-glb-1")throw new Exception("Digipak profile");
+            var nodes=model.GetProperty("nodes");if(nodes[0].GetProperty("children").GetArrayLength()!=8)throw new Exception("Digipak moving parts");
+            foreach(int part in new[]{0,1,2,3,4,5,6,7})if(nodes[part+1].GetProperty("children").GetArrayLength()==0)throw new Exception("Missing digipak part "+part);
+            if(!model.GetProperty("images").EnumerateArray().Any(i=>i.GetProperty("name").GetString()=="disc2"))throw new Exception("Missing second disc image");
+            foreach(string clip in new[]{"Open","DiscOut","BookletOut"})if(!model.GetProperty("animations").EnumerateArray().Any(a=>a.GetProperty("name").GetString()==clip))throw new Exception("Missing digipak animation "+clip);
+            var capture=DxJewelCaseScene.CaptureMobile(digipak);
+            float[] X(int part)=>capture.Meshes.Where(m=>m.part==part).SelectMany(m=>m.vertices.Where((v,i)=>i%8==0)).ToArray();
+            if(Math.Abs(X(1).Min()+2.19f)>.001||Math.Abs(X(3).Max()-2.17f)>.001)throw new Exception("Digipak bind pose scale");
+            var left=MobileGlbExporter.DigipakPose(1,.5f,0,0);var right=MobileGlbExporter.DigipakPose(3,.5f,0,0);
+            if(Math.Abs(left.Rotation.W-1)>.001||Math.Abs(right.Rotation.W)>.001)throw new Exception("Digipak opening order");
+            if(MobileGlbExporter.DigipakPose(5,1,0,1).Shift.Y<1.24f)throw new Exception("Booklet upward slide");
+        }
+        Console.WriteLine("PASS mobile digipak: four trays, eight moving parts, both disc textures, three GLB animations and flat bind pose");
         Console.WriteLine(path);
     }
 }

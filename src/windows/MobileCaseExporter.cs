@@ -13,10 +13,14 @@ public static class MobileCaseExporter
 {
     public static void Export(JewelCaseCoverFlowItem item, string destination)
     {
-        if(item.Digipak is not null)throw new NotSupportedException("デジパック2枚組のAndroid用3D出力はまだ対応していません。音楽・画像の転送には3Dモデルを含めないでください。");
         if (string.Equals(Path.GetExtension(destination), ".glb", StringComparison.OrdinalIgnoreCase)) { MobileGlbExporter.Export(item,destination); return; }
+        if(item.Digipak is not null)throw new NotSupportedException("デジパック2枚組はGLB形式で出力してください。");
         if (!string.Equals(Path.GetExtension(destination), ".vcd3d", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("保存先の拡張子は .vcd3d にしてください。");
+        ExportSnapshot(item,destination);
+    }
+    internal static void ExportSnapshot(JewelCaseCoverFlowItem item,string destination)
+    {
         var textures = new Dictionary<string, object>();
         var inlay = item.SplitInlay();
         var obi = item.SpineCard is { } card ? SpineCardArtwork.Split(card) : default;
@@ -59,7 +63,7 @@ public static class MobileCaseExporter
                 }
                 var manifest = new
                 {
-                    format = "virtual-cd-case", version = 3, model = "jewel-case-v3",
+                    format = "virtual-cd-case", version = item.Digipak is null?3:4, model = item.Digipak is null?"jewel-case-v3":"digipak-two-disc-v1",
                     title = item.Title, artist = item.Artist,
                     // Do not expose Windows paths. Mobile binding is explicitly selected on import.
                     albumId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(item.Key))).ToLowerInvariant(),

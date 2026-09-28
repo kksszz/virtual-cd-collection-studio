@@ -32,6 +32,12 @@ public final class DeletionTestProvider extends DocumentsProvider {
             nodes.clear();add("root",null,"Test music",true,"");add("album","root","Test album",true,"");
             add("track","album","01.mp3",false,"audio");add("cover","album","cover.png",false,"picture");
             add("other","root","Other album",true,"");add("other-track","other","02.mp3",false,"do not delete");
+            if("multiDisc".equals(arg)){
+                nodes.remove("track");add("disc1","album","Disc1",true,"");add("disc2","album","Disc2",true,"");
+                add("disc10","album","Disc10",true,"");
+                add("d1","disc1","01.flac",false,"audio1");add("d2","disc2","01.flac",false,"audio2");add("d10","disc10","01.flac",false,"audio10");
+                add("hidden","album",".vcd-sync",true,"");add("hidden-track","hidden","hidden.mp3",false,"ignore");
+            }
             if("sync".equals(arg)){
                 nodes.remove("album");nodes.remove("track");nodes.remove("cover");
                 add("sync","root",".vcd-sync",true,"");add("container","sync",ID,true,"");

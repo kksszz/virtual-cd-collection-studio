@@ -1,14 +1,15 @@
 // Independent generic viewer test: strips every extras object before loading with Three.js.
 // All resources are served locally; no album data is uploaded.
 const fs=require('fs'),http=require('http'),path=require('path');
-const {chromium}=require('../.tools/playwright-core/package');
+const toolRoot=process.env.VCD_ANDROID_TOOLS||path.resolve(__dirname,'../.tools');
+const {chromium}=require(path.join(toolRoot,'playwright-core/package'));
 const source=fs.readFileSync(process.argv[2]);
 const jsonLength=source.readUInt32LE(12),root=JSON.parse(source.subarray(20,20+jsonLength).toString());
 function strip(value){if(value&&typeof value==='object'){delete value.extras;for(const x of Object.values(value))strip(x);}}strip(root);
 const json=Buffer.from(JSON.stringify(root)),padded=Buffer.alloc((json.length+3)&~3,32);json.copy(padded);
 const bin=source.subarray(20+jsonLength),head=Buffer.alloc(20);head.writeUInt32LE(0x46546c67,0);head.writeUInt32LE(2,4);head.writeUInt32LE(20+padded.length+bin.length,8);head.writeUInt32LE(padded.length,12);head.writeUInt32LE(0x4e4f534a,16);
 const portable=Buffer.concat([head,padded,bin]);
-const threeRoot=path.resolve(__dirname,'../.tools/three/package');
+const threeRoot=path.join(toolRoot,'three/package');
 const html=`<!doctype html><meta charset="utf-8"><style>body{margin:0;background:#111920}canvas{display:block}</style>
 <script type="importmap">{"imports":{"three":"/three/build/three.module.js","three/addons/":"/three/examples/jsm/"}}</script>
 <script type="module">
@@ -36,6 +37,9 @@ try{browser=await chromium.launch({executablePath:'C:/Program Files (x86)/Google
 await page.goto('http://127.0.0.1:'+server.address().port);await page.waitForFunction(()=>window.testResult||window.testError,{},{timeout:30000});
 const result=await page.evaluate(()=>window.testResult||{error:window.testError});if(result.error)throw Error(result.error);
 if(result.meshes<1||!result.animations.includes('DiscOut')||result.size[0]<.1||result.size[0]>.2)throw Error('Missing standard geometry, animation or metre-scale');
-await page.screenshot({path:path.resolve(__dirname,'../.tools/glb-generic-closed.png')});await page.evaluate(()=>window.drawPose('DiscOut'));
-await page.screenshot({path:path.resolve(__dirname,'../.tools/glb-generic-open.png')});console.log(JSON.stringify({PASS:result}));
+const output=process.env.VCD_GLB_QA_OUTPUT||toolRoot;fs.mkdirSync(output,{recursive:true});
+await page.screenshot({path:path.join(output,'glb-generic-closed.png')});await page.evaluate(()=>window.drawPose('DiscOut'));
+await page.screenshot({path:path.join(output,'glb-generic-open.png')});
+if(result.animations.includes('BookletOut')){await page.evaluate(()=>window.drawPose('BookletOut'));await page.screenshot({path:path.join(output,'glb-generic-booklet.png')});}
+console.log(JSON.stringify({PASS:result}));
 }finally{if(browser)await browser.close();server.close();}})().catch(e=>{console.error(e);process.exitCode=1;server.close();});

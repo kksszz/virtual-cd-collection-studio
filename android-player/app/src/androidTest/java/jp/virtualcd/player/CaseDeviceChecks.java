@@ -13,6 +13,20 @@ import static android.opengl.EGL14.*;
 import static android.opengl.GLES20.*;
 
 final class CaseDeviceChecks {
+    static void runDigipakReal(Instrumentation test)throws Exception {
+        byte[] bytes;try(InputStream input=new FileInputStream(new File(test.getTargetContext().getCacheDir(),"digipak-real.glb"))){bytes=CasePackage.readBytes(input,CasePackage.MAX_BYTES);}
+        try(CasePackage data=CasePackage.parse(bytes)){if(!data.digipak)throw new AssertionError("Expected digipak");render(test,data);}
+    }
+    static void runDigipak(Instrumentation test)throws Exception {
+        for(String tray:new String[]{"Clear","Black","White","Gray"}) {
+            byte[] bytes;try(InputStream input=test.getContext().getAssets().open("case3d-digipak-"+tray+".glb")){bytes=CasePackage.readBytes(input,CasePackage.MAX_BYTES);}
+            try(CasePackage data=CasePackage.parse(bytes)){
+                if(!data.digipak||!data.desktopGeometry||data.hasObi||data.wrapped||!data.images.containsKey("disc2"))throw new AssertionError("Digipak contract");
+                reject(breakGlb(bytes,"range"));reject(breakGlb(bytes,"count"));reject(breakGlb(bytes,"uri"));reject(breakGlb(bytes,"profile"));reject(breakGlb(bytes,"required"));
+                render(test,data);
+            }
+        }
+    }
     static void runDesktop(Instrumentation test)throws Exception {
         byte[] bytes;try(var input=new FileInputStream(new File(test.getTargetContext().getCacheDir(),"desktop-check.glb"))){bytes=CasePackage.readBytes(input,CasePackage.MAX_BYTES);}
         try(CasePackage data=CasePackage.parse(bytes)){
@@ -85,7 +99,7 @@ final class CaseDeviceChecks {
     }
     private static int[][] render(Instrumentation test,CasePackage data)throws Exception {
         EGLDisplay display=eglGetDisplay(EGL_DEFAULT_DISPLAY);int[] version=new int[2];if(!eglInitialize(display,version,0,version,1))throw new AssertionError("EGL init");
-        EGLConfig[] configs=new EGLConfig[1];int[] count=new int[1];eglChooseConfig(display,new int[]{EGL_RENDERABLE_TYPE,EGL_OPENGL_ES2_BIT,EGL_SURFACE_TYPE,EGL_PBUFFER_BIT,EGL_RED_SIZE,8,EGL_GREEN_SIZE,8,EGL_BLUE_SIZE,8,EGL_DEPTH_SIZE,16,EGL_NONE},0,configs,0,1,count,0);
+        EGLConfig[] configs=new EGLConfig[1];int[] count=new int[1];eglChooseConfig(display,new int[]{EGL_RENDERABLE_TYPE,EGL_OPENGL_ES2_BIT,EGL_SURFACE_TYPE,EGL_PBUFFER_BIT,EGL_RED_SIZE,8,EGL_GREEN_SIZE,8,EGL_BLUE_SIZE,8,EGL_DEPTH_SIZE,24,EGL_NONE},0,configs,0,1,count,0);
         EGLContext context=eglCreateContext(display,configs[0],EGL_NO_CONTEXT,new int[]{EGL_CONTEXT_CLIENT_VERSION,2,EGL_NONE},0);EGLSurface surface=eglCreatePbufferSurface(display,configs[0],new int[]{EGL_WIDTH,512,EGL_HEIGHT,512,EGL_NONE},0);
         if(!eglMakeCurrent(display,surface,surface,context))throw new AssertionError("EGL current");CaseSurface[] renderer=new CaseSurface[1];
         try{
@@ -94,6 +108,17 @@ final class CaseDeviceChecks {
             view.toggleOpen();barrier(view);settle(view);view.onDrawFrame(null);int[] opened=capture();save(test,opened,"case3d-open.png");
             if(open.getFloat(view)!=1||value(view,"wrapRemoved")!=1||value(view,"obiRemoved")!=1)throw new AssertionError("Opening clearance");
             view.toggleDisc();barrier(view);settle(view);view.onDrawFrame(null);int[] removed=capture();save(test,removed,"case3d-disc.png");if(value(view,"discRemoved")!=1||Arrays.equals(removed,opened))throw new AssertionError("Disc extraction");
+            if(data.digipak){
+                view.toggleBooklet();barrier(view);settle(view);view.onDrawFrame(null);int[] booklet=capture();save(test,booklet,"digipak-"+data.tray+"-booklet.png");
+                if(value(view,"bookletRemoved")!=1||Arrays.equals(booklet,removed))throw new AssertionError("Booklet slide");
+                view.toggleOpen();barrier(view);settle(view);view.onDrawFrame(null);
+                if(value(view,"open")!=0||value(view,"discRemoved")!=0||value(view,"bookletRemoved")!=0)throw new AssertionError("Digipak return sequence");
+                for(int frame=1;frame<90;frame+=7){view.toggleBooklet();view.toggleDisc();barrier(view);for(int i=0;i<frame;i++)tick(view);view.reset();barrier(view);settle(view);}
+                for(int width:new int[]{256,512}){view.toggleBooklet();barrier(view);settle(view);view.onSurfaceChanged(null,width,512);view.onDrawFrame(null);if(glGetError()!=GL_NO_ERROR)throw new AssertionError("Digipak orientation");view.reset();barrier(view);settle(view);}
+                // Restore bind vertices before GL context recreation; deformed folds must not be re-baked.
+                view.onDrawFrame(null);view.onSurfaceCreated(null,null);view.onSurfaceChanged(null,512,512);view.toggleOpen();barrier(view);settle(view);view.onDrawFrame(null);capture();
+                return new int[][]{closed,opened,removed};
+            }
             captureTray(test,view);
             view.toggleWrapping();barrier(view);settle(view);if(value(view,"discRemoved")!=0||open.getFloat(view)!=0||value(view,"wrapRemoved")!=0||(data.hasObi&&value(view,"obiRemoved")!=0))throw new AssertionError("Repack sequence");
             view.toggleDisc();barrier(view);tick(view);view.reset();barrier(view);settle(view);

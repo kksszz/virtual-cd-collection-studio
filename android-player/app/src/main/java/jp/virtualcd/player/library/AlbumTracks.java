@@ -35,9 +35,8 @@ public final class AlbumTracks {
         if(album.directory){
             var files=AlbumLibrary.children(context,album.uri);
             var cue=CueTracks.read(context,album,files);if(cue!=null)return cue.artist;
-            files.sort(Comparator.comparing(a->AudioFormats.natural(a.name)));
-            for(var file:files)if(!file.directory&&AudioFormats.audio(file.name)){
-                result.readFile(context,file);
+            for(var file:directoryAudioFiles(context,album,files)){
+                result.readDirectoryFile(context,file);
                 if(!result.artist.equals(jp.virtualcd.player.LanguageStrings.text("アーティスト情報なし","No artist information")))break;
             }
         }else if(AudioFormats.archive(album.name)){
@@ -58,7 +57,7 @@ public final class AlbumTracks {
     public static AlbumTracks load(Context context,AlbumLibrary.Album album,boolean force,Progress progress)throws IOException{
         checkInterrupted();
         var result=new AlbumTracks();result.title=album.title();
-        List<AlbumLibrary.Album> files=new ArrayList<>();
+        List<DirectoryAudio> files=new ArrayList<>();
         if(album.directory){
             var children=AlbumLibrary.children(context,album.uri);
             if(children.stream().anyMatch(f->f.name.toLowerCase(Locale.ROOT).endsWith(".cue"))){
@@ -66,11 +65,10 @@ public final class AlbumTracks {
                 var saved=force?null:AlbumTagCache.read(context,album.uri);if(saved!=null&&cueKey.equals(saved.signature))return saved.album;
                 var cue=CueTracks.read(context,album,children);AlbumTagCache.write(context,album.uri,cueKey,cue);if(progress!=null)progress.preview(cue);return cue;
             }
-            for(var file:children)if(!file.directory&&AudioFormats.audio(file.name))files.add(file);
-            files.sort(Comparator.comparing(a->AudioFormats.natural(a.name)));
+            files=directoryAudioFiles(context,album,children);
         }
-        StringBuilder signature=new StringBuilder(album.key());
-        for(var file:files)signature.append('\n').append(file.key());
+        StringBuilder signature=new StringBuilder(album.directory?"directory-v2|"+album.key():album.key());
+        for(var file:files)signature.append('\n').append(file.path).append('|').append(file.source.key());
         String key=signature.toString();
         if(force)cache.remove(key);
         AlbumTracks cached=force?null:cache.get(key);
@@ -78,9 +76,9 @@ public final class AlbumTracks {
         if(!force){var saved=AlbumTagCache.read(context,album.uri);if(saved!=null&&key.equals(saved.signature)){cache.put(key,saved.album);return saved.album;}}
         var preview=new AlbumTracks();preview.title=album.title();
         if(album.directory){
-            for(var file:files)preview.basic(file.name,file.uri);
+            for(var file:files){preview.basic(file.source.name,file.source.uri);preview.tracks.get(preview.tracks.size()-1).disc=folderDisc(file.path);}
             if(progress!=null)progress.preview(preview);
-            for(var file:files){checkInterrupted();result.readFile(context,file);if(progress!=null)progress.update(result.tracks.size(),files.size());}
+            for(var file:files){checkInterrupted();result.readDirectoryFile(context,file);if(progress!=null)progress.update(result.tracks.size(),files.size());}
         }else if(AudioFormats.archive(album.name)){
             var fd=context.getContentResolver().openFileDescriptor(album.uri,"r");if(fd==null)throw new IOException(jp.virtualcd.player.LanguageStrings.text("音源を開けません","Unable to open audio"));
             try(var input=new ParcelFileDescriptor.AutoCloseInputStream(fd)){
@@ -100,6 +98,39 @@ public final class AlbumTracks {
         return result;
     }
     private void basic(String file,Uri uri){var t=new Track();t.file=file;t.uri=uri;t.title=TrackLabel.title(null,file);t.album=title;tracks.add(t);}
+    static final class DirectoryAudio {
+        final AlbumLibrary.Album source;final String path;
+        DirectoryAudio(AlbumLibrary.Album source,String path){this.source=source;this.path=path;}
+    }
+    /** Only descend inside the selected album, never through the library/sync root. */
+    static List<DirectoryAudio> directoryAudioFiles(Context c,AlbumLibrary.Album album,List<AlbumLibrary.Album> children)throws IOException{
+        var files=new ArrayList<DirectoryAudio>();var visited=new HashSet<String>();int[] entries={0};
+        collectAudio(c,album.uri,children,"",0,visited,entries,files);
+        files.sort(Comparator.comparing(f->AudioFormats.natural(f.path)));return files;
+    }
+    private static void collectAudio(Context c,Uri folder,List<AlbumLibrary.Album> children,String prefix,int depth,Set<String> visited,int[] entries,List<DirectoryAudio> files)throws IOException{
+        checkInterrupted();if(!visited.add(folder.toString()))return;
+        if(depth>32||visited.size()>512)throw new IOException(jp.virtualcd.player.LanguageStrings.text("アルバム内のフォルダーが多すぎます","Too many folders in the album"));
+        for(var child:children){
+            checkInterrupted();if(++entries[0]>50000)throw new IOException(jp.virtualcd.player.LanguageStrings.text("アルバム内のファイルが多すぎます","Too many files in the album"));
+            if(child.name==null||child.name.startsWith("."))continue;
+            String path=prefix+child.name;
+            if(child.directory)collectAudio(c,child.uri,AlbumLibrary.children(c,child.uri),path+"/",depth+1,visited,entries,files);
+            else if(AudioFormats.audio(child.name)){
+                if(files.size()>=10000)throw new IOException(jp.virtualcd.player.LanguageStrings.text("アルバム内の曲が多すぎます","Too many tracks in the album"));
+                files.add(new DirectoryAudio(child,path));
+            }
+        }
+    }
+    static int folderDisc(String path){
+        String[] parts=path.replace('\\','/').split("/");
+        for(int i=parts.length-2;i>=0;i--){var m=java.util.regex.Pattern.compile("(?i)^(?:disc|disk|cd)[ _-]*0*([1-9][0-9]{0,2})$").matcher(parts[i]);if(m.matches())return Integer.parseInt(m.group(1));}
+        return 0;
+    }
+    private void readDirectoryFile(Context c,DirectoryAudio file)throws IOException{
+        readFile(c,file.source);var track=tracks.get(tracks.size()-1);
+        if(track.disc==0)track.disc=folderDisc(file.path);
+    }
     private static void checkInterrupted()throws InterruptedIOException{if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();}
     private void readFile(Context context,AlbumLibrary.Album file)throws IOException{
         checkInterrupted();

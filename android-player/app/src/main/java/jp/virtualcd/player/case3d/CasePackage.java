@@ -13,15 +13,17 @@ public final class CasePackage implements AutoCloseable {
     public static final int MAX_BYTES=32*1024*1024;
     public static final List<String> ROLES=Arrays.asList("front","insideFront","back","spine","rightSpine","inlay","inlayLeft","inlayRight","disc","obiFront","obiSpine","obiBack","obiFrontInside","obiSpineInside","obiBackInside");
     public final String title,artist,tray;
-    public final boolean hasObi,wrapped,desktopGeometry;
+    public final boolean hasObi,wrapped,desktopGeometry,digipak;
     public final float obiFrontWidth,obiBackWidth;
     public final Map<String,Bitmap> images=new HashMap<>();
     List<CaseGeometry.Mesh> geometry;
     CasePackage(JSONObject manifest)throws Exception {
         title=manifest.optString("title","");artist=manifest.optString("artist","");tray=manifest.optString("tray","Black");
-        desktopGeometry="jewel-case-glb-2".equals(manifest.optString("profile"));
+        digipak="digipak-two-disc-glb-1".equals(manifest.optString("profile"));
+        desktopGeometry=digipak||"jewel-case-glb-2".equals(manifest.optString("profile"));
         JSONObject obi=manifest.optJSONObject("obi");hasObi=obi!=null;wrapped=manifest.optBoolean("wrapped",false);
         obiFrontWidth=hasObi?width(obi,"frontWidthMm"):0;obiBackWidth=hasObi?width(obi,"backWidthMm"):0;
+        if(digipak&&(hasObi||wrapped))throw new IOException("Digipak does not support obi or wrapping");
     }
     private static float width(JSONObject obi,String key)throws Exception {double mm=obi.getDouble(key);if(!Double.isFinite(mm)||mm<1||mm>140)throw new IOException(jp.virtualcd.player.LanguageStrings.text("帯の寸法が不正です","Invalid obi dimensions"));return (float)(mm/100);}
     public static byte[] readBytes(InputStream input,int limit)throws IOException {

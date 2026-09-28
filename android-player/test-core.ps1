@@ -7,6 +7,10 @@ New-Item -ItemType Directory -Path $output -Force | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Language test compilation failed' }
 & (Join-Path $taskJdk.FullName 'bin\java.exe') -cp $output LanguageStringsTest
 if ($LASTEXITCODE -ne 0) { throw 'Language test failed' }
+& (Join-Path $taskJdk.FullName 'bin\javac.exe') -encoding UTF8 -d $output (Join-Path $PSScriptRoot 'app\src\main\java\jp\virtualcd\player\case3d\DigipakMotion.java') (Join-Path $PSScriptRoot 'tests\DigipakMotionTest.java')
+if ($LASTEXITCODE -ne 0) { throw 'Digipak test compilation failed' }
+& (Join-Path $taskJdk.FullName 'bin\java.exe') -cp $output DigipakMotionTest
+if ($LASTEXITCODE -ne 0) { throw 'Digipak test failed' }
 & (Join-Path $taskJdk.FullName 'bin\javac.exe') -encoding UTF8 -d $output (Join-Path $PSScriptRoot 'app\src\main\java\jp\virtualcd\player\PlaybackBudget.java') (Join-Path $PSScriptRoot 'tests\PlaybackBudgetTest.java')
 if ($LASTEXITCODE -ne 0) { throw 'Timer test compilation failed' }
 & (Join-Path $taskJdk.FullName 'bin\java.exe') -cp $output PlaybackBudgetTest

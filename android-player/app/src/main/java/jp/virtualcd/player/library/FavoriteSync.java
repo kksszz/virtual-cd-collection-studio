@@ -17,15 +17,18 @@ public final class FavoriteSync {
         if(favorites.getInt("version")!=1)throw new java.io.IOException(jp.virtualcd.player.LanguageStrings.text("未対応のお気に入り情報です","Unsupported favorites data"));
         var tracks=favorites.getJSONArray("tracks");if(tracks.length()>10000)throw new java.io.IOException(jp.virtualcd.player.LanguageStrings.text("お気に入り情報が多すぎます","Too many favorites"));
         var loaded=AlbumTracks.load(c,audio);
-        var mapped=new JSONArray();var names=new HashSet<String>();
+        var mapped=new JSONArray();var names=new HashSet<String>();var counts=new HashMap<String,Integer>();
+        for(int i=0;i<tracks.length();i++){String file=tracks.getJSONObject(i).getString("file").toLowerCase(Locale.ROOT);counts.merge(file,1,Integer::sum);}
         for(int i=0;i<tracks.length();i++){
             var t=tracks.getJSONObject(i);String key=t.getString("file");
-            if(!names.add(key.toLowerCase(Locale.ROOT)))throw new java.io.IOException(jp.virtualcd.player.LanguageStrings.text("お気に入りの曲名が重複しています","Duplicate favorite track names"));
+            // Preserve legacy keys unless a basename is shared by multiple discs.
+            String stable=counts.get(key.toLowerCase(Locale.ROOT))>1?"disc="+t.optInt("disc")+"|"+key:key;
+            if(!names.add(stable.toLowerCase(Locale.ROOT)))throw new java.io.IOException(jp.virtualcd.player.LanguageStrings.text("お気に入りの曲名が重複しています","Duplicate favorite track names"));
             var match=match(t,loaded.tracks);if(match==null)continue;
             var item=match.item();var extras=item.mediaMetadata.extras==null?new android.os.Bundle():new android.os.Bundle(item.mediaMetadata.extras);
             extras.putString(ListeningState.ALBUM_URI,audio.uri.toString());
             item=item.buildUpon().setMediaMetadata(item.mediaMetadata.buildUpon().setExtras(extras).build()).build();
-            mapped.put(new JSONObject().put("key",key).put("entry",ListeningState.encode(item)).put("favorite",t.getBoolean("favorite")));
+            mapped.put(new JSONObject().put("key",stable).put("entry",ListeningState.encode(item)).put("favorite",t.getBoolean("favorite")));
         }
         var album=new JSONObject().put("id",audio.uri.toString()).put("source",audio.uri.toString()).put("title",record.getString("title"));
         var snapshot=new JSONObject().put("album",album).put("favorite",favorites.getBoolean("album")).put("tracks",mapped);
@@ -34,7 +37,8 @@ public final class FavoriteSync {
 
     static AlbumTracks.Track match(JSONObject target,List<AlbumTracks.Track> tracks)throws Exception{
         AlbumTracks.Track found=null;
-        for(var t:tracks)if(target.getString("file").equalsIgnoreCase(t.file)){if(found!=null)return null;found=t;}
+        for(var t:tracks)if(target.getString("file").equalsIgnoreCase(t.file)
+            &&(target.optInt("disc")==0||t.disc==0||target.optInt("disc")==t.disc)){if(found!=null)return null;found=t;}
         if(found!=null)return found;
         for(var t:tracks)if(target.optString("title").equals(t.title)&&target.optInt("number")==t.number
             &&(target.optInt("disc")==0||t.disc==0||target.optInt("disc")==t.disc)){if(found!=null)return null;found=t;}
