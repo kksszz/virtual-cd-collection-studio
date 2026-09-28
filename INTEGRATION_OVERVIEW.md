@@ -6,6 +6,13 @@ Virtual CD Collection Studioは、音源だけでなく、ジャケット・帯�
 
 ## 入力・管理・出力
 
+[![CDコレクションの取り込み・管理・持ち出しの構成図](docs/images/integration-overview.png)](https://github.com/kksszz/virtual-cd-collection-studio/raw/refs/heads/main/docs/images/integration-overview.png)
+
+図をタップ・クリックすると拡大画像を開けます。
+
+<details>
+<summary>編集用の構成図（Mermaid）</summary>
+
 ```mermaid
 flowchart LR
     subgraph INPUT["① 取り込む"]
@@ -34,6 +41,8 @@ flowchart LR
     APP -->|"QRコードで接続<br/>Wi-Fiで転送"| PHONE
 ```
 
+</details>
+
 実線は音楽・画像の取り込みや利用の流れ、点線は任意のオンライン曲情報取得です。既存音楽の登録は、すべてのファイルを別の場所へコピーするという意味ではありません。
 
 ## 実物のCDから始める流れ
@@ -55,4 +64,6 @@ flowchart LR
 
 ## GitHubでの掲載
 
-[README](README.md)の冒頭にも同じ構成図を掲載しています。図はMermaid形式のMarkdownで、GitHubのリポジトリページ上で表示できます。対応する記法は [GitHub公式の図の作成ガイド](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/creating-diagrams) を参照してください。
+[README](README.md)の冒頭にも同じ構成図を掲載しています。READMEでは全体が見えるPNG画像を表示し、タップ・クリックで高解像度画像を開きます。GitHubのREADMEには独自のポップアップ用スクリプトを置かず、通常の画像リンクを使っています。
+
+編集用のMermaidは上の折りたたみ欄に保持しています。変更後はPlaywrightとChromium系ブラウザーがある環境で `node tools/render-integration-diagram.cjs` を実行し、PNGを再生成できます。`PLAYWRIGHT_MODULE` と `DIAGRAM_BROWSER` でライブラリ・ブラウザーのパスを指定できます。図の記法は [GitHub公式の図の作成ガイド](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/creating-diagrams) を参照してください。
