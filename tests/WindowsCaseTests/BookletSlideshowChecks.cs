@@ -22,6 +22,7 @@ internal static class BookletSlideshowChecks
         void Check(bool condition,string name){if(!condition)throw new Exception(name);}
         var pages=Enumerable.Range(1,3).Select(i=>new BookletPage("Page "+i,"Page",()=>bitmap)).ToArray();
         var w=Make(pages);Wait((Task)Call(w,"ShowPageAsync",0,false)!);
+        Check(((Button)Field(w,"_print")!).IsEnabled,"Print enabled for loaded page");
         Call(w,"ToggleSlideshow");Check((bool)Field(w,"_slideshowPlaying")!,"Start");
         Check(((DispatcherTimer)Field(w,"_slideTimer")!).IsEnabled,"Timer start");
         Wait((Task)Call(w,"AdvanceSlideshowAsync")!);Check((int)Field(w,"_index")! == 1,"Next page");

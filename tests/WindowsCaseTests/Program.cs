@@ -12,6 +12,18 @@ internal static class Program
 {
     [STAThread] static void Main(string[] args)
     {
+        if(args.Length==2&&args[0]=="--booklet-print"){
+            try{BookletPrintChecks.Run(args[1]);}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
+        }
+        if(args.Length==2&&args[0]=="--drive-offset-lookup"){
+            try{var list=DriveOffsetLookup.Fetch(CancellationToken.None).GetAwaiter().GetResult();var result=DriveOffsetLookup.Find(list,args[1]);Console.WriteLine($"Entries: {list.Count}; {result.State}; {result.Message}");if(result.State!="found")Environment.ExitCode=2;}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
+        }
+        if(args.Length==3&&args[0]=="--accuraterip-device"){
+            try{AccurateRipChecks.Device(args[1],int.Parse(args[2],System.Globalization.CultureInfo.InvariantCulture));}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
+        }
+        if(args.Length==1&&args[0]=="--accuraterip"){
+            try{AccurateRipChecks.Run();}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
+        }
         if(args.Length==3&&args[0]=="--mobile-album-export"){
             _=new Application();var album=Directory.Exists(args[1])?ZipAlbumReader.OpenFolder(args[1]):ZipAlbumReader.Open(args[1]);
             var type=typeof(MainWindow).GetNestedType("AlbumListItem",BindingFlags.NonPublic)!;var model=Activator.CreateInstance(type,album)!;

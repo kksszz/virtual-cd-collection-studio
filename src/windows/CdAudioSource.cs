@@ -9,6 +9,18 @@ internal sealed class CdAudioSource : IDisposable
 {
     private readonly SafeFileHandle handle;
     internal CueAlbumReader.Disc Disc { get; }
+    internal string DriveIdentity
+    {
+        get{
+            try{
+                var descriptor=new byte[4096];int length=Control(0x2D1400,new byte[12],descriptor);
+                if(length<36)return "";
+                string Field(int at){int offset=BitConverter.ToInt32(descriptor,at);if(offset<36||offset>=length)return "";int end=Array.IndexOf(descriptor,(byte)0,offset,length-offset);return System.Text.Encoding.ASCII.GetString(descriptor,offset,(end<0?length:end)-offset).Trim();}
+                var parts=new[]{Field(12),Field(16),Field(20),Field(24)};
+                return string.IsNullOrWhiteSpace(parts[1])?"":string.Join(" | ",parts);
+            }catch(Win32Exception){return "";}
+        }
+    }
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
     private static extern SafeFileHandle CreateFile(string name,uint access,uint share,IntPtr security,uint creation,uint flags,IntPtr template);
     [DllImport("kernel32.dll", SetLastError=true)]

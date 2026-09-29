@@ -12,6 +12,7 @@ async function main() {
   if (!match) throw new Error('Editable Mermaid diagram not found');
   const browser = await chromium.launch({
     headless: true,
+    chromiumSandbox: true,
     ...(process.env.DIAGRAM_BROWSER ? { executablePath: process.env.DIAGRAM_BROWSER } : {}),
   });
   try {

@@ -25,6 +25,8 @@ internal sealed class BookletViewerWindow : Window
     private readonly Button _previous;
     private readonly Button _next;
     private readonly Button _slideshow;
+    private readonly Button _print;
+    private bool _printing;
     private readonly ComboBox _interval = new() { Width=76,Margin=new Thickness(6,3,3,3),VerticalContentAlignment=VerticalAlignment.Center };
     private readonly CheckBox _repeat = new() { Content=LocalizationService.Select("繰り返し","Repeat"),Foreground=Brushes.White,VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(8,3,8,3) };
     private readonly DispatcherTimer _slideTimer = new(DispatcherPriority.Background);
@@ -69,6 +71,8 @@ internal sealed class BookletViewerWindow : Window
         _interval.SelectedIndex=1;_interval.ToolTip=LocalizationService.Select("ページの表示間隔","Page display interval");toolbar.Children.Add(_interval);toolbar.Children.Add(_repeat);
         _interval.SelectionChanged+=(_,_)=>ScheduleSlide();
         _slideTimer.Tick+=async (_,_)=>await AdvanceSlideshowAsync();
+        _print=AddButton(LocalizationService.Select("印刷…","Print…"),Print);
+        _print.IsEnabled=false;_print.ToolTip=LocalizationService.Select("現在のページ・全ページ・指定範囲を印刷（Ctrl+P）","Print current page, all pages or a range (Ctrl+P)");
         AddButton(LocalizationService.Select("ジャケットを戻す (Esc)", "Insert booklet (Esc)"), Close);
         DockPanel.SetDock(toolbar, Dock.Top); layout.Children.Add(toolbar);
         _pageSurface.Background = new SolidColorBrush(Color.FromRgb(238, 235, 225));
@@ -120,7 +124,8 @@ internal sealed class BookletViewerWindow : Window
         _image.LostMouseCapture += (_, _) => { _dragStart = null; _image.Cursor = Cursors.Arrow; };
         PreviewKeyDown += (_, e) =>
         {
-            if (e.Key == Key.Escape) Close();
+            if (e.Key == Key.P && Keyboard.Modifiers==ModifierKeys.Control) Print();
+            else if (e.Key == Key.Escape) Close();
             else if (e.Key == Key.Space && !_interval.IsKeyboardFocusWithin && !_repeat.IsKeyboardFocusWithin) ToggleSlideshow();
             else if (e.Key is Key.Right or Key.PageDown) Navigate(1);
             else if (e.Key is Key.Left or Key.PageUp) Navigate(-1);
@@ -159,6 +164,7 @@ internal sealed class BookletViewerWindow : Window
 
     private void Navigate(int delta)
     {
+        if(_printing)return;
         StopSlideshow();
         if (_index >= 0 && _index + delta >= 0 && _index + delta < _booklet.Pages.Count)
         {
@@ -169,7 +175,7 @@ internal sealed class BookletViewerWindow : Window
 
     private async Task ShowPageAsync(int index, bool animateTurn = true)
     {
-        _slideTimer.Stop();_loading=true;_slideshow.IsEnabled=_slideshowPlaying;
+        _slideTimer.Stop();_loading=true;_slideshow.IsEnabled=_slideshowPlaying;_print.IsEnabled=false;
         var generation = ++_loadGeneration;
         _index = index; EndDrag();
         _previous.IsEnabled = index > 0; _next.IsEnabled = index < _booklet.Pages.Count - 1;
@@ -194,14 +200,14 @@ internal sealed class BookletViewerWindow : Window
         }
         finally
         {
-            if(!_closed&&generation==_loadGeneration){_loading=false;_slideshow.IsEnabled=_booklet.Pages.Count>1&&_image.Source is not null;ScheduleSlide();}
+            if(!_closed&&generation==_loadGeneration){_loading=false;_slideshow.IsEnabled=_booklet.Pages.Count>1&&_image.Source is not null;_print.IsEnabled=!_printing&&_image.Source is not null;ScheduleSlide();}
         }
     }
 
     private void ToggleSlideshow()
     {
         if(_slideshowPlaying){StopSlideshow();return;}
-        if(_closed||_loading||_booklet.Pages.Count<2||_image.Source is null)return;
+        if(_closed||_loading||_printing||_booklet.Pages.Count<2||_image.Source is null)return;
         _slideshowPlaying=true;_slideshow.Content=LocalizationService.Select("⏸ 一時停止","⏸ Pause");
         if(_index==_booklet.Pages.Count-1){_navigationDirection=1;_ = ShowPageAsync(0);}
         else ScheduleSlide();
@@ -230,6 +236,30 @@ internal sealed class BookletViewerWindow : Window
     }
 
     private void SetZoom(double zoom) { _zoom = Math.Clamp(zoom, .25, 8); ResizeImage(); }
+    private async void Print()
+    {
+        if(_closed||_loading||_printing||_index<0||_image.Source is null)return;
+        StopSlideshow();_printing=true;_print.IsEnabled=false;_slideshow.IsEnabled=false;
+        try{
+            var options=new BookletPrintWindow(_booklet.Pages.Count,_index){Owner=this};
+            if(options.ShowDialog()!=true)return;
+            var dialog=new PrintDialog();
+            if(dialog.ShowDialog()!=true)return;
+            var capabilities=dialog.PrintQueue.GetPrintCapabilities(dialog.PrintTicket);
+            var area=capabilities.PageImageableArea;
+            if(area is null||capabilities.OrientedPageMediaWidth is not double paperWidth||capabilities.OrientedPageMediaHeight is not double paperHeight)throw new InvalidOperationException(LocalizationService.Select("プリンターの用紙・印刷可能範囲を取得できません。プリンターや用紙設定を確認してください。","Cannot determine paper and printable area. Check the printer and paper settings."));
+            var pages=BookletPrintPaginator.Select(_booklet.Pages,options.FirstPage,options.LastPage);
+            var paginator=new BookletPrintPaginator(pages,new Size(paperWidth,paperHeight),new Rect(area.OriginWidth,area.OriginHeight,area.ExtentWidth,area.ExtentHeight),options.Settings);
+            _status.Text=LocalizationService.Select("印刷用の画像を確認しています…","Checking print images…");
+            await Task.Run(paginator.ValidatePages);
+            if(_closed)return;
+            // This is the only job-submission point, after both dialogs and preflight.
+            dialog.PrintDocument(paginator,Title);
+            _status.Text=LocalizationService.Select($"{pages.Count}ページを印刷キューへ送信しました。",$"Sent {pages.Count} pages to the print queue.");
+        }catch(Exception ex){
+            if(!_closed)MessageBox.Show(this,LocalizationService.Select("印刷処理を完了できませんでした。ジョブが送信された場合はプリンターのキューも確認してください。\n","Printing could not be completed. Check the printer queue for any submitted job.\n")+ex.Message,LocalizationService.Select("ブックレットの印刷","Booklet printing"),MessageBoxButton.OK,MessageBoxImage.Warning);
+        }finally{if(!_closed){_printing=false;_print.IsEnabled=!_loading&&_image.Source is not null;_slideshow.IsEnabled=!_loading&&_booklet.Pages.Count>1&&_image.Source is not null;}}
+    }
     private void PresentImage(BitmapSource bitmap, bool animateTurn, int direction = 1)
     {
         // Resize the page frame for the destination before animating. The old

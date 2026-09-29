@@ -1,12 +1,14 @@
-# Virtual CD Collection Studio
+# CDをPlayしよう。
+
+**Virtual CD Collection Studio**
 
 ## CDを丸ごと保存し、持ち出す
 
 音楽だけでなく、ジャケット・帯・ブックレット・ディスクの絵柄・包装まで。実物のCDと手持ちの音楽・画像を、一つのコレクションにまとめるWindowsアプリです。
 
-CDドライブから音楽を取り込み、スキャナーでパッケージを読み取り、画像を補正してアルバムとして管理。PCで再生・閲覧・3D鑑賞し、Wi-FiでAndroid版 **Virtual CD Player** へ転送すれば、外出先でも楽しめます。
+CDドライブから音楽を取り込み、スキャナーでパッケージを読み取り、画像を補正してアルバムとして管理。PCで再生・閲覧・3D鑑賞し、Wi-FiでAndroid版 **Virtual CD Player** へ転送すれば、外出先でも楽しめます。画像付きGLBモデルの書き出しに加え、Windows開発版ではブックレット画像を紙へ印刷できます。
 
-[![CD・音楽・画像・スキャナーから取り込み、Windowsで管理してAndroidへ持ち出す連携図](docs/images/integration-overview.png)](https://github.com/kksszz/virtual-cd-collection-studio/raw/refs/heads/main/docs/images/integration-overview.png)
+[![CD・音楽・画像・スキャナーから取り込み、Windowsで管理してAndroid・汎用3Dモデル・プリンターへ出力する連携図](docs/images/integration-overview.png)](https://github.com/kksszz/virtual-cd-collection-studio/raw/refs/heads/main/docs/images/integration-overview.png)
 
 構成図をタップ・クリックすると拡大画像を開けます。
 
@@ -79,6 +81,8 @@ Android版は [0.12.0リリース](https://github.com/kksszz/virtual-cd-collecti
 - アルバムの右クリック「プロパティ」で保存場所・サイズ・日時・音声情報を確認（場所を開く／パスのコピー）
 - 曲一覧・お気に入りの曲も右クリック「プロパティ」に対応。ZIP内の曲はZIPの場所と内部ファイル名・圧縮前後のサイズを区別して表示します（音声情報とZIP内サイズは登録時の情報）。
 - 3Dカバーフロー、CDラック、CDケースの開閉・CD取り出し、包装開封、画像パーツの手動割り当て
+- 画像を埋め込んだ標準GLB（glTF 2.0）モデルを書き出し、汎用3Dビューアーでも利用（[3D出力](docs/MOBILE_3D.md)）。
+- ブックレットビューアーから現在のページ・全ページ・指定範囲を紙へ印刷。用紙に収める／幅mm指定、プリンター・用紙・部数を選択できます（Windows開発版・[印刷](docs/BOOKLET_PRINTING.md)）。
 - 全画面アルバムブラウザー（タイル／3D CoverFlow／CDラック、検索・選択・再生を同期）
 - タグの一括編集、表形式コピー＆貼り付け、任意バックアップ
 - タグ編集表の選択範囲にある全大文字データを、`SOUL DOCTOR` → `Soul Doctor` のような表記へ変換
@@ -107,7 +111,7 @@ Android版は [0.12.0リリース](https://github.com/kksszz/virtual-cd-collecti
 - **保存先**：1枚組はアルバム直下、複数枚組はDisc1／Disc2などのフォルダーへ保存します。既存のアルバムやDiscは上書きしません。
 - **検証**：各ブロックを複数回読み取り、FLACは保存後の全デコードでPCMを照合します。MP3は全デコード・曲長・タグを確認します。
 
-通常の音楽CDが対象です。AccurateRip照合や読み取りオフセット補正には未対応で、読み取り結果が一致しても原盤との完全一致を保証するものではありません。対応範囲や安全性は [CD取り込みの詳細](docs/CD_IMPORT.md) を参照してください。
+通常の音楽CDが対象です。公開版v0.88.0はAccurateRip照合・読み取りオフセット補正に未対応です。追加開発版では公式一覧からのドライブ別補正値取得・手入力補正と曲別AccurateRip v1/v2照合を実装し、実機1台・音楽CD1枚（8曲）のオンライン一致を確認しました。読み取り結果が一致しても原盤全サンプルとの完全一致を保証するものではありません。対応範囲や安全性は [CD取り込みの詳細](docs/CD_IMPORT.md) を参照してください。
 
 ## スキャナーからの直接スキャン（Windows）
 

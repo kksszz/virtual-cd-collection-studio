@@ -62,6 +62,7 @@ internal sealed partial class CdImportWindow
     {
         bool ready = !busy && !previewTransition && !previewCloseRequested;
         controls.IsEnabled = ready;
+        lookupOffset.IsEnabled = ready && disc is not null && loadedDriveIdentity.Length>0;
         eject.IsEnabled = ready && drives.SelectedItem is string;
         start.IsEnabled = ready && disc is not null;
         previewToolbar.IsEnabled = ready && disc is not null;

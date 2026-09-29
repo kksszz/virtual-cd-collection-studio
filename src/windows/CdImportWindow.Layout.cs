@@ -50,6 +50,12 @@ internal sealed partial class CdImportWindow
         browse.Click+=(_,_)=>{var picker=new Microsoft.Win32.OpenFolderDialog{Title="CD取り込み先"};if(picker.ShowDialog(this)==true)destination.Text=picker.FolderName;};
         DockPanel.SetDock(browse,Dock.Right);folderRow.Children.Add(browse);folderRow.Children.Add(destination);
         FormRow("保存先",folderRow);
+        var verification=new WrapPanel{VerticalAlignment=VerticalAlignment.Center};verification.Children.Add(accurateRip);verification.Children.Add(offsetEnabled);verification.Children.Add(readOffset);
+        var units=Label("サンプル");units.Margin=new(8,0,16,0);verification.Children.Add(units);verification.Children.Add(lookupOffset);
+        FormRow("読み取り検証",verification);
+        var offsetRow=new DockPanel();DockPanel.SetDock(autoOffset,Dock.Left);offsetRow.Children.Add(autoOffset);
+        offsetDrive.TextWrapping=TextWrapping.NoWrap;offsetDrive.TextTrimming=TextTrimming.CharacterEllipsis;offsetDrive.VerticalAlignment=VerticalAlignment.Center;offsetRow.Children.Add(offsetDrive);
+        FormRow("ドライブ補正",offsetRow);
     }
 
     private static TextBlock Label(string text)=>new(){Text=text,VerticalAlignment=VerticalAlignment.Center,Foreground=new SolidColorBrush(Color.FromRgb(166,175,187))};
