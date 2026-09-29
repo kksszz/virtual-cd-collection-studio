@@ -31,7 +31,7 @@ internal sealed class DlnaDiscovery : IDisposable
     }
     internal static string[] Targets(string uuid)=>["upnp:rootdevice","uuid:"+uuid,DlnaProtocol.Device,DlnaProtocol.Cd,DlnaProtocol.Cm];
     private static string Usn(string uuid,string target)=>target=="uuid:"+uuid?target:"uuid:"+uuid+"::"+target;
-    internal static string Response(string uuid,string target,string location)=>$"HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nDATE: {DateTime.UtcNow.ToString("r",CultureInfo.InvariantCulture)}\r\nEXT:\r\nLOCATION: {location}\r\nSERVER: Windows/10 UPnP/1.0 VirtualCDCollectionStudio/0.88\r\nST: {target}\r\nUSN: {Usn(uuid,target)}\r\n\r\n";
+    internal static string Response(string uuid,string target,string location)=>$"HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nDATE: {DateTime.UtcNow.ToString("r",CultureInfo.InvariantCulture)}\r\nEXT:\r\nLOCATION: {location}\r\nSERVER: Windows/10 UPnP/1.0 VirtualCDCollectionStudio/0.89\r\nST: {target}\r\nUSN: {Usn(uuid,target)}\r\n\r\n";
     internal static (string Target,int Delay)? Search(string packet)
     {
         if(packet.Length>8192)return null;var lines=packet.Split("\r\n");if(lines[0]!="M-SEARCH * HTTP/1.1")return null;
@@ -67,7 +67,7 @@ internal sealed class DlnaDiscovery : IDisposable
     {
         foreach(var target in Targets(uuid))
         {
-            string headers=alive?$"CACHE-CONTROL: max-age=1800\r\nLOCATION: {location}\r\nSERVER: Windows/10 UPnP/1.0 VirtualCDCollectionStudio/0.88\r\n":"";
+            string headers=alive?$"CACHE-CONTROL: max-age=1800\r\nLOCATION: {location}\r\nSERVER: Windows/10 UPnP/1.0 VirtualCDCollectionStudio/0.89\r\n":"";
             var bytes=Encoding.ASCII.GetBytes($"NOTIFY * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nNT: {target}\r\nNTS: ssdp:{(alive?"alive":"byebye")}\r\nUSN: {Usn(uuid,target)}\r\n{headers}\r\n");udp.Send(bytes,bytes.Length,multicast);
         }
     }

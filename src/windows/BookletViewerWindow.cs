@@ -241,21 +241,16 @@ internal sealed class BookletViewerWindow : Window
         if(_closed||_loading||_printing||_index<0||_image.Source is null)return;
         StopSlideshow();_printing=true;_print.IsEnabled=false;_slideshow.IsEnabled=false;
         try{
-            var options=new BookletPrintWindow(_booklet.Pages.Count,_index){Owner=this};
+            var options=new BookletPrintWindow(_booklet.Pages.Count,_index,_booklet.Pages){Owner=this};
             if(options.ShowDialog()!=true)return;
-            var dialog=new PrintDialog();
-            if(dialog.ShowDialog()!=true)return;
-            var capabilities=dialog.PrintQueue.GetPrintCapabilities(dialog.PrintTicket);
-            var area=capabilities.PageImageableArea;
-            if(area is null||capabilities.OrientedPageMediaWidth is not double paperWidth||capabilities.OrientedPageMediaHeight is not double paperHeight)throw new InvalidOperationException(LocalizationService.Select("プリンターの用紙・印刷可能範囲を取得できません。プリンターや用紙設定を確認してください。","Cannot determine paper and printable area. Check the printer and paper settings."));
-            var pages=BookletPrintPaginator.Select(_booklet.Pages,options.FirstPage,options.LastPage);
-            var paginator=new BookletPrintPaginator(pages,new Size(paperWidth,paperHeight),new Rect(area.OriginWidth,area.OriginHeight,area.ExtentWidth,area.ExtentHeight),options.Settings);
+            var dialog=options.SelectedPrinter!;
+            var paginator=options.CreatePaginator();
             _status.Text=LocalizationService.Select("印刷用の画像を確認しています…","Checking print images…");
             await Task.Run(paginator.ValidatePages);
             if(_closed)return;
-            // This is the only job-submission point, after both dialogs and preflight.
+            // Settings and the live preview stay in one window. Submit only after its final confirmation.
             dialog.PrintDocument(paginator,Title);
-            _status.Text=LocalizationService.Select($"{pages.Count}ページを印刷キューへ送信しました。",$"Sent {pages.Count} pages to the print queue.");
+            _status.Text=LocalizationService.Select($"{paginator.PageCount}ページを印刷キューへ送信しました。",$"Sent {paginator.PageCount} pages to the print queue.");
         }catch(Exception ex){
             if(!_closed)MessageBox.Show(this,LocalizationService.Select("印刷処理を完了できませんでした。ジョブが送信された場合はプリンターのキューも確認してください。\n","Printing could not be completed. Check the printer queue for any submitted job.\n")+ex.Message,LocalizationService.Select("ブックレットの印刷","Booklet printing"),MessageBoxButton.OK,MessageBoxImage.Warning);
         }finally{if(!_closed){_printing=false;_print.IsEnabled=!_loading&&_image.Source is not null;_slideshow.IsEnabled=!_loading&&_booklet.Pages.Count>1&&_image.Source is not null;}}

@@ -72,7 +72,7 @@ internal static class AccurateRip
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(TimeSpan.FromSeconds(15));
         using var owned=supplied is null?new HttpClient():null;var client=supplied??owned!;
         try{
-            using var request=new HttpRequestMessage(HttpMethod.Get,id.Url);request.Headers.UserAgent.ParseAdd("VirtualCDCollectionStudio/0.88.0");
+            using var request=new HttpRequestMessage(HttpMethod.Get,id.Url);request.Headers.UserAgent.ParseAdd("VirtualCDCollectionStudio/0.89.0");
             using var response=await client.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,deadline.Token);
             if(response.StatusCode==HttpStatusCode.NotFound)return new("not-found","未登録（読み取り失敗ではありません）",[]);
             response.EnsureSuccessStatusCode();

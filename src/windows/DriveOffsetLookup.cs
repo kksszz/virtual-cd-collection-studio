@@ -57,7 +57,7 @@ internal static class DriveOffsetLookup
     {
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(TimeSpan.FromSeconds(15));
         using var owned=supplied is null?new HttpClient():null;var client=supplied??owned!;
-        using var request=new HttpRequestMessage(HttpMethod.Get,Source);request.Headers.UserAgent.ParseAdd("VirtualCDCollectionStudio/0.88.0");
+        using var request=new HttpRequestMessage(HttpMethod.Get,Source);request.Headers.UserAgent.ParseAdd("VirtualCDCollectionStudio/0.89.0");
         using var response=await client.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,deadline.Token).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();const int maximum=4*1024*1024;
         if(response.Content.Headers.ContentLength>maximum)throw new InvalidDataException("補正値一覧のサイズが大きすぎます。");

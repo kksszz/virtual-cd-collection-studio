@@ -6,17 +6,19 @@
 
 音楽だけでなく、ジャケット・帯・ブックレット・ディスクの絵柄・包装まで。実物のCDと手持ちの音楽・画像を、一つのコレクションにまとめるWindowsアプリです。
 
-CDドライブから音楽を取り込み、スキャナーでパッケージを読み取り、画像を補正してアルバムとして管理。PCで再生・閲覧・3D鑑賞し、Wi-FiでAndroid版 **Virtual CD Player** へ転送すれば、外出先でも楽しめます。画像付きGLBモデルの書き出しに加え、Windows開発版ではブックレット画像を紙へ印刷できます。
+CDドライブから音楽を取り込み、スキャナーでパッケージを読み取り、画像を補正してアルバムとして管理。PCで再生・閲覧・3D鑑賞し、Wi-FiでAndroid版 **Virtual CD Player** へ転送すれば、外出先でも楽しめます。画像付きGLBモデルの書き出しに加え、ブックレット画像を紙へ印刷できます。
 
 [![CD・音楽・画像・スキャナーから取り込み、Windowsで管理してAndroid・iPhoneとDLNA対応機器・汎用3Dモデル・プリンターへ出力する連携図](docs/images/integration-overview.png)](https://github.com/kksszz/virtual-cd-collection-studio/raw/refs/heads/main/docs/images/integration-overview.png)
 
-Windows開発版では、選択したアルバムを **DLNA／UPnP AVで家庭内LANへ配信**できます。iPhoneのVLC・mconnectなどの対応アプリやネットワークプレーヤー側で曲を選んで再生する方式です。設定で通知領域への常駐を有効にすれば、画面を閉じても配信を続けられます。専用iPhone版ではなく、実機互換性の確認はこれからです（[DLNA配信](docs/DLNA_SERVER.md)）。公開版v0.88.0には未搭載です。
+Windows v0.89.0では、選択したアルバムを **DLNA／UPnP AVで家庭内LANへ配信**できます。iPhoneのVLC・mconnectなどの対応アプリやネットワークプレーヤー側で曲を選んで再生する方式です。設定で通知領域への常駐を有効にすれば、画面を閉じても配信を続けられます。専用iPhone版ではなく、実機互換性の確認はこれからです（[DLNA配信](docs/DLNA_SERVER.md)）。配信と常駐は初期値OFFです。
 
 構成図をタップ・クリックすると拡大画像を開けます。Androidへの保存・持ち出しと、DLNAによる家庭内ストリーミングは別の機能です。
 
-Wi-Fi転送は同じ信頼できる家庭内LANで使用します。スキャナーには対応ドライバーが必要です。Android 0.12.0はデジパック2枚組の3D表示に対応しました。デジパックの生成・転送には対応するWindows開発版が必要で、公開版v0.88.0からは出力できません。
+Wi-Fi転送は同じ信頼できる家庭内LANで使用します。スキャナーには対応ドライバーが必要です。Windows v0.89.0とAndroid 0.12.0はデジパック2枚組の3D生成・転送・表示に対応します。更新後にWindowsで転送データを再準備し、GLBを再転送してください。
 
-取り込みから持ち出しまでの流れ・対応範囲は [連携概要](docs/INTEGRATION_OVERVIEW.md) を参照してください。公開版はWindows v0.88.0／Android 0.12.0です。旧リリースでは搭載機能が異なります。
+取り込みから持ち出しまでの流れ・対応範囲は [連携概要](docs/INTEGRATION_OVERVIEW.md) を参照してください。公開版は **[Windows v0.89.0](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/v0.89.0)**／**[Android 0.12.0](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/android-v0.12.0)** です。旧リリースでは搭載機能が異なります。
+
+Windows v0.89.0の追加機能：ドライブ別オフセット補正とAccurateRip照合、デジパックのAndroid転送、DLNA配信と通知領域への常駐、ブックレットの1・2・4・6・9ページ集約印刷と設定画面内の自動プレビュー。更新時は旧版を終了し、配布ZIPを新しいフォルダーへ展開してください。.NET同梱のWindows x64版で、設定・ライブラリは従来の保存場所から引き継ぎます。
 
 ZIP.MP3アルバムと一般的な音声ファイルの管理・再生にも対応しています。Windowsでコレクションを管理・編集し、Androidでは再生・鑑賞する使い方を想定しています。
 
@@ -41,7 +43,7 @@ Android 10以上向けの音楽プレーヤーです。現在は **0.12.0** で�
 - 音の設定：ギャップレス、原音忠実モード、イコライザー、音量ノーマライズ、低音・小音量向け補正、再生速度・ピッチ調整。
 - ジャケットビューアー：画像のページ送り、スワイプ、拡大・移動、縦横表示。マウスのドラッグ・ホイール操作にも対応。
 - 3Dケースビューアー：回転・ズーム、ケースの開閉、CDの出し入れ、帯・包装の着脱、ダブルタップで初期状態へ復帰。3D表示中も再生操作ができます。
-- デジパック2枚組（3面）の3D表示・順次開閉、2枚のCDとブックレットの取り出し・収納（対応するWindows開発版からのGLB転送が必要）。
+- デジパック2枚組（3面）の3D表示・順次開閉、2枚のCDとブックレットの取り出し・収納（Windows v0.89.0以降からのGLB転送が必要）。
 - 読み込み中の仮一覧・進捗表示、タグ情報のメモリーキャッシュ、画面移動時の不要な読み込みの中止。
 
 ### Windows版との連携・使い始め方
@@ -56,7 +58,7 @@ Android 10以上向けの音楽プレーヤーです。現在は **0.12.0** で�
 
 圧縮された音声エントリー、暗号化ZIP、ZIP64、分割ZIP、BIN/ISOはAndroid版では未対応です。通常フォルダーの単一FLAC＋CUEに対応しました（実音声の曲頭一致はAndroidでは未検証）。タグ編集や画像の加工・用途設定はWindows版で行います。タグキャッシュは永続化していますが、初回取得には時間がかかります。
 
-Android版は [0.12.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/android-v0.12.0)、Windows版は [v0.88.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/v0.88.0) から入手できます。Androidは従来と同じ署名を維持しています。更新時にアンインストールする必要はありません。
+Android版は [0.12.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/android-v0.12.0)、Windows版は [v0.89.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/v0.89.0) から入手できます。Androidは従来と同じ署名を維持しています。更新時にアンインストールする必要はありません。
 
 - [Android版の説明・ビルド手順](android-player/README.md)
 - [Windowsからの3Dデータ出力](docs/MOBILE_3D.md)
@@ -70,7 +72,7 @@ Android版は [0.12.0リリース](https://github.com/kksszz/virtual-cd-collecti
 
 - ZIP / ZIP.MP3内のMP3を展開管理せずに一覧化・再生
 - 音楽CDをFLAC／MP3へ取り込み。MusicBrainzの曲情報取得、各曲の試聴・シーク、CD取り出しに対応（[CD取り込み](docs/CD_IMPORT.md)）。
-- 選択したアルバムを家庭内LANへDLNA／UPnP AV配信。iPhoneの対応アプリ・ネットワークプレーヤー側から曲を選択。通知領域でのバックグラウンド常駐は設定でONにできます（[DLNA配信](docs/DLNA_SERVER.md)、Windows開発版・実機互換性未確認）。
+- 選択したアルバムを家庭内LANへDLNA／UPnP AV配信。iPhoneの対応アプリ・ネットワークプレーヤー側から曲を選択。通知領域でのバックグラウンド常駐は設定でONにできます（[DLNA配信](docs/DLNA_SERVER.md)、実機互換性未確認）。
 - スキャナーから複数枚を取り込み、自動切り抜き・角度・台形・円形補正後にアルバムへ保存（[スキャン](docs/ALBUM_SCANNING.md)）。
 - 標準CDケースに加え、デジパック2枚組（3面）のWindows用3D試作モデルをアルバムごとに選択（[デジパック](docs/DIGIPAK_MODEL.md)）。
 - 圧縮ZIP.MP3を無圧縮ZIP.MP3へ変換
@@ -85,7 +87,7 @@ Android版は [0.12.0リリース](https://github.com/kksszz/virtual-cd-collecti
 - 曲一覧・お気に入りの曲も右クリック「プロパティ」に対応。ZIP内の曲はZIPの場所と内部ファイル名・圧縮前後のサイズを区別して表示します（音声情報とZIP内サイズは登録時の情報）。
 - 3Dカバーフロー、CDラック、CDケースの開閉・CD取り出し、包装開封、画像パーツの手動割り当て
 - 画像を埋め込んだ標準GLB（glTF 2.0）モデルを書き出し、汎用3Dビューアーでも利用（[3D出力](docs/MOBILE_3D.md)）。
-- ブックレットビューアーから現在のページ・全ページ・指定範囲を紙へ印刷。用紙に収める／幅mm指定、プリンター・用紙・部数を選択できます（Windows開発版・[印刷](docs/BOOKLET_PRINTING.md)）。
+- ブックレットビューアーから現在のページ・全ページ・指定範囲を紙へ印刷。1・2・4・6・9ページ／枚の集約、幅mm・余白・画像間隔、設定画面内の自動プレビューに対応。集約を選ぶと「現在のページ」から全ページへ自動切り替えします（[印刷](docs/BOOKLET_PRINTING.md)）。
 - 全画面アルバムブラウザー（タイル／3D CoverFlow／CDラック、検索・選択・再生を同期）
 - タグの一括編集、表形式コピー＆貼り付け、任意バックアップ
 - タグ編集表の選択範囲にある全大文字データを、`SOUL DOCTOR` → `Soul Doctor` のような表記へ変換
@@ -114,7 +116,7 @@ Android版は [0.12.0リリース](https://github.com/kksszz/virtual-cd-collecti
 - **保存先**：1枚組はアルバム直下、複数枚組はDisc1／Disc2などのフォルダーへ保存します。既存のアルバムやDiscは上書きしません。
 - **検証**：各ブロックを複数回読み取り、FLACは保存後の全デコードでPCMを照合します。MP3は全デコード・曲長・タグを確認します。
 
-通常の音楽CDが対象です。公開版v0.88.0はAccurateRip照合・読み取りオフセット補正に未対応です。追加開発版では公式一覧からのドライブ別補正値取得・手入力補正と曲別AccurateRip v1/v2照合を実装し、実機1台・音楽CD1枚（8曲）のオンライン一致を確認しました。読み取り結果が一致しても原盤全サンプルとの完全一致を保証するものではありません。対応範囲や安全性は [CD取り込みの詳細](docs/CD_IMPORT.md) を参照してください。
+通常の音楽CDが対象です。Windows v0.89.0では公式一覧からのドライブ別補正値取得・手入力補正と曲別AccurateRip v1/v2照合に対応し、実機1台・音楽CD1枚（8曲）のオンライン一致を確認しました。補正値は機器ごとに保存し、保存済みの手動設定は自動取得で上書きしません。読み取り結果が一致しても原盤全サンプルとの完全一致を保証するものではありません。対応範囲や安全性は [CD取り込みの詳細](docs/CD_IMPORT.md) を参照してください。
 
 ## スキャナーからの直接スキャン（Windows）
 

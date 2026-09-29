@@ -7,6 +7,8 @@
 - [デジパック2枚組の3Dモデル](DIGIPAK_MODEL.md)
 - [モバイル同期](MOBILE_SYNC.md)
 - [モバイル3D出力](MOBILE_3D.md)
+- [ブックレット・ジャケット画像の印刷](BOOKLET_PRINTING.md)
+- [DLNA／UPnP AV配信](DLNA_SERVER.md)
 - [CUE対応](CUE_SUPPORT.md)
 - [自動ジャケット取得](AUTOMATIC_ARTWORK.md)
 - [フォルダーとZIPの変換](FOLDER_ZIP_CONVERSION.md)

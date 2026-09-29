@@ -117,7 +117,7 @@ internal sealed class DlnaServer : IDisposable
     private static async Task Headers(NetworkStream stream,int status,long length,string type,Dictionary<string,string>? extra,CancellationToken ct)
     {
         string reason=status switch{200=>"OK",206=>"Partial Content",400=>"Bad Request",404=>"Not Found",405=>"Method Not Allowed",406=>"Not Acceptable",412=>"Precondition Failed",413=>"Content Too Large",416=>"Range Not Satisfiable",431=>"Request Header Fields Too Large",503=>"Service Unavailable",_=>"Internal Server Error"};
-        var text=new StringBuilder($"HTTP/1.1 {status} {reason}\r\nContent-Length: {length}\r\nContent-Type: {type}\r\nConnection: close\r\nServer: Windows/10 UPnP/1.0 VirtualCDCollectionStudio/0.88\r\n");
+        var text=new StringBuilder($"HTTP/1.1 {status} {reason}\r\nContent-Length: {length}\r\nContent-Type: {type}\r\nConnection: close\r\nServer: Windows/10 UPnP/1.0 VirtualCDCollectionStudio/0.89\r\n");
         if(extra is not null)foreach(var pair in extra)text.Append(pair.Key).Append(": ").Append(pair.Value).Append("\r\n");text.Append("\r\n");await stream.WriteAsync(Encoding.ASCII.GetBytes(text.ToString()),ct);
     }
     private sealed record Subscription(string Sid,Uri Callback,IPAddress Peer,string Service,DateTime Expires);
