@@ -16,6 +16,7 @@ dotnet run --project tests/WindowsCaseTests -c Release --no-build -- --orientati
 dotnet run --project tests/WindowsCaseTests -c Release --no-build -- --perspective
 dotnet run --project tests/WindowsCaseTests -c Release --no-build -- --disc-crop
 dotnet run --project tests/WindowsCaseTests -c Release --no-build -- --library-scope
+dotnet run --project tests/WindowsCaseTests -c Release --no-build -- --backup-ui
 dotnet run --project tests/WindowsCaseTests -c Release --no-build -- --scan-resume
 dotnet run --project tests/WindowsCaseTests -c Release --no-build -- --digipak
 dotnet run --project tests/WindowsCaseTests -c Release --no-build -- --mobile-model

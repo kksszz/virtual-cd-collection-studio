@@ -46,18 +46,18 @@
       <TextBlock x:Name="FolderCountText" HorizontalAlignment="Right" Foreground="#A9B3C0" VerticalAlignment="Center"/>
     </DockPanel>
     <Border Grid.Row="3" Background="#1E2730" BorderBrush="#35516A" BorderThickness="1" CornerRadius="4" Padding="12,9" Margin="0,0,0,12">
-      <Grid>
-        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <StackPanel>
         <StackPanel>
           <TextBlock Text="データのバックアップと移行" FontWeight="SemiBold" FontSize="15"/>
-          <TextBlock Text="設定・ライブラリ情報・お気に入り・再生履歴・取得画像・保存歌詞を対象にします。音楽ファイルは含みません。"
+          <TextBlock Text="従来の小さな管理データ専用バックアップと、アプリ本体・選択した音楽フォルダーまで保存する完全バックアップを選べます。"
                      Foreground="#A9B3C0" FontSize="11" TextWrapping="Wrap" Margin="0,4,12,0"/>
         </StackPanel>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-          <Button Content="バックアップ作成" Click="CreateBackup_Click"/>
-          <Button Content="バックアップから復元" Click="RestoreBackup_Click"/>
-        </StackPanel>
-      </Grid>
+        <WrapPanel Margin="0,7,0,0">
+          <Button Content="完全バックアップ…" Click="FullBackup_Click"/>
+          <Button Content="管理データをバックアップ" Click="CreateBackup_Click"/>
+          <Button Content="管理データを復元" Click="RestoreBackup_Click"/>
+        </WrapPanel>
+      </StackPanel>
     </Border>
     <Border Grid.Row="4" Background="#1E2730" BorderBrush="#35516A" BorderThickness="1" CornerRadius="4" Padding="12,9" Margin="0,0,0,12">
       <StackPanel>

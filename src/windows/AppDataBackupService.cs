@@ -6,7 +6,12 @@ namespace ZipMp3Player;
 
 internal static class AppDataBackupService
 {
-    private static readonly string[] CoreFiles = ["settings.json", "library.json", "usage.json", "favorites.json", "library-events.json"];
+    private static readonly string[] CoreFiles =
+    [
+        "settings.json", "library.json", "usage.json", "favorites.json", "library-events.json",
+        "album-added.json", "cd-import.json", "mobile-sync.json", "dlna-device-id.txt",
+        "dlna-system-update-id.txt", "edit-backup-retention.json"
+    ];
     private static readonly string[] CoreDirectories = ["artwork", "lyrics", "cue-metadata"];
 
     public static void CreateBackup(string dataDirectory, string destination)
@@ -39,7 +44,7 @@ internal static class AppDataBackupService
     {
         var safetyDirectory = Path.Combine(dataDirectory, "restore-safety");
         Directory.CreateDirectory(safetyDirectory);
-        var safetyPath = Path.Combine(safetyDirectory, $"BeforeRestore-{DateTime.Now:yyyyMMdd-HHmmss}.zipmp3backup");
+        var safetyPath = Path.Combine(safetyDirectory, $"BeforeRestore-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.zipmp3backup");
         CreateBackup(dataDirectory, safetyPath);
 
         var staging = Path.Combine(dataDirectory, "restore-staging-" + Guid.NewGuid().ToString("N"));

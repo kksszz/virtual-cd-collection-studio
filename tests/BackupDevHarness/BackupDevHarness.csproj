@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\..\src\windows\AppDataBackupService.cs" Link="AppDataBackupService.cs" />
+    <Compile Include="..\..\src\windows\CollectionBackupService.cs" Link="CollectionBackupService.cs" />
   </ItemGroup>
 </Project>

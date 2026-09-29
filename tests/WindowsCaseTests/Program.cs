@@ -12,6 +12,9 @@ internal static class Program
 {
     [STAThread] static void Main(string[] args)
     {
+        if(args.Length==1&&args[0]=="--backup-ui"){
+            try{BackupUiChecks.Run();}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
+        }
         if(args.Length==2&&args[0]=="--dlna-ui"){
             try{DlnaUiChecks.Run(args[1]);}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
         }

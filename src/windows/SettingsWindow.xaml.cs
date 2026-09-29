@@ -201,6 +201,13 @@ public partial class SettingsWindow : Window
         catch (Exception ex) { MessageBox.Show(this, ex.Message, LocalizationService.Select("バックアップできません", "Backup Failed"), MessageBoxButton.OK, MessageBoxImage.Warning); }
     }
 
+    private void FullBackup_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new CollectionBackupWindow(_dataDirectory, AppContext.BaseDirectory,
+            _folders.Select(folder => folder.Path)) { Owner = this };
+        dialog.ShowDialog();
+    }
+
     private void RestoreBackup_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog
