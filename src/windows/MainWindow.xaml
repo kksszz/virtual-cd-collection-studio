@@ -84,6 +84,7 @@
         <Button Content="&#xE81C;" AutomationProperties.Name="再生履歴" Click="Usage_Click" Style="{StaticResource HeaderNavigationButton}" ToolTip="再生履歴・Usageを表示"/>
         <Button Content="&#xE734;" AutomationProperties.Name="お気に入り" Click="Favorites_Click" Style="{StaticResource HeaderNavigationButton}" ToolTip="お気に入り：曲・アルバムを一覧から連続再生"/>
         <Button x:Name="MobileSyncToolbarButton" Content="&#xE895;" AutomationProperties.Name="モバイル同期" Click="MobileSync_Click" Style="{StaticResource HeaderNavigationButton}" ToolTip="モバイル同期（Alt+M）：音楽・画像・3Dを一括転送"/>
+        <Button x:Name="DlnaToolbarButton" Content="&#xE968;" AutomationProperties.Name="DLNA配信" Click="Dlna_Click" Style="{StaticResource HeaderNavigationButton}" ToolTip="DLNA配信：iPhone・ネットワークプレーヤーから曲を選んで再生"/>
         <Button x:Name="AlbumBrowserButton" Content="&#xE80A;" AutomationProperties.Name="アルバムブラウザー" Click="OpenAlbumBrowser_Click"
                 Style="{StaticResource HeaderNavigationButton}" ToolTip="アルバムブラウザー・3D CoverFlow・CDラック・Attractモード"/>
         <Button Content="&#xE958;" AutomationProperties.Name="CD取り込み" Click="CdImport_Click" Style="{StaticResource HeaderNavigationButton}" ToolTip="CD取り込み：音楽CDをFLAC・MP3へ取り込む"/>

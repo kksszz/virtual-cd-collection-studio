@@ -22,6 +22,7 @@ public partial class SettingsWindow : Window
     public bool RestoreCompleted { get; private set; }
     public string? RestoreSafetyBackupPath { get; private set; }
     public bool MinimizeOnClose => MinimizeOnCloseCheck.IsChecked == true;
+    public bool DlnaRunInTrayOnClose { get=>DlnaTrayCheck.IsChecked==true;set=>DlnaTrayCheck.IsChecked=value; }
     public bool AutomaticArtworkEnabled
     {
         get => AutomaticArtworkCheck.IsChecked == true;

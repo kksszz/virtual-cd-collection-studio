@@ -89,6 +89,10 @@
           </StackPanel>
           <TextBlock Text="アプリの動作" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Center"/>
         </DockPanel>
+        <CheckBox x:Name="DlnaTrayCheck" Margin="0,8,0,4"
+                  ToolTip="配信を手動で開始した場合のみ、×で画面を隠して配信を続けます。通知領域から表示・配信停止・終了できます。次回起動時の配信はOFFです。">
+          <TextBlock Text="DLNA配信中は、閉じてもバックグラウンドで動作する（通知領域に常駐）" TextWrapping="Wrap"/>
+        </CheckBox>
         <CheckBox x:Name="MinimizeOnCloseCheck" Content="右上の×で終了せず、タスクバーへ最小化する"
                   Margin="0,7,0,0" ToolTip="再生を続けたまま最小化します。終了は設定画面の［アプリを終了］を使用します。"/>
         <CheckBox x:Name="AutomaticArtworkCheck" Content="画像のないアルバムのジャケットを自動取得する" Margin="0,7,0,0"

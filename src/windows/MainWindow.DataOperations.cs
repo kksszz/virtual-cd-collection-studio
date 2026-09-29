@@ -18,6 +18,7 @@ public partial class MainWindow
     {
         _dataOperations.RequestClose();
         _scanCancellation?.Cancel(); // Read-only discovery must not hold a write-operation scope open.
+        _dlnaPrepareCancellation?.Cancel();
         _automaticArtworkTimer?.Stop();
         _automaticArtworkCancellation?.Cancel();
         IsEnabled = false;

@@ -3,6 +3,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Virtual CD Collection Studio</AssemblyName>
@@ -19,6 +20,10 @@
     <AssemblyVersion>0.88.0.0</AssemblyVersion>
     <FileVersion>0.88.0.0</FileVersion>
   </PropertyGroup>
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
   <ItemGroup>
     <Compile Remove="ScannerTwainBridge\**\*.cs" />
     <None Include="obj\ScannerTools\ScannerTwainBridge.exe" Link="ScannerTools\ScannerTwainBridge.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />

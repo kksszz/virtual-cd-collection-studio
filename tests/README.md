@@ -6,6 +6,8 @@
 
 ```powershell
 dotnet build tests/WindowsCaseTests -c Release
+dotnet run --project tests/WindowsCaseTests -c Release --no-build -- --dlna
+dotnet run --project tests/WindowsCaseTests -c Release --no-build -- --dlna-ui artifacts/dlna-ui
 dotnet run --project tests/WindowsCaseTests -c Release --no-build -- --cd-import
 dotnet run --project tests/WindowsCaseTests -c Release --no-build -- --accuraterip
 dotnet run --project tests/WindowsCaseTests -c Release --no-build -- --booklet-print artifacts/booklet-print
@@ -26,6 +28,8 @@ AccurateRip実機診断は `--accuraterip-device S: 6` のようにドライブ�
 ドライブ補正の公式一覧取得を確認する診断は `--drive-offset-lookup "hp HLDS | DVDROM DUD1N | MDM2 | "` です。一覧を取得して完全一致検索するだけで、ドライブの読み取りや設定変更は行いません。`--accuraterip` は一覧の解析・一致条件・除外条件も検証し、`--cd-import-ui` は自動設定・保存済み設定の保護・通信失敗・画面幅をテスト用設定で確認します。
 
 `--booklet-print` はプリンターへ送信しない検証です。ページ範囲・用紙に収める／mm幅指定・余白・印刷可能領域・読み込み失敗・設定入力を確認し、指定フォルダーへPNGとテスト用XPSを生成します。物理印刷やPDFプリンターのダイアログは呼びません。
+
+`--dlna` は合成データとループバック接続でHTTP・SOAP・SSDP・イベント通知・ZIP配信・停止を確認します。実際のLANや音楽ライブラリは公開しません。`--dlna-ui artifacts/dlna-ui` は自動でテスト専用設定を使い、通常幅／最小幅の画面をPNGへ保存し、通知領域への常駐・復帰・×での配信継続・明示終了時の解放を確認します。一時的に試験用の通知アイコンを作りますが、起動中の通常アプリは操作しません。
 
 ## その他のテスト
 

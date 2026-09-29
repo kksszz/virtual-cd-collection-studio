@@ -8,9 +8,11 @@
 
 CDドライブから音楽を取り込み、スキャナーでパッケージを読み取り、画像を補正してアルバムとして管理。PCで再生・閲覧・3D鑑賞し、Wi-FiでAndroid版 **Virtual CD Player** へ転送すれば、外出先でも楽しめます。画像付きGLBモデルの書き出しに加え、Windows開発版ではブックレット画像を紙へ印刷できます。
 
-[![CD・音楽・画像・スキャナーから取り込み、Windowsで管理してAndroid・汎用3Dモデル・プリンターへ出力する連携図](docs/images/integration-overview.png)](https://github.com/kksszz/virtual-cd-collection-studio/raw/refs/heads/main/docs/images/integration-overview.png)
+[![CD・音楽・画像・スキャナーから取り込み、Windowsで管理してAndroid・iPhoneとDLNA対応機器・汎用3Dモデル・プリンターへ出力する連携図](docs/images/integration-overview.png)](https://github.com/kksszz/virtual-cd-collection-studio/raw/refs/heads/main/docs/images/integration-overview.png)
 
-構成図をタップ・クリックすると拡大画像を開けます。
+Windows開発版では、選択したアルバムを **DLNA／UPnP AVで家庭内LANへ配信**できます。iPhoneのVLC・mconnectなどの対応アプリやネットワークプレーヤー側で曲を選んで再生する方式です。設定で通知領域への常駐を有効にすれば、画面を閉じても配信を続けられます。専用iPhone版ではなく、実機互換性の確認はこれからです（[DLNA配信](docs/DLNA_SERVER.md)）。公開版v0.88.0には未搭載です。
+
+構成図をタップ・クリックすると拡大画像を開けます。Androidへの保存・持ち出しと、DLNAによる家庭内ストリーミングは別の機能です。
 
 Wi-Fi転送は同じ信頼できる家庭内LANで使用します。スキャナーには対応ドライバーが必要です。Android 0.12.0はデジパック2枚組の3D表示に対応しました。デジパックの生成・転送には対応するWindows開発版が必要で、公開版v0.88.0からは出力できません。
 
@@ -68,6 +70,7 @@ Android版は [0.12.0リリース](https://github.com/kksszz/virtual-cd-collecti
 
 - ZIP / ZIP.MP3内のMP3を展開管理せずに一覧化・再生
 - 音楽CDをFLAC／MP3へ取り込み。MusicBrainzの曲情報取得、各曲の試聴・シーク、CD取り出しに対応（[CD取り込み](docs/CD_IMPORT.md)）。
+- 選択したアルバムを家庭内LANへDLNA／UPnP AV配信。iPhoneの対応アプリ・ネットワークプレーヤー側から曲を選択。通知領域でのバックグラウンド常駐は設定でONにできます（[DLNA配信](docs/DLNA_SERVER.md)、Windows開発版・実機互換性未確認）。
 - スキャナーから複数枚を取り込み、自動切り抜き・角度・台形・円形補正後にアルバムへ保存（[スキャン](docs/ALBUM_SCANNING.md)）。
 - 標準CDケースに加え、デジパック2枚組（3面）のWindows用3D試作モデルをアルバムごとに選択（[デジパック](docs/DIGIPAK_MODEL.md)）。
 - 圧縮ZIP.MP3を無圧縮ZIP.MP3へ変換

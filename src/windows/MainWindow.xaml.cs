@@ -165,6 +165,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         AccessKeyManager.Register("M", MobileSyncToolbarButton);
         Closed += (_, _) => AccessKeyManager.Unregister("M", MobileSyncToolbarButton);
+        Closed += (_, _) => DisposeDlna();
         InitializeSeekTimePreview();
         LocalizationService.Apply(this);
         AlbumCoverFlow.PlaybackActiveProvider = IsAlbumActivelyPlaying;
@@ -530,6 +531,7 @@ public partial class MainWindow : Window
         var dialog = new SettingsWindow(_folders, _disabledFolders, _settings.MinimizeOnClose,
             DataDirectory, previousLanguage, _settings.TagBackupEnabled, _settings.TagBackupFolder, _settings.AutoCleanupEditBackups) { Owner = this,
                 LibraryAlbums = _albums.Select(item => item.Album).ToArray(),
+                DlnaRunInTrayOnClose = _settings.DlnaRunInTrayOnClose,
                 AutomaticArtworkEnabled = _settings.AutomaticArtworkEnabled,
                 AutomaticArtworkPaused = _settings.AutomaticArtworkPaused };
         if (dialog.ShowDialog() != true)
@@ -539,6 +541,7 @@ public partial class MainWindow : Window
             return;
         }
         _settings.MinimizeOnClose = dialog.MinimizeOnClose;
+        _settings.DlnaRunInTrayOnClose = dialog.DlnaRunInTrayOnClose;
         _settings.DisplayLanguage = dialog.DisplayLanguage;
         _settings.TagBackupEnabled = dialog.TagBackupEnabled;
         _settings.TagBackupFolder = dialog.TagBackupFolder;
@@ -6077,6 +6080,12 @@ public partial class MainWindow : Window
             StopPlayback(resetPosition: false);
             return;
         }
+        if (!_forceClose && _settings.DlnaRunInTrayOnClose && _dlnaServer is not null)
+        {
+            e.Cancel=true;
+            TryHideDlnaToTray(); // A failed icon creation leaves the window visible and reachable.
+            return;
+        }
         if (!_forceClose && _settings.MinimizeOnClose)
         {
             e.Cancel = true;
@@ -6109,6 +6118,7 @@ public partial class MainWindow : Window
         public List<string> MusicFolders { get; set; } = [];
         public List<string> DisabledMusicFolders { get; set; } = [];
         public bool MinimizeOnClose { get; set; }
+        public bool DlnaRunInTrayOnClose { get; set; }
         public bool TagBackupEnabled { get; set; }
         public bool AutoCleanupEditBackups { get; set; } = true;
         public string TagBackupFolder { get; set; } = "";
