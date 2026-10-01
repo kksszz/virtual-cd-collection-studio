@@ -1,5 +1,8 @@
 using System.IO;
 using System.Reflection;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Threading;
 using NAudio.Wave;
 using ZipMp3Player;
 internal static class CdPreviewChecks
@@ -40,6 +43,38 @@ internal static class CdPreviewChecks
         }finally{Task.Run(silentPlayer.Dispose).GetAwaiter().GetResult();}
         if(outputReleases!=1)throw new Exception("Preview output did not release source");
         Console.WriteLine("PASS asynchronous audio output and stop/release (silent fixture)");
+        _=Application.Current??new Application();
+        var priorContext=SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
+        int closeReleases=0;
+        var closeSource=new CdTrackPreviewSource(silentDisc,1,(_,count)=>new byte[count*2352],()=>closeReleases++);
+        var closePlayer=Task.Run(()=>(CdTrackPreviewPlayer)Activator.CreateInstance(typeof(CdTrackPreviewPlayer),BindingFlags.NonPublic|BindingFlags.Instance,null,[closeSource],null)!).GetAwaiter().GetResult();
+        var closeWindow=new CdImportWindow(Path.GetTempPath());
+        var flags=BindingFlags.NonPublic|BindingFlags.Instance;
+        ((CheckBox)typeof(CdImportWindow).GetField("readOnOpen",flags)!.GetValue(closeWindow)!).IsChecked=false;
+        typeof(CdImportWindow).GetField("previewPlayer",flags)!.SetValue(closeWindow,closePlayer);
+        ((WaveOutEvent)typeof(CdTrackPreviewPlayer).GetField("output",flags)!.GetValue(closePlayer)!).Volume=0;
+        bool closed=false;closeWindow.Closed+=(_,_)=>closed=true;
+        closeWindow.Show();closePlayer.Play();closeWindow.Close();
+        var frame=new DispatcherFrame();var deadline=DateTime.UtcNow.AddSeconds(8);
+        var timer=new DispatcherTimer{Interval=TimeSpan.FromMilliseconds(25)};
+        timer.Tick+=(_,_)=>{if(closed||DateTime.UtcNow>deadline)frame.Continue=false;};
+        timer.Start();Dispatcher.PushFrame(frame);timer.Stop();
+        if(!closed||closeReleases!=1)throw new Exception("Closing import window did not stop and release CD preview");
+        Console.WriteLine("PASS closing CD import window stops preview and releases drive");
+        var busyWindow=new CdImportWindow(Path.GetTempPath());
+        ((CheckBox)typeof(CdImportWindow).GetField("readOnOpen",flags)!.GetValue(busyWindow)!).IsChecked=false;
+        bool busyClosed=false;busyWindow.Closed+=(_,_)=>busyClosed=true;
+        busyWindow.Show();
+        typeof(CdImportWindow).GetMethod("Run",flags)!.Invoke(busyWindow,[new Func<CancellationToken,Task>(token=>Task.Delay(Timeout.Infinite,token))]);
+        busyWindow.Close();
+        frame=new DispatcherFrame();deadline=DateTime.UtcNow.AddSeconds(8);
+        timer=new DispatcherTimer{Interval=TimeSpan.FromMilliseconds(25)};
+        timer.Tick+=(_,_)=>{if(busyClosed||DateTime.UtcNow>deadline)frame.Continue=false;};
+        timer.Start();Dispatcher.PushFrame(frame);timer.Stop();
+        if(!busyClosed)throw new Exception("Closing during import did not cancel operation and close window");
+        Console.WriteLine("PASS closing during import cancels work and closes window");
+        SynchronizationContext.SetSynchronizationContext(priorContext);
         if(drive is not null){
             CueAlbumReader.Disc real;using(var cd=new CdAudioSource(drive))real=cd.Disc;
             using(var source=CdTrackPreviewSource.Open(drive,real,1)){var data=new byte[2352*16];if(source.Read(data,0,data.Length)!=data.Length)throw new Exception("Real preview read failed");}

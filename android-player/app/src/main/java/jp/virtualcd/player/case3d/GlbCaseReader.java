@@ -34,15 +34,16 @@ final class GlbCaseReader {
     }
     private CasePackage decode()throws Exception {
         JSONObject metadata=root.getJSONObject("extras").getJSONObject("virtualCd");
-        if(!Arrays.asList("jewel-case-glb-1","jewel-case-glb-2","digipak-two-disc-glb-1").contains(metadata.optString("profile")))throw invalid(jp.virtualcd.player.LanguageStrings.text("未対応のケースプロファイル","unsupported case profile"));
+        if(!Arrays.asList("jewel-case-glb-1","jewel-case-glb-2","digipak-two-disc-glb-1","digipak-three-disc-glb-1","multi-case-24mm-glb-1").contains(metadata.optString("profile")))throw invalid(jp.virtualcd.player.LanguageStrings.text("未対応のケースプロファイル","unsupported case profile"));
         if(!Arrays.asList("Black","White","Gray","Clear").contains(metadata.optString("tray")))throw invalid(jp.virtualcd.player.LanguageStrings.text("トレイ","tray"));
         CasePackage data=new CasePackage(metadata);
         try{
             JSONArray images=root.optJSONArray("images");List<String> roles=new ArrayList<>();
             if(images!=null){if(images.length()>(data.desktopGeometry?32:CasePackage.ROLES.size()))throw invalid(jp.virtualcd.player.LanguageStrings.text("画像数","image count"));
                 for(int i=0;i<images.length();i++){JSONObject image=images.getJSONObject(i);String role=image.getString("name");
-                    boolean digipakRole=data.digipak&&Arrays.asList("disc2","innerLeft","outerRight","trays","leftFold","rightFold").contains(role);
-                    if((!CasePackage.ROLES.contains(role)&&!digipakRole&&!(data.desktopGeometry&&role.matches("detail[0-9]{1,2}")))||data.images.containsKey(role)||image.has("uri")||!"image/png".equals(image.getString("mimeType")))throw invalid(jp.virtualcd.player.LanguageStrings.text("画像用途","image role"));
+                    boolean digipakRole=data.digipak&&Arrays.asList("disc2","disc3","innerLeft","outerRight","outerFarRight","trays","tray1","tray2","tray3","leftFold","rightFold","farFold").contains(role);
+                    boolean multiRole=data.multiCase&&role.matches("multi(Front|Back|FrontLeft|FrontRight|BackLeft|BackRight|Disc[1-4]|BookletFront|BookletBack)");
+                    if((!CasePackage.ROLES.contains(role)&&!digipakRole&&!multiRole&&!(data.desktopGeometry&&role.matches("detail[0-9]{1,2}")))||data.images.containsKey(role)||image.has("uri")||!"image/png".equals(image.getString("mimeType")))throw invalid(jp.virtualcd.player.LanguageStrings.text("画像用途","image role"));
                     byte[] png=view(image.getInt("bufferView"),5*1024*1024);BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(png,0,png.length,options);
                     if(options.outWidth<1||options.outHeight<1||options.outWidth>1024||options.outHeight>1024||!"image/png".equals(options.outMimeType))throw invalid(jp.virtualcd.player.LanguageStrings.text("画像解像度","image resolution"));
                     options.inJustDecodeBounds=false;options.inScaled=false;Bitmap bitmap=BitmapFactory.decodeByteArray(png,0,png.length,options);if(bitmap==null)throw invalid(jp.virtualcd.player.LanguageStrings.text("画像デコード","image decoding"));data.images.put(role,bitmap);roles.add(role);
@@ -56,14 +57,14 @@ final class GlbCaseReader {
             JSONObject sceneRoot=nodes.getJSONObject(0);JSONArray scale=sceneRoot.getJSONArray("scale");
             if(scale.length()!=3)throw invalid(jp.virtualcd.player.LanguageStrings.text("単位","units"));for(int i=0;i<3;i++)if(Math.abs(scale.getDouble(i)-.1)>1e-6)throw invalid(jp.virtualcd.player.LanguageStrings.text("単位","units"));
             if(sceneRoot.has("matrix")||sceneRoot.has("rotation")||sceneRoot.has("translation"))throw invalid(jp.virtualcd.player.LanguageStrings.text("ルート変換","root transform"));
-            int partCount=data.digipak?8:7;
+            int partCount=data.threeDiscs?11:data.digipak||data.multiCase?8:7;
             JSONArray parts=sceneRoot.getJSONArray("children");if(parts.length()!=partCount)throw invalid(jp.virtualcd.player.LanguageStrings.text("部品数","part count"));
             Set<Integer> used=new HashSet<>();List<CaseGeometry.Mesh> geometry=new ArrayList<>();
             for(int p=0;p<partCount;p++){
                 if(parts.getInt(p)!=p+1)throw invalid(jp.virtualcd.player.LanguageStrings.text("部品順","part order"));JSONObject node=nodes.getJSONObject(p+1);
                 if(node.getJSONObject("extras").getInt("virtualCdPart")!=p||node.has("matrix")||!data.digipak&&(node.has("rotation")||node.has("translation"))||node.has("mesh"))throw invalid(jp.virtualcd.player.LanguageStrings.text("部品定義","part definition"));
                 if(data.digipak){checkPose(node,"translation",3);checkPose(node,"rotation",4);}
-                JSONArray initial=node.getJSONArray("scale");float expected=!data.digipak&&p>=4&&!data.wrapped?0:1;
+                JSONArray initial=node.getJSONArray("scale");float expected=!data.digipak&&!data.multiCase&&p>=4&&!data.wrapped?0:1;
                 if(initial.length()!=3)throw invalid(jp.virtualcd.player.LanguageStrings.text("初期状態","initial state"));for(int k=0;k<3;k++)if(initial.getDouble(k)!=expected)throw invalid(jp.virtualcd.player.LanguageStrings.text("初期状態","initial state"));
                 JSONArray children=node.optJSONArray("children");if(children==null)continue;
                 for(int j=0;j<children.length();j++){

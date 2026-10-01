@@ -28,6 +28,8 @@ public final class CaseSurface extends GLSurfaceView implements GLSurfaceView.Re
     private float yaw=-20,pitch=12,zoom=1,open,targetOpen,discRemoved,targetDisc,obiRemoved,targetObi,wrapRemoved,targetWrap,aspect=1,lastX,lastY;
     private long lastFrame;
     private float bookletRemoved,targetBooklet;
+    private float multiTurn,targetMultiTurn;
+    private final float[] multiRemoved=new float[4],targetMultiRemoved=new float[4];
     private int program,position,uv,normal,mvpUniform,modelUniform,colorUniform,textureUniform,finishUniform;
     private final float[] projection=new float[16],view=new float[16],root=new float[16],vp=new float[16],mvp=new float[16],tint=new float[4];
     private static final class Draw {final CaseGeometry.Mesh mesh;final float[] model=new float[16],bind;float alpha,depth,foldPose=Float.NaN;Draw(CaseGeometry.Mesh mesh,float[] bind){this.mesh=mesh;this.bind=bind;}}
@@ -40,12 +42,16 @@ public final class CaseSurface extends GLSurfaceView implements GLSurfaceView.Re
         });taps.setIsLongpressEnabled(false);
         pinch=new ScaleGestureDetector(context,new ScaleGestureDetector.SimpleOnScaleGestureListener(){@Override public boolean onScale(ScaleGestureDetector detector){if(hingeGesture)return true;float factor=detector.getScaleFactor();queueEvent(()->{zoom=Math.max(.5f,Math.min(3f,zoom*factor));requestRender();});return true;}});
     }
-    public void toggleOpen(){queueEvent(()->{if(targetOpen>0){targetOpen=0;targetDisc=0;targetBooklet=0;}else{targetOpen=1;targetObi=1;targetWrap=1;}wake();});}
+    public void toggleOpen(){queueEvent(()->{if(targetOpen>0){targetOpen=0;targetDisc=0;targetBooklet=0;targetMultiTurn=0;Arrays.fill(targetMultiRemoved,0);if(data.multiCase)targetObi=data.hasObi?0:1;}else{targetOpen=1;targetObi=1;targetWrap=1;}wake();});}
+    public void toggleMultiTurn(){if(!data.multiCase)return;queueEvent(()->{targetOpen=1;targetObi=1;Arrays.fill(targetMultiRemoved,0);targetMultiTurn=targetMultiTurn==0?1:0;wake();});}
+    public void toggleMultiDisc(int number){if(!data.multiCase||number<1||number>4)return;queueEvent(()->{targetOpen=1;targetObi=1;targetMultiTurn=number>=3?1:0;
+        for(int i=0;i<4;i++)if((i>=2)!=(number>=3))targetMultiRemoved[i]=0;
+        targetMultiRemoved[number-1]=targetMultiRemoved[number-1]==0?1:0;wake();});}
     public void toggleBooklet(){if(!data.digipak)return;queueEvent(()->{targetBooklet=targetBooklet==0?1:0;if(targetBooklet>0){targetOpen=1;targetObi=targetWrap=1;}wake();});}
     public void toggleDisc(){queueEvent(()->{targetDisc=targetDisc==0?1:0;if(targetDisc>0){targetOpen=1;targetObi=1;targetWrap=1;}wake();});}
-    public void toggleObi(){if(!data.hasObi)return;queueEvent(()->{targetObi=targetObi==0?1:0;targetWrap=1;if(targetObi==0){targetOpen=0;targetDisc=0;}wake();});}
-    public void toggleWrapping(){if(data.digipak)return;queueEvent(()->{targetWrap=targetWrap==0?1:0;if(targetWrap==0){targetOpen=0;targetDisc=0;targetObi=data.hasObi?0:1;}wake();});}
-    public void reset(){queueEvent(()->{yaw=-20;pitch=12;zoom=1;panX=panY=0;targetOpen=0;targetDisc=0;targetBooklet=0;targetObi=data.hasObi?0:1;targetWrap=data.wrapped?0:1;wake();});}
+    public void toggleObi(){if(!data.hasObi)return;queueEvent(()->{targetObi=targetObi==0?1:0;targetWrap=1;if(targetObi==0){targetOpen=0;targetDisc=0;targetMultiTurn=0;Arrays.fill(targetMultiRemoved,0);}wake();});}
+    public void toggleWrapping(){if(data.digipak||data.multiCase)return;queueEvent(()->{targetWrap=targetWrap==0?1:0;if(targetWrap==0){targetOpen=0;targetDisc=0;targetObi=data.hasObi?0:1;}wake();});}
+    public void reset(){queueEvent(()->{yaw=-20;pitch=12;zoom=1;panX=panY=0;targetOpen=0;targetDisc=0;targetBooklet=0;targetMultiTurn=0;Arrays.fill(targetMultiRemoved,0);targetObi=data.hasObi?0:1;targetWrap=data.wrapped?0:1;wake();});}
     private void wake(){lastFrame=0;requestRender();}
     @Override public boolean onGenericMotionEvent(MotionEvent event){
         if(event.getActionMasked()==MotionEvent.ACTION_SCROLL&&event.isFromSource(InputDevice.SOURCE_CLASS_POINTER)){
@@ -59,8 +65,9 @@ public final class CaseSurface extends GLSurfaceView implements GLSurfaceView.Re
         if(action==MotionEvent.ACTION_DOWN){discPull.reset();hingeGesture=false;hingeTriggered=false;}
         if(action==MotionEvent.ACTION_POINTER_DOWN&&event.getPointerCount()==2&&!discPull.captured()){
             float[] inverse=discHitInverse;
-            boolean captured=inverse!=null&&beginDisc(event,inverse,false);
-            if(!captured&&data.digipak&&secondDiscHitInverse!=null)captured=beginDisc(event,secondDiscHitInverse,true);
+            boolean captured=inverse!=null&&beginDisc(event,inverse,0);
+            if(!captured&&data.digipak&&secondDiscHitInverse!=null)captured=beginDisc(event,secondDiscHitInverse,1);
+            if(!captured&&data.threeDiscs&&secondDiscHitInverse!=null)captured=beginDisc(event,secondDiscHitInverse,2);
             if(captured){
                 MotionEvent cancel=MotionEvent.obtain(event);cancel.setAction(MotionEvent.ACTION_CANCEL);taps.onTouchEvent(cancel);pinch.onTouchEvent(cancel);cancel.recycle();
             }
@@ -95,8 +102,8 @@ public final class CaseSurface extends GLSurfaceView implements GLSurfaceView.Re
         if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL){lastPointerCount=0;hingeGesture=false;hingeTriggered=false;}
         return true;
     }
-    private boolean beginDisc(MotionEvent event,float[] inverse,boolean second){return discPull.begin(event.getPointerId(0),event.getX(0),event.getY(0),discRadius(inverse,event.getX(0),event.getY(0),second),event.getPointerId(1),event.getX(1),event.getY(1),discRadius(inverse,event.getX(1),event.getY(1),second));}
-    private float discRadius(float[] inverse,float x,float y,boolean second){
+    private boolean beginDisc(MotionEvent event,float[] inverse,int disc){return discPull.begin(event.getPointerId(0),event.getX(0),event.getY(0),discRadius(inverse,event.getX(0),event.getY(0),disc),event.getPointerId(1),event.getX(1),event.getY(1),discRadius(inverse,event.getX(1),event.getY(1),disc));}
+    private float discRadius(float[] inverse,float x,float y,int disc){
         float nx=x/Math.max(1,getWidth())*2-1,ny=1-y/Math.max(1,getHeight())*2;
         float[] a=new float[4],b=new float[4];Matrix.multiplyMV(a,0,inverse,0,new float[]{nx,ny,-1,1},0);Matrix.multiplyMV(b,0,inverse,0,new float[]{nx,ny,1,1},0);
         if(Math.abs(a[3])<.00001f||Math.abs(b[3])<.00001f)return Float.NaN;
@@ -105,11 +112,23 @@ public final class CaseSurface extends GLSurfaceView implements GLSurfaceView.Re
         float scale=1.42f/2.42f;
         float z=data.digipak?.028f:data.desktopGeometry?(-.177f*.136f)*scale:.012f;
         float t=(z-a[2])/dz;if(t<0||t>1)return Float.NaN;
-        float cx=data.digipak?(second?1.47f:-.01f):data.desktopGeometry?.044f*scale:.06f,cy=data.digipak?.005f:data.desktopGeometry?.004f*scale:0,r=data.digipak?.60f:data.desktopGeometry?1.018f*scale:.60f;
+        float cx=data.digipak?(disc==2?3.025f:disc==1?(data.threeDiscs?1.535f:1.47f):-.01f):data.desktopGeometry?.044f*scale:.06f,cy=data.digipak?.005f:data.desktopGeometry?.004f*scale:0,r=data.digipak?.60f:data.desktopGeometry?1.018f*scale:.60f;
         return (float)Math.hypot(a[0]+t*(b[0]-a[0])-cx,a[1]+t*(b[1]-a[1])-cy)/r;
     }
     private static float approach(float value,float target,float step){return value+Math.signum(target-value)*Math.min(Math.abs(target-value),step);}
     private boolean advance(float seconds){float step=seconds*2.4f;
+        if(data.multiCase){
+            obiRemoved=approach(obiRemoved,targetOpen==0&&open>0?1:targetObi,step);
+            if(targetOpen>open&&obiRemoved==1)open=approach(open,targetOpen,step*.7f);
+            boolean discsMoving=false;
+            for(int i=0;i<4;i++){float goal=targetMultiRemoved[i];if(goal>0&&(open<1||i>=2&&multiTurn<1||i<2&&multiTurn>0))goal=0;
+                multiRemoved[i]=approach(multiRemoved[i],goal,step);discsMoving|=multiRemoved[i]!=targetMultiRemoved[i];}
+            boolean occupied=false;for(float removed:multiRemoved)occupied|=removed>.001f;
+            if(!occupied&&targetMultiTurn<multiTurn)multiTurn=approach(multiTurn,targetMultiTurn,step*.7f);
+            if(!occupied&&targetMultiTurn>multiTurn&&open==1)multiTurn=approach(multiTurn,targetMultiTurn,step*.7f);
+            if(targetOpen<open&&multiTurn==0&&!occupied)open=approach(open,targetOpen,step*.7f);
+            return open!=targetOpen||multiTurn!=targetMultiTurn||discsMoving||obiRemoved!=targetObi;
+        }
         // Clearance sequence: film -> obi -> lid -> disc, reversed when closing.
         float wrapGoal=(targetOpen>0||open>0||discRemoved>0||(data.hasObi&&obiRemoved!=targetObi))?1:targetWrap;
         wrapRemoved=approach(wrapRemoved,wrapGoal,step);
@@ -128,7 +147,7 @@ public final class CaseSurface extends GLSurfaceView implements GLSurfaceView.Re
         android.graphics.Bitmap white=android.graphics.Bitmap.createBitmap(1,1,android.graphics.Bitmap.Config.ARGB_8888);white.eraseColor(android.graphics.Color.WHITE);upload(ids[index],white);textures.put("",ids[index++]);white.recycle();
         for(var entry:data.images.entrySet()){upload(ids[index],entry.getValue());textures.put(entry.getKey(),ids[index++]);}
         draws.clear();for(CaseGeometry.Mesh mesh:CaseGeometry.build(data)){
-            float[] bind=data.digipak&&mesh.part>=DigipakMotion.FOLD_LEFT?foldBinds.computeIfAbsent(mesh,m->{float[] values=new float[m.count*8];var buffer=m.vertices.duplicate();buffer.position(0);buffer.get(values);return values;}):new float[0];
+            float[] bind=data.digipak&&(mesh.part==DigipakMotion.FOLD_LEFT||mesh.part==DigipakMotion.FOLD_RIGHT||mesh.part==DigipakMotion.FOLD_FAR)?foldBinds.computeIfAbsent(mesh,m->{float[] values=new float[m.count*8];var buffer=m.vertices.duplicate();buffer.position(0);buffer.get(values);return values;}):new float[0];
             draws.add(new Draw(mesh,bind));
         }glEnable(GL_DEPTH_TEST);glEnable(GL_CULL_FACE);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);lastFrame=0;
     }
@@ -137,17 +156,17 @@ public final class CaseSurface extends GLSurfaceView implements GLSurfaceView.Re
     @Override public void onSurfaceChanged(GL10 unused,int width,int height){glViewport(0,0,width,height);aspect=(float)width/Math.max(1,height);}
     @Override public void onDrawFrame(GL10 unused){long now=android.os.SystemClock.uptimeMillis();float step=lastFrame==0?.016f:Math.min(.05f,(now-lastFrame)/1000f);lastFrame=now;boolean animating=advance(step);
         glClearColor(.055f,.075f,.095f,1);glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);glUseProgram(program);
-        Matrix.perspectiveM(projection,0,42,aspect,.5f,30);float distance=(3.0f+(data.digipak?3.5f:2.5f)*open+.35f*discRemoved+.5f*bookletRemoved)*Math.max(1,(data.digipak?1.0f:.8f)/aspect);
+        Matrix.perspectiveM(projection,0,42,aspect,.5f,30);float distance=(3.0f+(data.threeDiscs?4.5f:data.digipak?3.5f:data.multiCase?3.5f:2.5f)*open+.35f*discRemoved+.5f*bookletRemoved)*Math.max(1,(data.digipak||data.multiCase?1.0f:.8f)/aspect);
         Matrix.setLookAtM(view,0,0,0,distance,0,0,0,0,1,0);Matrix.multiplyMM(vp,0,projection,0,view,0);
         float visibleHeight=2*distance*(float)Math.tan(Math.toRadians(21));
         sideFacing=Math.abs(Math.cos(Math.toRadians(yaw)))<.55&&Math.abs(pitch)<55;
         Matrix.setIdentityM(root,0);Matrix.translateM(root,0,panX*visibleHeight*aspect,-panY*visibleHeight,0);Matrix.scaleM(root,0,zoom,zoom,zoom);Matrix.rotateM(root,0,pitch,1,0,0);Matrix.rotateM(root,0,yaw,0,1,0);Matrix.translateM(root,0,data.digipak?0:.55f*open,0,0);
-        if(open>.98f&&targetOpen==1&&discRemoved<.01f&&targetDisc==0){float[] transform=new float[16],inverse=new float[16];Matrix.multiplyMM(transform,0,vp,0,root,0);discHitInverse=Matrix.invertM(inverse,0,transform,0)?inverse:null;}else discHitInverse=null;
+        if(!data.multiCase&&open>.98f&&targetOpen==1&&discRemoved<.01f&&targetDisc==0){float[] transform=new float[16],inverse=new float[16];Matrix.multiplyMM(transform,0,vp,0,root,0);discHitInverse=Matrix.invertM(inverse,0,transform,0)?inverse:null;}else discHitInverse=null;
         secondDiscHitInverse=data.digipak?discHitInverse:null; // Both trays are flat when fully open.
         glUniform1i(textureUniform,0);glActiveTexture(GL_TEXTURE0);glEnableVertexAttribArray(position);glEnableVertexAttribArray(uv);glEnableVertexAttribArray(normal);
-        opaque.clear();transparent.clear();for(Draw draw:draws){CaseGeometry.Mesh mesh=draw.mesh;float visibility=data.digipak?1:mesh.part==CaseGeometry.OBI?1-obiRemoved:mesh.part>=CaseGeometry.FILM_TOP?1-wrapRemoved:1;if(visibility<=.001f)continue;draw.alpha=mesh.color[3]*visibility;
+        opaque.clear();transparent.clear();for(Draw draw:draws){CaseGeometry.Mesh mesh=draw.mesh;float visibility=data.multiCase?1:data.digipak?1:mesh.part==CaseGeometry.OBI?1-obiRemoved:mesh.part>=CaseGeometry.FILM_TOP?1-wrapRemoved:1;if(visibility<=.001f)continue;draw.alpha=mesh.color[3]*visibility;
             System.arraycopy(root,0,draw.model,0,16);float[] model=draw.model;
-            if(data.digipak){digipakPose(draw);}else {
+            if(data.multiCase){multiCasePose(draw);}else if(data.digipak){digipakPose(draw);}else {
             if(mesh.part==CaseGeometry.LID){float hx=data.desktopGeometry?-1.12660f*(1.42f/2.42f):-.69f,hz=data.desktopGeometry?0:.045f;Matrix.translateM(model,0,hx,0,hz);Matrix.rotateM(model,0,-155*open,0,1,0);Matrix.translateM(model,0,-hx,0,-hz);}
             if(mesh.part==CaseGeometry.DISC){float cx=data.desktopGeometry?.044f*(1.42f/2.42f):.06f,cy=data.desktopGeometry?.004f*(1.42f/2.42f):0;Matrix.translateM(model,0,.30f*discRemoved,.08f*discRemoved,.65f*discRemoved);Matrix.translateM(model,0,cx,cy,0);Matrix.rotateM(model,0,-25*discRemoved,1,0,0);Matrix.translateM(model,0,-cx,-cy,0);}
             if(mesh.part==CaseGeometry.OBI)Matrix.translateM(model,0,-1.2f*obiRemoved,0,.06f*obiRemoved);
@@ -162,18 +181,31 @@ public final class CaseSurface extends GLSurfaceView implements GLSurfaceView.Re
         transparent.sort(Comparator.comparingDouble(d->d.depth));glEnable(GL_BLEND);glDepthMask(false);for(Draw draw:transparent)draw(draw);glDepthMask(true);
         if(animating)requestRender();
     }
+    private void multiCasePose(Draw draw){
+        int part=draw.mesh.part;float[] model=draw.model;
+        float unit=(2.42f/142f)*(1.42f/2.42f),hinge=-65.75f*unit;
+        boolean center=part==1||part==2||part==3||part==4||part==5;
+        boolean front=part==2||part==3;
+        if(center){Matrix.translateM(model,0,hinge,0,-7*unit);Matrix.rotateM(model,0,-180*multiTurn,0,1,0);Matrix.translateM(model,0,-hinge,0,7*unit);}
+        if(front){Matrix.translateM(model,0,hinge,0,7*unit);Matrix.rotateM(model,0,-180*open+180*multiTurn,0,1,0);Matrix.translateM(model,0,-hinge,0,-7*unit);}
+        if(part>=3&&part<=6){float removed=multiRemoved[part-3];Matrix.translateM(model,0,.28f*removed,.08f*removed,.55f*removed);}
+        if(part==7)Matrix.translateM(model,0,-1.1f*obiRemoved,0,.05f*obiRemoved);
+    }
     private void digipakPose(Draw draw){
         int part=draw.mesh.part;float[] model=draw.model;
-        if(part>=DigipakMotion.FOLD_LEFT){
+        if(part==DigipakMotion.FOLD_LEFT||part==DigipakMotion.FOLD_RIGHT||part==DigipakMotion.FOLD_FAR){
             if(draw.foldPose==open)return;draw.foldPose=open;boolean right=part==DigipakMotion.FOLD_RIGHT;
-            for(int i=0;i<draw.bind.length;i+=8){float[] p=DigipakMotion.fold(right,open,draw.bind[i],draw.bind[i+2]);draw.mesh.vertices.put(i,p[0]);draw.mesh.vertices.put(i+2,p[1]);
+            for(int i=0;i<draw.bind.length;i+=8){float[] p=data.threeDiscs?DigipakMotion.fold3(part,open,draw.bind[i],draw.bind[i+2]):DigipakMotion.fold(right,open,draw.bind[i],draw.bind[i+2]);draw.mesh.vertices.put(i,p[0]);draw.mesh.vertices.put(i+2,p[1]);
                 float nz=draw.bind[i+7];draw.mesh.vertices.put(i+5,-p[2]*nz);draw.mesh.vertices.put(i+7,-p[3]*nz);}
             return;
         }
         boolean left=part==DigipakMotion.LEFT||part==DigipakMotion.BOOKLET,right=part==DigipakMotion.RIGHT||part==DigipakMotion.DISC2;
-        if(left||right){float x=right?.74f:-.75f,z=right?.045f:.05f;Matrix.translateM(model,0,x,0,z);Matrix.rotateM(model,0,right?DigipakMotion.rightAngle(open):DigipakMotion.leftAngle(open),0,1,0);Matrix.translateM(model,0,-x,0,-z);}
-        if(part==DigipakMotion.DISC1||part==DigipakMotion.DISC2){float cx=part==DigipakMotion.DISC1?-.01f:1.47f;Matrix.translateM(model,0,.30f*discRemoved,.08f*discRemoved,.65f*discRemoved);Matrix.translateM(model,0,cx,.005f,0);Matrix.rotateM(model,0,-25*discRemoved,1,0,0);Matrix.translateM(model,0,-cx,-.005f,0);}
-        if(part==DigipakMotion.BOOKLET)Matrix.translateM(model,0,0,1.25f*bookletRemoved,.06f*bookletRemoved);
+        boolean far=data.threeDiscs&&(part==DigipakMotion.FAR_RIGHT||part==DigipakMotion.DISC3);
+        if(right||far){float x=data.threeDiscs ? .7725f : .74f,z=data.threeDiscs ? .09f : .045f;Matrix.translateM(model,0,x,0,z);Matrix.rotateM(model,0,data.threeDiscs?DigipakMotion.rightAngle3(open):DigipakMotion.rightAngle(open),0,1,0);Matrix.translateM(model,0,-x,0,-z);}
+        if(far){Matrix.translateM(model,0,2.29f,0,.045f);Matrix.rotateM(model,0,DigipakMotion.farAngle3(open),0,1,0);Matrix.translateM(model,0,-2.29f,0,-.045f);}
+        if(left){float x=data.threeDiscs?-.78f:-.75f,z=data.threeDiscs ? .09f : .05f;Matrix.translateM(model,0,x,0,z);Matrix.rotateM(model,0,data.threeDiscs?DigipakMotion.leftAngle3(open):DigipakMotion.leftAngle(open),0,1,0);Matrix.translateM(model,0,-x,0,-z);}
+        if(part==DigipakMotion.DISC1||part==DigipakMotion.DISC2||part==DigipakMotion.DISC3){float cx=part==DigipakMotion.DISC1?-.01f:part==DigipakMotion.DISC2?(data.threeDiscs?1.535f:1.47f):3.025f;Matrix.translateM(model,0,.30f*discRemoved,.08f*discRemoved,.65f*discRemoved);Matrix.translateM(model,0,cx,.005f,0);Matrix.rotateM(model,0,-25*discRemoved,1,0,0);Matrix.translateM(model,0,-cx,-.005f,0);}
+        if(part==DigipakMotion.BOOKLET)Matrix.translateM(model,0,data.sideBooklet?-1.32f*bookletRemoved:0,data.sideBooklet?0:1.25f*bookletRemoved,.06f*bookletRemoved);
     }
     private void draw(Draw draw){CaseGeometry.Mesh mesh=draw.mesh;Matrix.multiplyMM(mvp,0,vp,0,draw.model,0);glUniformMatrix4fv(mvpUniform,1,false,mvp,0);glUniformMatrix4fv(modelUniform,1,false,draw.model,0);System.arraycopy(mesh.color,0,tint,0,4);tint[3]=draw.alpha;glUniform4fv(colorUniform,1,tint,0);glUniform1f(finishUniform,mesh.finish);
         glBindTexture(GL_TEXTURE_2D,textures.getOrDefault(mesh.texture,textures.get("")));mesh.vertices.position(0);glVertexAttribPointer(position,3,GL_FLOAT,false,32,mesh.vertices);mesh.vertices.position(3);glVertexAttribPointer(uv,2,GL_FLOAT,false,32,mesh.vertices);mesh.vertices.position(5);glVertexAttribPointer(normal,3,GL_FLOAT,false,32,mesh.vertices);glDrawArrays(GL_TRIANGLES,0,mesh.count);

@@ -1519,7 +1519,7 @@ public partial class MainWindow : Window
                 album.BackCoverThumbnail, album.SpineThumbnail,
                 album.RightSpineThumbnail, album.InlayThumbnail, album.DiscThumbnail, album.IsPlaying)
                 { LoadBooklet = album.HasFrontSpread ? album.LoadBooklet : null, SpineCard = album.SpineCardThumbnail, SpineCardReverse = album.SpineCardReverseThumbnail,
-                    SecondDiscImage = album.SecondDiscThumbnail, Digipak = album.Digipak })
+                    SecondDiscImage = album.SecondDiscThumbnail, Digipak = album.Digipak, MultiCase = album.MultiCase })
             .ToList();
         AlbumCoverFlow.SetItems(items, selectedPath);
     }
@@ -1718,12 +1718,26 @@ public partial class MainWindow : Window
 
     private void AlbumCoverFlow_DiscActivated(object? sender, JewelCaseCoverFlowSelectionChangedEventArgs e)
     {
-        if (IsAlbumActivelyPlaying(e.Item.Key))
+        if (IsAlbumActivelyPlaying(e.Item.Key) && (e.DiscNumber is null
+            || (_playingAlbum is not null && _currentIndex>=0 && _currentIndex<_playingAlbum.Tracks.Count
+                && Math.Max(1,_playingAlbum.Tracks[_currentIndex].DiscNumber)==e.DiscNumber)))
         {
             StopPlayback(resetPosition: true);
             return;
         }
-        AlbumCoverFlow_ItemActivated(sender, e);
+        AlbumCoverFlow_SelectionChanged(sender,e);
+        e.PlaybackAccepted=PlayActivatedDisc(e.DiscNumber);
+    }
+
+    private bool PlayActivatedDisc(int? number)
+    {
+        if(_album is null||_album.Tracks.Count==0)return false;
+        int index=number is null?0:_album.Tracks.ToList().FindIndex(t=>Math.Max(1,t.DiscNumber)==number);
+        if(index<0) {
+            StatusText.Text=$"Disc{number}の曲が見つかりません。音声ファイルのDisc番号を確認してください。";
+            return false;
+        }
+        TrackGrid.SelectedIndex=index;PlayTrack(index);return true;
     }
 
     private void OpenAlbumBrowser_Click(object sender, RoutedEventArgs e)
@@ -1778,15 +1792,16 @@ public partial class MainWindow : Window
         };
         browser.DiscActivated += (_, args) =>
         {
-            if (IsAlbumActivelyPlaying(args.Item.Key))
+            if (IsAlbumActivelyPlaying(args.Item.Key) && (args.DiscNumber is null
+                || (_playingAlbum is not null&&_currentIndex>=0&&_currentIndex<_playingAlbum.Tracks.Count
+                    &&Math.Max(1,_playingAlbum.Tracks[_currentIndex].DiscNumber)==args.DiscNumber)))
             {
                 StopPlayback(resetPosition: true);
                 return;
             }
             SelectAlbum(args.Item.Key);
             if (_album is null || _album.Tracks.Count == 0) return;
-            TrackGrid.SelectedIndex = 0;
-            PlayTrack(0);
+            args.PlaybackAccepted=PlayActivatedDisc(args.DiscNumber);
         };
         browser.PreviousTrackRequested += (_, _) => Previous_Click(browser, new RoutedEventArgs());
         browser.PlayPauseRequested += (_, _) => PlayPause_Click(browser, new RoutedEventArgs());
@@ -1817,7 +1832,7 @@ public partial class MainWindow : Window
             album.InsideFrontThumbnail, album.BackCoverThumbnail, album.SpineThumbnail,
             album.RightSpineThumbnail, album.InlayThumbnail, album.DiscThumbnail, album.IsPlaying)
         { LoadBooklet = album.HasFrontSpread ? album.LoadBooklet : null, SpineCard = album.SpineCardThumbnail, SpineCardReverse = album.SpineCardReverseThumbnail,
-            SecondDiscImage = album.SecondDiscThumbnail, Digipak = album.Digipak };
+            SecondDiscImage = album.SecondDiscThumbnail, Digipak = album.Digipak, MultiCase = album.MultiCase };
         return new AlbumLibraryBrowserItem(CreateCaseItem(), album.CoverThumbnail, async (width, cancellationToken) =>
         {
             await album.EnsureCaseArtworkLoadedAsync(width, cancellationToken);
@@ -2076,7 +2091,7 @@ public partial class MainWindow : Window
                 item.InlayThumbnail,
                 item.DiscThumbnail,
                 item.IsPlaying) { LoadBooklet = item.HasFrontSpread ? item.LoadBooklet : null, SpineCard = item.SpineCardThumbnail, SpineCardReverse = item.SpineCardReverseThumbnail,
-                    SecondDiscImage = item.SecondDiscThumbnail, Digipak = item.Digipak };
+                    SecondDiscImage = item.SecondDiscThumbnail, Digipak = item.Digipak, MultiCase = item.MultiCase };
 
             StatusText.Text = LocalizationService.Select(
                 $"3Dケースを表示しています: {item.Title}",
@@ -2089,8 +2104,7 @@ public partial class MainWindow : Window
                 activated => AlbumCoverFlow_ItemActivated(this,
                     new JewelCaseCoverFlowSelectionChangedEventArgs(activated)),
                 IsAlbumActivelyPlaying,
-                activated => AlbumCoverFlow_DiscActivated(this,
-                    new JewelCaseCoverFlowSelectionChangedEventArgs(activated)),
+                activated => AlbumCoverFlow_DiscActivated(this,activated),
                 playbackStateProvider: GetJewelCasePlaybackState,
                 previousTrackRequested: () => Previous_Click(this, new RoutedEventArgs()),
                 playPauseRequested: () => PlayPause_Click(this, new RoutedEventArgs()),
@@ -4429,7 +4443,7 @@ public partial class MainWindow : Window
     private static int GetFrontArtworkPriority(string role) => role switch
     {
         "FrontSpread" or "FrontSpreadReversed" => 0,
-        "Front" => 1,
+        "Front" or "MultiFrontPanel" or "MultiFrontWithSpines" => 1,
         "FrontSpreadVertical" => 2,
         _ => int.MaxValue
     };
@@ -4736,6 +4750,7 @@ public partial class MainWindow : Window
     {
         public string TrayColor { get; set; } = "Auto";
         public string CaseType { get; set; } = "Standard";
+        public string BookletExtraction { get; set; } = "Top";
     }
 
     private static Dictionary<string, string> LoadArtworkRoles(string albumPath)
@@ -4760,7 +4775,14 @@ public partial class MainWindow : Window
     private static string GetEffectiveArtworkRole(AlbumImageSource source, IReadOnlyDictionary<string, string> roles)
     {
         if (roles.TryGetValue(source.RoleKey, out var stored) && !string.Equals(stored, "Auto", StringComparison.OrdinalIgnoreCase))
-            return stored;
+            return stored switch {
+                "Disc" => "Disc1",
+                "MultiBackWithSpines" => "BackWithSpines",
+                "MultiBackPanel" => "Back",
+                "MultiBackLeft" => "LeftSpine",
+                "MultiBackRight" => "RightSpine",
+                _ => stored
+            };
         var name = Path.GetFileNameWithoutExtension(source.RoleHint).ToLowerInvariant();
         // An obi is a separate paper band, not one of the case's printed spines.
         if (Regex.IsMatch(name, @"spine[\s_-]*card|(?:^|[\s_-])obi(?:$|[\s_\d-])")
@@ -4775,10 +4797,15 @@ public partial class MainWindow : Window
         if (name.Contains("spine", StringComparison.Ordinal) || name.Contains("背表紙", StringComparison.Ordinal)) return "Spine";
         if (name.Contains("inlay", StringComparison.Ordinal) || name.Contains("inray", StringComparison.Ordinal)
             || name.Contains("tray", StringComparison.Ordinal) || name.Contains("インレイ", StringComparison.Ordinal)) return "Inlay";
+        var numberedDisc = Regex.Match(name, @"(?:disc|disk)[\s_-]*0?([1-4])(?:\D|$)");
+        if(numberedDisc.Success)return "Disc"+numberedDisc.Groups[1].Value;
         if (Regex.IsMatch(name, @"(?:2[\s_-]*discs?|discs?[\s_-]*2|two[\s_-]*discs?)")
             || name.Contains("2枚", StringComparison.Ordinal)) return "Disc2";
+        if (Regex.IsMatch(name, @"(?:3[\s_-]*discs?|discs?[\s_-]*3|three[\s_-]*discs?)")
+            || name.Contains("3枚", StringComparison.Ordinal)) return "Disc3";
+        if (Regex.IsMatch(name, @"(?:disc|disk)[\s_-]*0?4(?:\D|$)")) return "Disc4";
         if (name.Contains("disc", StringComparison.Ordinal) || name.Contains("disk", StringComparison.Ordinal)
-            || name.Contains("cd_label", StringComparison.Ordinal) || name.Contains("レーベル", StringComparison.Ordinal)) return "Disc";
+            || name.Contains("cd_label", StringComparison.Ordinal) || name.Contains("レーベル", StringComparison.Ordinal)) return "Disc1";
         if (name.Contains("cover_back", StringComparison.Ordinal) || name.Contains("cover-back", StringComparison.Ordinal)
             || name.Contains("back", StringComparison.Ordinal) || name.Contains("rear", StringComparison.Ordinal)
             || name.Contains("裏表紙", StringComparison.Ordinal)) return "Back";
@@ -4796,7 +4823,7 @@ public partial class MainWindow : Window
         {
             var selectedRole = _selectedAlbumImageIndex >= 0 && _selectedAlbumImageIndex < _albumImages.Count
                 && _currentArtworkRoles.TryGetValue(_albumImages[_selectedAlbumImageIndex].RoleKey, out var stored)
-                ? stored : "Auto";
+                ? (stored=="Auto"?"Auto":GetEffectiveArtworkRole(_albumImages[_selectedAlbumImageIndex],_currentArtworkRoles)) : "Auto";
             ArtworkRoleCombo.SelectedItem = ArtworkRoleCombo.Items.OfType<System.Windows.Controls.ComboBoxItem>()
                 .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), selectedRole, StringComparison.OrdinalIgnoreCase))
                 ?? ArtworkRoleCombo.Items[0];
@@ -6418,6 +6445,7 @@ public partial class MainWindow : Window
             _mediumInlayThumbnail = _mediumDiscThumbnail = _mediumSecondDiscThumbnail = _mediumSpineCardThumbnail = _mediumSpineCardReverseThumbnail = null;
             _caseArtworkLoaded = false;
             Digipak = null;
+            MultiCase = null;
             _caseArtworkDecodeWidth = 0;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ImageCount)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasImages)));
@@ -6448,6 +6476,7 @@ public partial class MainWindow : Window
                 _rightSpineThumbnail, _inlayThumbnail, _discThumbnail, _secondDiscThumbnail, _spineCardThumbnail, _spineCardReverseThumbnail, _)
                 = LoadCaseArtwork(directory, decodePixelWidth);
             Digipak = LoadDigipakArtwork(directory, decodePixelWidth);
+            MultiCase = LoadMultiCaseArtwork(directory, decodePixelWidth);
             if (decodePixelWidth <= 640)
             {
                 _mediumCaseFrontThumbnail = _caseFrontThumbnail;
@@ -6470,6 +6499,7 @@ public partial class MainWindow : Window
             var directory = GetDownloadedArtworkDirectory(Album.Path);
             var artwork = await Task.Run(() => LoadCaseArtwork(directory, decodePixelWidth), cancellationToken);
             var digipak = await Task.Run(() => LoadDigipakArtwork(directory, decodePixelWidth), cancellationToken);
+            var multiCase = await Task.Run(() => LoadMultiCaseArtwork(directory, decodePixelWidth), cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (_caseArtworkLoaded && _caseArtworkDecodeWidth >= decodePixelWidth) return;
             _caseFrontThumbnail = artwork.Front;
@@ -6485,12 +6515,13 @@ public partial class MainWindow : Window
             _caseArtworkLoaded = true;
             _caseArtworkDecodeWidth = decodePixelWidth;
             Digipak = digipak;
+            MultiCase = multiCase;
         }
 
         public void ReleaseHighResolutionCaseArtwork(int decodePixelWidth = 640)
         {
             if (_caseArtworkDecodeWidth <= decodePixelWidth) return;
-            if (Digipak is not null) { _caseArtworkLoaded = false; _caseArtworkDecodeWidth = 0; Digipak = null; EnsureCaseArtworkLoaded(decodePixelWidth); return; }
+            if (Digipak is not null || MultiCase is not null) { _caseArtworkLoaded = false; _caseArtworkDecodeWidth = 0; Digipak = null; MultiCase = null; EnsureCaseArtworkLoaded(decodePixelWidth); return; }
             if (_mediumCaseFrontThumbnail is not null || _mediumSpineCardThumbnail is not null)
             {
                 _caseFrontThumbnail = _mediumCaseFrontThumbnail;
@@ -6597,13 +6628,14 @@ public partial class MainWindow : Window
         {
             var sources = GetCaseArtworkSources(Album, downloadedDirectory);
             if (sources.Count == 0) return (null, null, null, null, null, null, null, null, null, null, "画像はありません");
-            if (LoadCaseAppearance(Album.Path).CaseType == "Digipak2")
+            if (LoadCaseAppearance(Album.Path).CaseType is "Digipak2" or "Digipak3")
             {
                 var packRoles = LoadArtworkRoles(Album.Path);
-                bool prototype = Title.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase)||Album.Path.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase);
+                bool prototype = LoadCaseAppearance(Album.Path).CaseType=="Digipak2"&&(Title.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase)||Album.Path.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase));
                 BitmapSource? Picture(string role, string fallback) => LoadDigipakPicture(sources, packRoles, role, prototype?fallback:"", targetWidth);
                 return (Picture("Front","Booklet001.jpg"), Picture("FrontInside","Booklet010.jpg"), Picture("Back","Booklet002.jpg"), null, null, null,
-                    Picture("Disc","Booklet008.jpg"), Picture("Disc2","Booklet009.jpg"), null, null, "デジパック2枚組");
+                    Picture("Disc1","Booklet008.jpg"), Picture("Disc2","Booklet009.jpg"), null, null,
+                    LoadCaseAppearance(Album.Path).CaseType=="Digipak3"?"デジパック3枚組":"デジパック2枚組");
             }
 
             var roles = LoadArtworkRoles(Album.Path);
@@ -6661,11 +6693,12 @@ public partial class MainWindow : Window
             if (leftSpineCandidate.Source is null) leftSpineCandidate = spineCandidate;
             var rightSpineCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "RightSpine");
             var inlayCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "Inlay");
-            var discCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "Disc");
+            var discCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "Disc1");
             var twoDiscCandidate = candidates.FirstOrDefault(candidate => candidate.Role == "Disc2");
             if (discCandidate.Source is null)
                 discCandidate = candidates.LastOrDefault(candidate => !Equals(candidate.Source, standaloneFrontCandidate.Source)
                     && !Equals(candidate.Source, frontSpreadCandidate.Source)
+                    && !candidate.IsManual && candidate.Role=="Other"
                     && candidate.Aspect is >= 0.86 and <= 1.14);
 
             BitmapSource? LoadRole(
@@ -6739,22 +6772,9 @@ public partial class MainWindow : Window
                 : spineCandidate.Source is not null
                     ? LoadRole(spineCandidate, "Spine")
                     : backContainsSpines ? LoadRole(splitSpineCandidate, "RightSpine") : null;
-            BitmapSource? disc = null;
-            BitmapSource? secondDisc = null;
-            if (twoDiscCandidate.Source is not null)
-            {
-                try
-                {
-                    // Horizontal scans need twice the decode width so each
-                    // extracted half retains the requested 3D texture detail.
-                    var decodeWidth = twoDiscCandidate.Aspect >= 1
-                        ? checked(targetWidth * 2) : targetWidth;
-                    (disc, secondDisc) = DiscArtwork.SplitTwoDiscs(
-                        LoadBitmap(twoDiscCandidate.Source, decodeWidth));
-                }
-                catch { }
-            }
-            disc ??= LoadRole(discCandidate, "Disc");
+            // Numbered roles each describe one disc; Disc2 must not replace Disc1.
+            var disc = LoadRole(discCandidate, "Disc");
+            var secondDisc = LoadRole(twoDiscCandidate, "Disc");
             return (front, insideFront, back, leftSpine, rightSpine,
                 LoadRole(inlayCandidate, "Inlay"), disc, secondDisc,
                 LoadRole(spineCardCandidate, "SpineCard"), reverseArtwork,

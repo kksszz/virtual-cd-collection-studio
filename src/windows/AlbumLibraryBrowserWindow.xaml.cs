@@ -761,6 +761,11 @@ public partial class AlbumLibraryBrowserWindow : Window
     private void CoverFlow_DiscActivated(object? sender, JewelCaseCoverFlowSelectionChangedEventArgs e)
     {
         SelectedKey = e.Item.Key;
+        if(e.DiscNumber is not null) {
+            DiscActivated?.Invoke(this,e);
+            if(e.PlaybackAccepted)MarkPlaying((_playbackStateProvider?.Invoke().IsPlaying??false)?e.Item.Key:string.Empty);
+            return;
+        }
         var stopping = (_playbackStateProvider?.Invoke().IsPlaying ?? false)
             && _items.Any(item => item.IsPlaying
                 && string.Equals(item.Key, e.Item.Key, StringComparison.OrdinalIgnoreCase));

@@ -105,6 +105,17 @@ internal static class CdImportChecks
         Require(disc.Toc=="1 2 27150 150 13650","MusicBrainz TOC offsets");
         toc[5]|=4;try{CdAudioSource.ParseToc(toc);throw new Exception("Accepted data track");}catch(NotSupportedException){Console.WriteLine("PASS mixed/data CD rejected");}toc[5]=0x11;
         try{CdAudioSource.ParseToc(toc);throw new Exception("Accepted preemphasis");}catch(NotSupportedException){Console.WriteLine("PASS preemphasis rejected");}
+        toc[5]=0x10;toc[13]|=4;
+        var fullToc=new byte[37];fullToc[1]=35;fullToc[2]=1;fullToc[3]=2;
+        fullToc[4]=1;fullToc[7]=0xA1;fullToc[12]=1; // Session 1 ends at audio track 1.
+        fullToc[15]=1;fullToc[18]=0xA2;fullToc[23]=3;fullToc[24]=0; // 03:00:00 lead-out.
+        fullToc[26]=2;fullToc[29]=0xA1;fullToc[34]=2;
+        long audioEnd=CdAudioSource.ParseFirstSessionLeadout(fullToc,toc);
+        var enhanced=CdAudioSource.ParseToc(toc,audioEnd);
+        Require(enhanced.Tracks.Count==1&&enhanced.Frames==13350&&enhanced.Frames<13500,"Enhanced CD excludes data session and inter-session gap");
+        fullToc[12]=2;
+        try{CdAudioSource.ParseFirstSessionLeadout(fullToc,toc);throw new Exception("Accepted same-session data");}catch(NotSupportedException){Console.WriteLine("PASS same-session data rejected");}
+        toc[13]=0x10;
         Require(CdImportService.SafeName("../CON:").IndexOfAny(Path.GetInvalidFileNameChars())<0&&CdImportService.SafeName("CON")=="_CON","safe output names");
         var folder=Path.Combine(Path.GetTempPath(),"vccs-cd-test-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(folder);
         string wav=Path.Combine(folder,"test.wav");

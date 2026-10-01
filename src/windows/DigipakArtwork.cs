@@ -1,11 +1,19 @@
 using System.Windows.Media.Imaging;
 namespace ZipMp3Player;
 
-// Three-panel/two-disc format. Measurements are the supplied ActRaiser sample.
+// Two-disc/three-panel and three-disc/four-panel digipaks share image roles.
 public sealed record DigipakArtwork(BitmapSource? InnerLeft, BitmapSource? OuterRight, BitmapSource? Trays)
 {
     public BitmapSource? LeftFold { get; init; }
     public BitmapSource? RightFold { get; init; }
+    public BitmapSource? FarRightFold { get; init; }
+    public BitmapSource? OuterFarRight { get; init; }
+    public BitmapSource? Tray1 { get; init; }
+    public BitmapSource? Tray2 { get; init; }
+    public BitmapSource? Tray3 { get; init; }
+    public BitmapSource? ThirdDisc { get; init; }
+    public int DiscCount { get; init; } = 2;
+    public string BookletExtraction { get; init; } = "Top";
 }
 internal static class DigipakDimensions
 {
@@ -24,4 +32,12 @@ internal static class DigipakDimensions
     internal const float RightHinge = Panel / 2 + RightFold / 2;
     internal static (double Left, double Right) Angles(double progress) =>
         (180 * (1 - Math.Clamp(progress * 2, 0, 1)), -180 * (1 - Math.Clamp(progress * 2 - 1, 0, 1)));
+    internal const float ThreeLeftFold = 18, ThreeRightFold = 16.5f, ThreeFarFold = 11;
+    internal const float ThreeLeft = -Panel / 2 - ThreeLeftFold - Panel;
+    internal const float ThreeRight = Panel / 2 + ThreeRightFold;
+    internal const float ThreeFarRight = ThreeRight + Panel + ThreeFarFold;
+    internal static (double Left, double Right, double FarRight) ThreeAngles(double progress) =>
+        (180 * (1 - Math.Clamp(progress * 3, 0, 1)),
+         -180 * (1 - Math.Clamp(progress * 3 - 1, 0, 1)),
+         180 * (1 - Math.Clamp(progress * 3 - 2, 0, 1)));
 }

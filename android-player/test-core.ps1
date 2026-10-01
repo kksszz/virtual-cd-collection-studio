@@ -1,6 +1,9 @@
 $ErrorActionPreference = 'Stop'
-$taskJdk = Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot '.tools\jdk') -Directory | Select-Object -First 1
-if (!$taskJdk) { throw 'JDK 17を.tools\jdkに配置してください。' }
+$taskJdk = Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot '.tools\jdk') -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+if (!$taskJdk -and $env:JAVA_HOME -and (Test-Path (Join-Path $env:JAVA_HOME 'bin\javac.exe'))) {
+    $taskJdk = Get-Item -LiteralPath $env:JAVA_HOME
+}
+if (!$taskJdk) { throw 'JDK 17を.tools\jdkに配置するかJAVA_HOMEを設定してください。' }
 $output = Join-Path $PSScriptRoot '.tools\core-test-classes'
 New-Item -ItemType Directory -Path $output -Force | Out-Null
 & (Join-Path $taskJdk.FullName 'bin\javac.exe') -encoding UTF8 -d $output (Join-Path $PSScriptRoot 'app\src\main\java\jp\virtualcd\player\LanguageStrings.java') (Join-Path $PSScriptRoot 'tests\LanguageStringsTest.java')

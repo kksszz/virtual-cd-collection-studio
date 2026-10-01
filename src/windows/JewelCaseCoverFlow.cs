@@ -29,6 +29,7 @@ public sealed record JewelCaseCoverFlowItem(
     public BitmapSource? SpineCardReverse { get; init; }
     public BitmapSource? SecondDiscImage { get; init; }
     public DigipakArtwork? Digipak { get; init; }
+    internal MultiCaseArtwork? MultiCase { get; init; }
     internal bool CollectionPresentation { get; init; }
     // Inlay is the inside of the rear insert, not the booklet or exterior Back.
     // A standard full scan is 6 + 138 + 6 mm wide by 118 mm high.
@@ -45,6 +46,8 @@ public sealed record JewelCaseCoverFlowItem(
 public sealed class JewelCaseCoverFlowSelectionChangedEventArgs(JewelCaseCoverFlowItem item) : EventArgs
 {
     public JewelCaseCoverFlowItem Item { get; } = item;
+    public int? DiscNumber { get; init; }
+    public bool PlaybackAccepted { get; set; } = true;
 }
 
 public sealed record JewelCasePlaybackState(string TrackDisplay, bool IsPlaying, bool HasTrack, double Volume);
@@ -288,6 +291,12 @@ public sealed partial class JewelCaseCoverFlow : Grid
         };
         UpdateDiscButton();
         overlay.Children.Add(_discButton);
+        overlay.Children.Add(_multiDiscButton);
+        _multiDiscButton.Click+=(_,_)=>{
+            if(_dxScene?.IsMultiCase!=true||!_isCaseOpen)return;
+            _dxScene.SetSelectedMultiDiscRemoved(!_dxScene.SelectedMultiDiscRemoved);
+            UpdateMultiDiscButton();
+        };
 
         _bookletButton.Content = LocalizationService.Select("▤ ジャケットを見る", "▤ View booklet");
         _bookletButton.Width = 145; _bookletButton.Height = 25;
@@ -346,7 +355,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
         // Measure the toolbar as a single flowing row, rather than overlaying fixed offsets.
         // Hidden controls release their space; narrow viewers wrap without collisions.
         var toolbar = new WrapPanel { Orientation = Orientation.Horizontal };
-        foreach (var button in new[] { _fullScreenButton, _caseOpenButton, _discButton,
+        foreach (var button in new[] { _fullScreenButton, _caseOpenButton, _discButton, _multiDiscButton,
             _bookletButton, _wrappingButton, _spineCardButton })
         {
             overlay.Children.Remove(button);
@@ -359,14 +368,15 @@ public sealed partial class JewelCaseCoverFlow : Grid
             Content = LocalizationService.Select(".glb出力", "Export .glb"),
             Height = 25, Padding = new Thickness(8, 0, 8, 0), Margin = new Thickness(3, 0, 3, 4),
             Foreground = Brushes.White, Background = _discButton.Background, BorderBrush = _discButton.BorderBrush,
-            ToolTip = "現在の画像・帯の折り位置を標準GLBまたは従来の.vcd3dに書き出します（音源・元画像は変更しません）。2枚目のCDは未対応です。"
+            ToolTip = "現在のケースと画像をGLBに書き出します。24mmケースとデジパックはGLB形式のみ対応します（音源・元画像は変更しません）。"
         };
         exportMobile.Click += (_, _) =>
         {
             if (_selectedIndex < 0 || _selectedIndex >= _items.Count) return;
             var item = _items[_selectedIndex];
             var safeName = string.Concat(item.Title.Select(c => System.IO.Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
-            var save = new Microsoft.Win32.SaveFileDialog { Title = LocalizationService.Select(".glb出力", "Export .glb"), Filter = "glTF 2.0 binary (*.glb)|*.glb|Legacy mobile case (*.vcd3d)|*.vcd3d", DefaultExt = ".glb", AddExtension = true, FileName = safeName, OverwritePrompt = true };
+            var glbOnly = item.MultiCase is not null || item.Digipak is not null;
+            var save = new Microsoft.Win32.SaveFileDialog { Title = LocalizationService.Select(".glb出力", "Export .glb"), Filter = glbOnly ? "glTF 2.0 binary (*.glb)|*.glb" : "glTF 2.0 binary (*.glb)|*.glb|Legacy mobile case (*.vcd3d)|*.vcd3d", DefaultExt = ".glb", AddExtension = true, FileName = safeName, OverwritePrompt = true };
             if (save.ShowDialog(Window.GetWindow(this)) != true) return;
             try
             {
@@ -630,7 +640,8 @@ public sealed partial class JewelCaseCoverFlow : Grid
         && ReferenceEquals(left.SpineCard, right.SpineCard)
         && ReferenceEquals(left.SpineCardReverse, right.SpineCardReverse)
         && string.Equals(left.TrayColorMode, right.TrayColorMode, StringComparison.OrdinalIgnoreCase)
-        && ReferenceEquals(left.Digipak, right.Digipak);
+        && ReferenceEquals(left.Digipak, right.Digipak)
+        && ReferenceEquals(left.MultiCase, right.MultiCase);
 
     public void SelectByKey(string key, bool notify = false)
     {
@@ -812,7 +823,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
         fullScreenFlow.ItemActivated += (_, e) =>
             ItemActivated?.Invoke(this, new JewelCaseCoverFlowSelectionChangedEventArgs(e.Item));
         fullScreenFlow.DiscActivated += (_, e) =>
-            DiscActivated?.Invoke(this, new JewelCaseCoverFlowSelectionChangedEventArgs(e.Item));
+            DiscActivated?.Invoke(this, e);
         fullScreenFlow.PreviousTrackRequested += (_, _) => PreviousTrackRequested?.Invoke(this, EventArgs.Empty);
         fullScreenFlow.PlayPauseRequested += (_, _) => PlayPauseRequested?.Invoke(this, EventArgs.Empty);
         fullScreenFlow.NextTrackRequested += (_, _) => NextTrackRequested?.Invoke(this, EventArgs.Empty);
@@ -842,7 +853,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
     public static void ShowItemFullScreen(JewelCaseCoverFlowItem item, Window? owner = null,
         Action<JewelCaseCoverFlowItem>? itemActivated = null,
         Func<string, bool>? playbackActiveProvider = null,
-        Action<JewelCaseCoverFlowItem>? discActivated = null,
+        Action<JewelCaseCoverFlowSelectionChangedEventArgs>? discActivated = null,
         Func<JewelCasePlaybackState>? playbackStateProvider = null,
         Action? previousTrackRequested = null,
         Action? playPauseRequested = null,
@@ -856,7 +867,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
         if (itemActivated is not null)
             fullScreenFlow.ItemActivated += (_, e) => itemActivated(e.Item);
         if (discActivated is not null)
-            fullScreenFlow.DiscActivated += (_, e) => discActivated(e.Item);
+            fullScreenFlow.DiscActivated += (_, e) => discActivated(e);
         if (previousTrackRequested is not null)
             fullScreenFlow.PreviousTrackRequested += (_, _) => previousTrackRequested();
         if (playPauseRequested is not null)
@@ -927,15 +938,16 @@ public sealed partial class JewelCaseCoverFlow : Grid
         _bookletButton.Visibility = !_collectionPresentation && hasItems && _items[_selectedIndex].LoadBooklet is not null
             ? Visibility.Visible : Visibility.Collapsed;
         var hasSpineCard = hasItems && _items[_selectedIndex].SpineCard is not null;
+        var hasWrapping = hasSpineCard && _items[_selectedIndex].MultiCase is null;
         _spineCardButton.Visibility = !_collectionPresentation && _dxScene is not null && hasSpineCard
             ? Visibility.Visible : Visibility.Collapsed;
-        _wrappingButton.Visibility = !_collectionPresentation && _dxScene is not null && hasSpineCard
+        _wrappingButton.Visibility = !_collectionPresentation && _dxScene is not null && hasWrapping
             ? Visibility.Visible : Visibility.Collapsed;
         if (!hasSpineCard) _isSpineCardRemoved = false;
         // A Spine Card case starts factory wrapped. Only an explicit opening
         // operation records it as unwrapped for the lifetime of this viewer.
-        _isWrappingOpened = hasItems && (!hasSpineCard || _unwrappedKeys.Contains(_items[_selectedIndex].Key));
-        _isWrappingCut = hasSpineCard && (_isWrappingOpened
+        _isWrappingOpened = hasItems && (!hasWrapping || _unwrappedKeys.Contains(_items[_selectedIndex].Key));
+        _isWrappingCut = hasWrapping && (_isWrappingOpened
             || (hasItems && _cutWrappingKeys.Contains(_items[_selectedIndex].Key)));
         // Wrapping state is resolved only after the selected item is known.
         // Refresh the case button here so an unwrapped, obi-less case does not
@@ -966,6 +978,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
         UpdateRackFrame();
 
         _dxScene?.SetItem(_items[_selectedIndex], _caseYaw, _casePitch);
+        UpdateDiscButton();
         UpdateDiscPlayback();
         _dxScene?.SetSpineCardRemoved(_isSpineCardRemoved, false);
         if (_isWrappingOpened) _dxScene?.SetWrappingOpened(true, false);
@@ -1336,6 +1349,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
         var angle = selected ? selectedYaw : relative < 0
             ? collectionPresentation ? -72 : 67
             : collectionPresentation ? 72 : -67;
+        if(item.MultiCase is not null)return CreateMultiCaseExterior(item,x,y,z,scale,angle,selected?selectedPitch:0);
         if(item.Digipak is not null)return CreateDigipakExterior(item,x,y,z,scale,angle,selected?selectedPitch:0);
 
         var group = new Model3DGroup();
@@ -1799,12 +1813,14 @@ public sealed partial class JewelCaseCoverFlow : Grid
                 if (!await SetCaseOpenAsync(true, true)) return;
             }
             if (!IsLoaded || key != SelectedKey) return;
-            if (_dxScene is not null && !await _dxScene.AnimateBookletAsync(true)) return;
+            if (_dxScene is not null && !_dxScene.IsMultiCase && !await _dxScene.AnimateBookletAsync(true)) return;
             if (!IsLoaded || key != SelectedKey) return;
             if (bookletScene is not null)
             {
-                bookletScene.PrepareBookletOpening(openingPage);
-                if (!await bookletScene.AnimateBookletOpeningAsync(true)) return;
+                if(!bookletScene.IsMultiCase) {
+                    bookletScene.PrepareBookletOpening(openingPage);
+                    if (!await bookletScene.AnimateBookletOpeningAsync(true)) return;
+                }
             }
             if (!IsLoaded || key != SelectedKey || !ReferenceEquals(bookletScene, _dxScene)) return;
             var viewer = new BookletViewerWindow(title, booklet, openingPage is not null ? firstInside.index : 0) { Owner = Window.GetWindow(this) };
@@ -1824,9 +1840,11 @@ public sealed partial class JewelCaseCoverFlow : Grid
             {
                 if (bookletScene is not null)
                 {
-                    await bookletScene.AnimateBookletOpeningAsync(false);
-                    await bookletScene.AnimateBookletAsync(false);
-                    bookletScene.SetBookletRemoved(false, false);
+                    if(!bookletScene.IsMultiCase) {
+                        await bookletScene.AnimateBookletOpeningAsync(false);
+                        await bookletScene.AnimateBookletAsync(false);
+                        bookletScene.SetBookletRemoved(false, false);
+                    }
                 }
                 // A fitted obi must only return after the lid is closed.
                 if (restoreObi && !caseWasOpen && _isCaseOpen)
@@ -1879,7 +1897,8 @@ public sealed partial class JewelCaseCoverFlow : Grid
 
     private bool TryBeginDiscDrag(Point position)
     {
-        if (!_isDiscRemoved || _dxScene is null || _isPanning || !_dxScene.BeginDiscDrag(position)) return false;
+        if(_dxScene?.IsMultiCase==true){_dxScene.SelectMultiDiscAt(position);UpdateMultiDiscButton();}
+        if ((!_isDiscRemoved&&_dxScene?.IsMultiCase!=true) || _dxScene is null || _isPanning || !_dxScene.BeginDiscDrag(position)) return false;
         Focus();
         _isRotating = false;
         _isDraggingDisc = CaptureMouse();
@@ -1895,6 +1914,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
     private bool TryActivateDisc(Point position)
     {
         if (!_isCaseOpen || _dxScene is null || !_dxScene.IsDiscHit(position)) return false;
+        if(_dxScene.IsMultiCase){_dxScene.ActivateSelectedMultiDisc();UpdateMultiDiscButton();}
         RaiseDiscActivated();
         return true;
     }
@@ -2121,6 +2141,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
 
     private void ApplyWrappingOpened(bool opened, bool animate)
     {
+        if(_selectedIndex>=0&&_selectedIndex<_items.Count&&_items[_selectedIndex].MultiCase is not null)opened=true;
         if (_selectedIndex < 0 || _selectedIndex >= _items.Count) opened = false;
         else if (!HasSelectedSpineCard()) opened = true;
         _isWrappingOpened = opened;
@@ -2192,6 +2213,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
 
     private async Task<bool> SetWrappingOpenedAsync(bool opened, bool animate)
     {
+        if(_selectedIndex>=0&&_selectedIndex<_items.Count&&_items[_selectedIndex].MultiCase is not null)return false;
         if (_selectedIndex < 0 || !HasSelectedSpineCard() || _isCaseTransitioning) return false;
         if (opened == _isWrappingOpened && (_dxScene is null
             || Math.Abs(_dxScene.WrappingProgress - (opened ? 1 : 0)) < .001)) return false;
@@ -2318,6 +2340,10 @@ public sealed partial class JewelCaseCoverFlow : Grid
 
     private void SetDiscRemoved(bool removed, bool animate)
     {
+        if(_dxScene?.IsMultiCase==true) {
+            if(_isCaseOpen)_dxScene.TurnMultiCase(!_dxScene.MultiCaseTurned,animate);
+            _isDiscRemoved=false;UpdateDiscButton();return;
+        }
         if (!_isCaseOpen && removed) return;
         EndPointerDrag();
         _isDiscRemoved = removed;
@@ -2342,6 +2368,14 @@ public sealed partial class JewelCaseCoverFlow : Grid
 
     private void UpdateDiscButton()
     {
+        UpdateMultiDiscButton();
+        if(_selectedIndex>=0&&_selectedIndex<_items.Count&&_items[_selectedIndex].MultiCase is not null) {
+            _discButton.IsEnabled=_dxScene is not null&&_isCaseOpen&&!_isCaseTransitioning;
+            _discButton.Opacity=_discButton.IsEnabled?1:.48;
+            _discButton.Content=_dxScene?.MultiCaseTurned==true?"↶ 中央を戻す":"↷ 中央をめくる";
+            _discButton.ToolTip="中央トレーをめくります (D)。CDをクリックして選択し、隣のボタンで取り出せます。";
+            return;
+        }
         _discButton.IsEnabled = _isCaseOpen && !_isCaseTransitioning;
         _discButton.Opacity = _discButton.IsEnabled ? 1 : 0.48;
         _discButton.Content = _isDiscRemoved
@@ -2668,8 +2702,12 @@ public sealed partial class JewelCaseCoverFlow : Grid
 
     private void RaiseDiscActivated()
     {
-        if (_selectedIndex >= 0 && _selectedIndex < _items.Count)
-            DiscActivated?.Invoke(this, new JewelCaseCoverFlowSelectionChangedEventArgs(_items[_selectedIndex]));
+        if (_selectedIndex >= 0 && _selectedIndex < _items.Count) {
+            var args=new JewelCaseCoverFlowSelectionChangedEventArgs(_items[_selectedIndex]) {
+                DiscNumber=_dxScene?.IsMultiCase==true?_dxScene.SelectedMultiDisc:null };
+            DiscActivated?.Invoke(this,args);
+            if(!args.PlaybackAccepted)_dxScene?.CancelMultiDiscPlayback();
+        }
     }
 
     private void UpdateDiscPlayback()
@@ -2689,6 +2727,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
         // the key-aware provider for the physical disc animation.
         var playing = PlaybackActiveProvider?.Invoke(item.Key) ?? state?.IsPlaying ?? item.IsPlaying;
         _dxScene.SetDiscPlaying(playing);
+        UpdateMultiDiscButton();
         UpdatePlaybackBar(state);
     }
 

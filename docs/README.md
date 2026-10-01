@@ -1,7 +1,8 @@
 # ドキュメント
 
 - [連携の全体像](INTEGRATION_OVERVIEW.md)
-- [完全バックアップ（開発版）](COLLECTION_BACKUP.md)
+- [完全バックアップ](COLLECTION_BACKUP.md)
+- [24mmマルチケースの3Dモデル](MULTI_CASE_MODEL.md)
 - [CDドライブからの取り込み](CD_IMPORT.md)
 - [スキャナーからの画像取り込み](ALBUM_SCANNING.md)
 - [CDパッケージ画像のスキャン・保存](CD_BOX_SCAN_GUIDE.md)

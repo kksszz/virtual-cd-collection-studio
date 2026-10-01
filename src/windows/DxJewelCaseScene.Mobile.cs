@@ -18,6 +18,7 @@ internal sealed partial class DxJewelCaseScene
         using var scene = new DxJewelCaseScene();
         scene.SetItem(item, 0, 0);
         bool digipak=item.Digipak is not null;
+        bool multi=item.MultiCase is not null;
         if(digipak)scene.SetDigipakProgress(1); // Export the flat bind pose; consumers close it with panel transforms.
         var images = new Dictionary<string, BitmapSource>();
         var roles = new Dictionary<BitmapSource, string>(ReferenceEqualityComparer.Instance);
@@ -25,13 +26,31 @@ internal sealed partial class DxJewelCaseScene
         Register("front", item.FrontCover); Register("insideFront", item.InsideFrontCover);
         Register("back", item.BackCover); Register("spine", item.SpineCover);
         Register("rightSpine", item.RightSpineCover); Register("disc", item.DiscImage);
-        if(digipak) { Register("disc2",item.SecondDiscImage);Register("innerLeft",item.Digipak!.InnerLeft);Register("outerRight",item.Digipak.OuterRight);Register("trays",item.Digipak.Trays);Register("leftFold",item.Digipak.LeftFold);Register("rightFold",item.Digipak.RightFold); }
+        if(digipak) { Register("disc2",item.SecondDiscImage);Register("innerLeft",item.Digipak!.InnerLeft);Register("outerRight",item.Digipak.OuterRight);Register("trays",item.Digipak.Trays);Register("leftFold",item.Digipak.LeftFold);Register("rightFold",item.Digipak.RightFold);
+            if(item.Digipak.DiscCount==3){Register("disc3",item.Digipak.ThirdDisc);Register("outerFarRight",item.Digipak.OuterFarRight);Register("farFold",item.Digipak.FarRightFold);Register("tray1",item.Digipak.Tray1);Register("tray2",item.Digipak.Tray2);Register("tray3",item.Digipak.Tray3);}}
+        if(multi) {
+            var art=item.MultiCase!;
+            Register("multiFront",art.Front);Register("multiBack",art.Back);
+            Register("multiFrontLeft",art.FrontLeft);Register("multiFrontRight",art.FrontRight);
+            Register("multiBackLeft",art.BackLeft);Register("multiBackRight",art.BackRight);
+            Register("multiDisc1",art.Disc1);Register("multiDisc2",art.Disc2);
+            Register("multiDisc3",art.Disc3);Register("multiDisc4",art.Disc4);
+            Register("multiBookletFront",art.BookletFront);Register("multiBookletBack",art.BookletBack);
+        }
         var meshes = new List<Mesh>();
         void Visit(Element3D element, Matrix3D parent, int part)
         {
+            if(multi) {
+                if(ReferenceEquals(element,scene._multiCenter))part=1;
+                if(ReferenceEquals(element,scene._multiFront))part=2;
+                foreach(var disc in scene._multiDiscStates.Values)
+                    if(ReferenceEquals(element,disc.Root))part=disc.Number+2;
+            }
             if(ReferenceEquals(element,scene._discRoot)) part=2;
             if(ReferenceEquals(element,scene._secondDiscRoot)) { if(!digipak)return;part=4; }
+            if(ReferenceEquals(element,scene._thirdDiscRoot)) { if(!digipak)return;part=9; }
             if(digipak) {
+                if(ReferenceEquals(element,scene._digipakFarRight))part=8;
                 if(ReferenceEquals(element,scene._digipakRight))part=3;
                 if(ReferenceEquals(element,scene._digipakLeft))part=1;
                 if(ReferenceEquals(element,scene._bookletRoot))part=5;
@@ -50,7 +69,7 @@ internal sealed partial class DxJewelCaseScene
                     if(bitmap is not null) { if(!roles.TryGetValue(bitmap,out role!)) { role="detail"+images.Count; Register(role,bitmap); } }
                 }
             }
-            if(!digipak&&part>=4) finish=3;
+            if(!digipak&&!multi&&part>=4) finish=3;
             for(int c=0;c<4;c++)color[c]=Math.Clamp(color[c],0,1);
             if(color[3]<=0) return;
             bool twoSided=model.CullMode==SharpDX.Direct3D11.CullMode.None;
@@ -73,11 +92,13 @@ internal sealed partial class DxJewelCaseScene
         }
         Visit(scene._baseRoot,Matrix3D.Identity,0);
         // The lid is closed: its group rotation is deliberately not baked into vertices.
-        if(digipak) {
+        if(multi) {
+            Visit(scene._spineCardRoot,Matrix3D.Identity,7);
+        } else if(digipak) {
             Visit(scene._digipakLeft!,Matrix3D.Identity,1);
             foreach(var element in scene._digipakFolds!.Children) {
                 if(element is MeshGeometryModel3D fold&&fold.Geometry is HelixToolkit.SharpDX.MeshGeometry3D {Positions: {Count: >0}} geometry)
-                    Visit(element,Matrix3D.Identity,geometry.Positions!.Average(p=>p.X)<0?6:7);
+                    Visit(element,Matrix3D.Identity,geometry.Positions!.Average(p=>p.X)<0?6:geometry.Positions!.Average(p=>p.X)<D(DigipakDimensions.ThreeRight+120)?7:10);
             }
         } else {
             Visit(scene._frontPanelRoot,Matrix3D.Identity,1);

@@ -20,7 +20,8 @@ public final class CaseActivity extends Activity {
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private FrameLayout content;
     private TextView caption;
-    private Button openButton,resetButton,discButton,obiButton,wrapButton,bookletButton;
+    private Button openButton,resetButton,discButton,obiButton,wrapButton,bookletButton,turnButton;
+    private final Button[] multiDiscButtons=new Button[4];
     private CaseSurface surface;
     private CasePackage current;
     private File packageFile;
@@ -54,8 +55,10 @@ public final class CaseActivity extends Activity {
         bar=new LinearLayout(this);toolbar.addView(bar);
         caseTool(bar,"close",jp.virtualcd.player.LanguageStrings.text("3D画面を閉じる","Close 3D view"),this::finish);
         openButton=caseTool(bar,"case-open",jp.virtualcd.player.LanguageStrings.text("ケースを開く／閉じる","Open / close case"),()->{if(surface!=null)surface.toggleOpen();});
+        turnButton=caseTool(bar,"refresh",jp.virtualcd.player.LanguageStrings.text("中央トレーをめくる／戻す","Turn / return center tray"),()->{if(surface!=null)surface.toggleMultiTurn();});
         resetButton=caseTool(bar,"refresh",jp.virtualcd.player.LanguageStrings.text("初期表示に戻す","Reset view"),()->{if(surface!=null)surface.reset();});
         discButton=caseTool(bar,"disc-out",jp.virtualcd.player.LanguageStrings.text("CDを取り出す／戻す","Take out / insert CD"),()->{if(surface!=null)surface.toggleDisc();});
+        for(int i=0;i<4;i++){final int number=i+1;multiDiscButtons[i]=caseTool(bar,"disc-out","Disc"+number+" ⇄",()->{if(surface!=null)surface.toggleMultiDisc(number);});}
         bookletButton=caseTool(bar,"booklet",jp.virtualcd.player.LanguageStrings.text("ブックレットを取り出す／戻す","Take out / insert booklet"),()->{if(surface!=null)surface.toggleBooklet();});
         obiButton=caseTool(bar,"obi",jp.virtualcd.player.LanguageStrings.text("帯を外す／付ける","Remove / attach obi"),()->{if(surface!=null)surface.toggleObi();});
         wrapButton=caseTool(bar,"wrapping",jp.virtualcd.player.LanguageStrings.text("包装を外す／付ける","Remove / attach wrapping"),()->{if(surface!=null)surface.toggleWrapping();});
@@ -136,7 +139,12 @@ public final class CaseActivity extends Activity {
     }
     private Button button(LinearLayout row,String title,Runnable action){Button b=new Button(this);b.setText(title);jp.virtualcd.player.library.PlayerStyle.button(b);var params=new LinearLayout.LayoutParams(0,dp(44),1);params.setMargins(dp(3),dp(4),dp(3),dp(4));row.addView(b,params);b.setOnClickListener(v->action.run());return b;}
     private void empty(){caption.setText(albumTitle+" · 3D");TextView text=new TextView(this);text.setText(jp.virtualcd.player.LanguageStrings.text("3DデータはPCからの同期で受け取ります。\n\nWindowsの「モバイル同期」でこのアルバムを選択し、\nAndroidの「設定 → PCから同期」から\n接続QRコードを読み取ってください。\n\n同期後、この3D画面を開き直すと表示されます。","Receive 3D data by syncing from your PC.\n\nSelect this album in Mobile Sync on Windows,\nthen open Settings → Sync from PC on Android\nand scan the connection QR code.\n\nReopen this 3D view after syncing."));text.setTextColor(0xffc1d0df);text.setGravity(Gravity.CENTER);content.addView(text,new FrameLayout.LayoutParams(-1,-1));buttons(false);}
-    private void buttons(boolean loading){boolean ready=!loading&&surface!=null;openButton.setEnabled(ready);resetButton.setEnabled(ready);discButton.setEnabled(ready);bookletButton.setEnabled(ready&&current.digipak);bookletButton.setVisibility(current!=null&&current.digipak?android.view.View.VISIBLE:android.view.View.GONE);obiButton.setEnabled(ready&&current.hasObi);wrapButton.setEnabled(ready&&!current.digipak);}
+    private void buttons(boolean loading){boolean ready=!loading&&surface!=null,multi=current!=null&&current.multiCase;
+        openButton.setEnabled(ready);resetButton.setEnabled(ready);discButton.setEnabled(ready&&!multi);discButton.setVisibility(multi?android.view.View.GONE:android.view.View.VISIBLE);
+        turnButton.setEnabled(ready&&multi);turnButton.setVisibility(multi?android.view.View.VISIBLE:android.view.View.GONE);
+        for(int i=0;i<4;i++){final int part=i+3;boolean present=multi&&current.geometry!=null&&current.geometry.stream().anyMatch(m->m.part==part);multiDiscButtons[i].setEnabled(ready&&present);multiDiscButtons[i].setVisibility(present?android.view.View.VISIBLE:android.view.View.GONE);}
+        bookletButton.setEnabled(ready&&current!=null&&current.digipak);bookletButton.setVisibility(current!=null&&current.digipak?android.view.View.VISIBLE:android.view.View.GONE);
+        obiButton.setEnabled(ready&&current!=null&&current.hasObi);wrapButton.setEnabled(ready&&current!=null&&!current.digipak&&!multi);wrapButton.setVisibility(multi?android.view.View.GONE:android.view.View.VISIBLE);}
     private void load(){buttons(true);caption.setText(jp.virtualcd.player.LanguageStrings.text("3Dデータを読み込み中…","Loading 3D data…"));worker.execute(()->{try{
             byte[] bytes;try(InputStream input=new AtomicFile(packageFile).openRead()){bytes=CasePackage.readBytes(input,CasePackage.MAX_BYTES);}
             CasePackage next=CasePackage.parse(bytes);runOnUiThread(()->{if(destroyed)next.close();else show(next);});

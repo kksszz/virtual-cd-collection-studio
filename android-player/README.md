@@ -1,4 +1,12 @@
-# Virtual CD Player for Android — 0.12.0
+# Virtual CD Player for Android — 0.12.1
+
+## 0.12.1：24mmマルチケースと3枚組デジパック
+
+Windows v0.90.0で作成した24mmマルチケースのGLBを表示できます。前面を開き、中央トレイを回転し、割り当てたDisc 1–4を個別に取り出せます。2枚だけの場合はDisc 2を最後部へ配置します。Spine Cardの着脱にも対応します。3枚組デジパックのGLBも読み込めます。従来の標準ケースと2枚組デジパックは引き続き利用できます。
+
+- versionCode 40。従来と同じ署名のAPKで上書き更新でき、既存データを保持します。アンインストールは不要です。
+- 新しい3Dを表示するには、Windows側で転送データを再準備してGLBを再転送してください。
+- 24mm中央部の穴やヒンジなど、一部の寸法はスキャンに基づく近似です。端末での描画・操作は実物画像を使って引き続き確認してください。
 
 ## 0.12.0：デジパック2枚組と複数ディスクの読み込み
 
@@ -323,12 +331,12 @@ APK: `app/build/outputs/apk/debug/app-debug.apk`（試作・デバッグ署名�
 
 ## 開発環境
 
-- JDK 17（このプロジェクトの`.tools/jdk`に配置。PCの既存Java設定は変更しない）
-- Gradle 8.13 / Android Gradle Plugin 8.13.2
-- Android SDK Platform 36 / Build Tools 35.0.0
+- JDK 17（`.tools/jdk`に配置するか`JAVA_HOME`を設定。PCの既存Java設定は変更しない）
+- Gradle 8.9 / Android Gradle Plugin 8.7.3
+- Android SDK Platform 35 / Build Tools 35.0.0
 - Media3 1.9.4 / Android 10以上（minSdk 29）
 
-SDKライセンスへのユーザー同意を受け、SDKとGradleを`.tools`に導入済みです。PowerShellで`./build-android.ps1`を実行するとAPK作成とLintを実行します。スクリプトはプロジェクト専用環境を使用し、終了時に環境変数を復元します。Gradle Wrapperも生成済みで、標準環境では`./gradlew.bat :app:assembleDebug :app:lintDebug`を使用できます。Android Studioからこのフォルダーを開くこともできます。
+SDKライセンスに同意してJDK 17とAndroid SDK Platform 35を用意してください。`.tools`へ配置するか`JAVA_HOME`と`ANDROID_HOME`を設定し、PowerShellで`./build-android.ps1`を実行するとAPK作成とLintを実行します。スクリプトは終了時に環境変数を復元します。Gradle Wrapperを使用して`./gradlew.bat :app:assembleDebug :app:lintDebug`でもビルドできます。Android Studioからこのフォルダーを開くこともできます。既存端末への上書き更新には、従来と同じデバッグ署名鍵で署名してください。鍵はリポジトリに含めません。
 
 ZIP読み取りの単体テストは`./test-core.ps1`。テストは一意な一時フォルダーに合成ZIPを作り、元音源を変更しません。追加引数にZIPのパスを渡すと、読み取りのみで索引を確認できます。
 

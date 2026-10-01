@@ -16,6 +16,15 @@ public class DigipakMotionTest {
                 near(fold[2]*fold[2]+fold[3]*fold[3],1);
             }
         }
+        near(DigipakMotion.leftAngle3(0),180);near(DigipakMotion.rightAngle3(0),-180);near(DigipakMotion.farAngle3(0),180);
+        near(DigipakMotion.leftAngle3(1f/3),0);near(DigipakMotion.rightAngle3(1f/3),-180);
+        near(DigipakMotion.rightAngle3(2f/3),0);near(DigipakMotion.farAngle3(2f/3),180);
+        near(DigipakMotion.farAngle3(1),0);
+        for(int part:new int[]{DigipakMotion.FOLD_LEFT,DigipakMotion.FOLD_RIGHT,DigipakMotion.FOLD_FAR})for(int frame=0;frame<=100;frame++){
+            float[] fold=DigipakMotion.fold3(part,frame/100f,part==DigipakMotion.FOLD_LEFT?-.78f:part==DigipakMotion.FOLD_RIGHT?.77f:2.29f,.005f);
+            for(float value:fold)if(!Float.isFinite(value))throw new AssertionError("Invalid three-disc fold");
+            near(fold[2]*fold[2]+fold[3]*fold[3],1);
+        }
         System.out.println("PASS digipak: staged opening, fold endpoints, finite unit normals through 101 poses");
     }
 }

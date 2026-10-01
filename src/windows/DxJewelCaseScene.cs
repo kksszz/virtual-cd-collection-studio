@@ -333,6 +333,21 @@ internal sealed partial class DxJewelCaseScene : IDisposable
 
     public void SetItem(JewelCaseCoverFlowItem item, double yaw, double pitch)
     {
+        if(item.MultiCase is {} multi) {
+            bool open=_caseIsOpen,turned=_isMultiCase&&MultiCaseTurned;
+            bool same=_isMultiCase&&_multiItemKey==item.Key;
+            var saved=same?CaptureMultiDiscs():[];
+            var selected=same?_multiSelectedDisc:null;var active=same?_multiPlayingDisc:null;
+            bool playing=same&&_discPlaying;SetDiscPlaying(false);
+            BuildMultiCasePrototype(multi,item.TrayColorMode);
+            _isMultiCase=true;_caseIsOpen=open;MultiCaseTurned=open&&turned;
+            _multiItemKey=item.Key;_multiSelectedDisc=selected;_multiPlayingDisc=active;
+            AddSpineCard(item.SpineCard,item.SpineCardReverse,D(142),D(124),D(24),124);
+            SetSpineCardRemoved(open,false);
+            SetMultiCaseProgress(open?(MultiCaseTurned?2:1):0);
+            RestoreMultiDiscs(saved);SetDiscPlaying(playing);
+            ApplyRotation(yaw,pitch);RequestRender();return;
+        }
         ResetCaseTransforms();
         if (!string.Equals(_discItemKey, item.Key, StringComparison.OrdinalIgnoreCase))
         {
@@ -777,8 +792,8 @@ internal sealed partial class DxJewelCaseScene : IDisposable
             CompositionTarget.Rendering -= OnInteractiveRenderFrame;
             _interactiveRenderPending = false;
         }
-        Viewport.EnableSSAO = !_isDigipak;
-        Viewport.IsShadowMappingEnabled = !_isDigipak;
+        Viewport.EnableSSAO = !_isDigipak&&!_isMultiCase;
+        Viewport.IsShadowMappingEnabled = !_isDigipak&&!_isMultiCase;
         Viewport.FXAALevel = FXAALevel.Medium;
         // Produce the final still frame immediately at full quality.
         RequestRender();
@@ -1074,6 +1089,7 @@ internal sealed partial class DxJewelCaseScene : IDisposable
     public void SetCaseOpen(bool open, bool animate = true)
     {
         _caseIsOpen=open;
+        if(_isMultiCase){if(!open){ReturnMultiDiscs();MultiCaseTurned=false;}AnimateMultiCase(open?(MultiCaseTurned?2:1):0,animate);return;}
         if(_isDigipak){SetDigipakOpen(open,animate);return;}
         var animationGeneration = ++_caseAnimationGeneration;
         // Negative rotation lifts the lid toward the viewer instead of passing
@@ -1246,6 +1262,7 @@ internal sealed partial class DxJewelCaseScene : IDisposable
 
     public bool IsDiscHit(System.Windows.Point position)
     {
+        if(_isMultiCase)return SelectMultiDiscAt(position);
         var hits = Viewport.FindHits(position)?.OrderBy(result => result.Distance);
         if (hits is null) return false;
         var discMeshes = _discRoot.Children.OfType<MeshGeometryModel3D>()
@@ -1257,11 +1274,13 @@ internal sealed partial class DxJewelCaseScene : IDisposable
     public void SetDiscPlaying(bool playing)
     {
         if (_disposed) return;
+        if(_isMultiCase&&(_multiPlayingDisc is not int n||!_multiDiscStates.ContainsKey(n)))playing=false;
         if (playing)
         {
             if (_discPlaying) return;
             _discPlaying = true;
             _discSpinStartAngle = _discSpinRotation.Angle;
+            if(_isMultiCase&&_multiPlayingDisc is int number)_discSpinStartAngle=_multiDiscStates[number].Spin.Angle;
             _discSpinClock.Restart();
             CompositionTarget.Rendering += OnDiscRenderFrame;
             return;
@@ -1281,6 +1300,11 @@ internal sealed partial class DxJewelCaseScene : IDisposable
         var elapsed = _discSpinClock.Elapsed.TotalSeconds;
         if (elapsed <= 0) return;
         var degrees = DiscPlaybackRpm * 6 * elapsed;
+        if(_isMultiCase) {
+            if(_multiPlayingDisc is int number&&_multiDiscStates.TryGetValue(number,out var disc))
+                disc.Spin.Angle=(_discSpinStartAngle-degrees)%360;
+            RequestRender();return;
+        }
         // Derive every frame from one fixed start time. Dispatcher timer
         // jitter can no longer accumulate into uneven angular steps.
         _discSpinRotation.Angle = (_discSpinStartAngle - degrees) % 360;
@@ -1437,7 +1461,9 @@ internal sealed partial class DxJewelCaseScene : IDisposable
     {
         _bookletProgress = Math.Clamp(progress, 0, 1);
         var pose = BookletPose(_bookletProgress);
-        if(_isDigipak){_bookletTranslation.OffsetX=0;_bookletTranslation.OffsetY=D(132)*(float)_bookletProgress;_bookletTranslation.OffsetZ=D(8)*(float)Math.Clamp((_bookletProgress-.92)/.08,0,1);_bookletTilt.Angle=0;RequestRender();return;}
+        if(_isDigipak){_bookletTranslation.OffsetX=_digipakSideBooklet?-D(132)*(float)_bookletProgress:0;
+            _bookletTranslation.OffsetY=_digipakSideBooklet?0:D(132)*(float)_bookletProgress;
+            _bookletTranslation.OffsetZ=D(8)*(float)Math.Clamp((_bookletProgress-.92)/.08,0,1);_bookletTilt.Angle=0;RequestRender();return;}
         _bookletTranslation.OffsetX = pose.X;
         _bookletTranslation.OffsetY = pose.Y;
         _bookletTranslation.OffsetZ = pose.Z;
@@ -1483,6 +1509,7 @@ internal sealed partial class DxJewelCaseScene : IDisposable
 
     public bool BeginDiscDrag(System.Windows.Point position)
     {
+        if(_isMultiCase)return BeginMultiDiscDrag(position);
         if (!_discRemoved || Viewport.Camera is not DxPerspectiveCamera camera) return false;
         var hit = Viewport.FindHits(position)?.OrderBy(result => result.Distance).FirstOrDefault();
         if (hit is null || !_discRoot.Children.OfType<MeshGeometryModel3D>().Concat(_isDigipak?_secondDiscRoot.Children.OfType<MeshGeometryModel3D>():[]).Any(mesh =>
@@ -1522,6 +1549,7 @@ internal sealed partial class DxJewelCaseScene : IDisposable
 
     public void DragDiscTo(System.Windows.Point position)
     {
+        if(_isMultiCase){DragMultiDiscTo(position);return;}
         if (!_discRemoved || _discDragPoint is not { } previous) return;
         var point = Viewport.UnProjectOnPlane(position, previous, _discDragNormal);
         if (point is not { } current) return;
@@ -1545,7 +1573,7 @@ internal sealed partial class DxJewelCaseScene : IDisposable
     private static Vector3D ConstrainRemovedDiscOffset(Vector3D proposed) =>
         new(proposed.X, proposed.Y, Math.Max(RemovedDiscMinimumZ, proposed.Z));
 
-    public void EndDiscDrag() => _discDragPoint = null;
+    public void EndDiscDrag() { _discDragPoint = null;_multiDragDisc=null; }
 
     public bool BeginSpineCardDrag(System.Windows.Point position)
     {
@@ -2800,7 +2828,7 @@ internal sealed partial class DxJewelCaseScene : IDisposable
         _tearTapeRibbonRoot.Children.Add(_tearTapeRibbonModel);
     }
 
-    private void AddSpineCard(BitmapSource? bitmap, BitmapSource? reverseBitmap, float caseWidth, float caseHeight, float caseDepth)
+    private void AddSpineCard(BitmapSource? bitmap, BitmapSource? reverseBitmap, float caseWidth, float caseHeight, float caseDepth, float caseHeightMm = 125f)
     {
         if (bitmap is null) return;
         var (back, spine, front) = SpineCardArtwork.Split(bitmap);
@@ -2811,7 +2839,6 @@ internal sealed partial class DxJewelCaseScene : IDisposable
         // pixel from the known 120 mm card height instead; only the folded side
         // itself is constrained to the case's physical 10 mm depth.
         const float obiHeightMm = 120f;
-        const float caseHeightMm = 125f;
         var cardHeight = caseHeight * obiHeightMm / caseHeightMm;
         var horizontalScale = cardHeight / Math.Max(1, back.PixelHeight);
         var backWidth = horizontalScale * back.PixelWidth;

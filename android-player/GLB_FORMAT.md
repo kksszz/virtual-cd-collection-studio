@@ -77,11 +77,33 @@ Android 0.12.0 supports this profile; Android 0.11.0 and older reject it.
 Legacy profiles are unchanged. Export requires the matching Windows development build;
 the published Windows v0.88.0 release does not export digipak GLB.
 
+### Three-disc digipak extension
+
+`digipak-three-disc-glb-1` retains part IDs 0–7 and adds `FarRightPanel` (8),
+`Disc3` (9), and `FarRightFold` (10). The extra texture roles are `disc3`,
+`outerFarRight`, `tray1`, `tray2`, `tray3`, and `farFold`. `bookletExtraction`
+is `Top` or `Left` in `extras.virtualCd`; it is independent of disc count and
+also applies to newly exported two-disc GLBs. Missing texture roles are rendered
+with unprinted material. The new profile requires an Android build with 11-part
+pose support; older Android builds reject it instead of misplacing parts.
+
 `tests/WindowsCaseTests --mobile-model` generates synthetic digipak fixtures for all
 four tray colors. Copy the generated `digipak-<Color>.glb` files into Android test assets
 as `case3d-digipak-<Color>.glb` to reproduce them. `test-core.ps1` checks fold endpoint
 continuity and staged angles. Android instrumentation mode `digipak` checks parsing,
 malformed rejection, GPU poses, removal/return, interrupted reset and context recreation.
+
+### 24 mm multi-case profile (Windows v0.90.0 / Android 0.12.1)
+
+`multi-case-24mm-glb-1` exports the measured Windows 24 mm assembly. Its eight
+parts are `Rear` (0), `Center` (1), `Front` (2), `Disc1`–`Disc4` (3–6), and
+`SpineCard` (7). `Open` and `Turn` use separate hinge pivots, and every disc
+has an individual extraction clip. Missing discs leave their part node empty;
+the two-disc arrangement keeps Disc2 in the rear physical tray.
+Images for the panels, folds, numbered discs and booklet have `multi`-prefixed
+roles. The optional Spine Card reuses the obi roles; wrapping is unsupported.
+Android builds before 0.12.1 reject the GLB. Android 0.12.1 provides case
+opening, center turning and individual disc controls.
 
 - `tools/validate-glb.cjs`: Khronos glTF-Validator, errors/warnings checked.
 - `tools/verify-glb-browser.cjs`: Three.js GLTFLoader in local headless Chromium; strips every

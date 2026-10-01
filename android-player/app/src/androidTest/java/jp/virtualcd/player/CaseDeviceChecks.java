@@ -13,6 +13,14 @@ import static android.opengl.EGL14.*;
 import static android.opengl.GLES20.*;
 
 final class CaseDeviceChecks {
+    static void runMultiCaseReal(Instrumentation test)throws Exception {
+        File fixture=new File(test.getTargetContext().getCacheDir(),"multi-case-real.glb");
+        byte[] bytes;try(InputStream input=new FileInputStream(fixture)){bytes=CasePackage.readBytes(input,CasePackage.MAX_BYTES);}
+        try(CasePackage data=CasePackage.parse(bytes)){
+            if(!data.multiCase||!data.desktopGeometry)throw new AssertionError("24mm profile");
+            render(test,data);
+        }
+    }
     static void runDigipakReal(Instrumentation test)throws Exception {
         byte[] bytes;try(InputStream input=new FileInputStream(new File(test.getTargetContext().getCacheDir(),"digipak-real.glb"))){bytes=CasePackage.readBytes(input,CasePackage.MAX_BYTES);}
         try(CasePackage data=CasePackage.parse(bytes)){if(!data.digipak)throw new AssertionError("Expected digipak");render(test,data);}
@@ -104,6 +112,21 @@ final class CaseDeviceChecks {
         if(!eglMakeCurrent(display,surface,surface,context))throw new AssertionError("EGL current");CaseSurface[] renderer=new CaseSurface[1];
         try{
             test.runOnMainSync(()->renderer[0]=new CaseSurface(test.getTargetContext(),data));CaseSurface view=renderer[0];view.onSurfaceCreated(null,null);view.onSurfaceChanged(null,512,512);view.onDrawFrame(null);int[] closed=capture();save(test,closed,"case3d-closed.png");
+            if(data.multiCase){
+                view.toggleOpen();barrier(view);settle(view);view.onDrawFrame(null);int[] opened=capture();save(test,opened,"multi-case-open.png");
+                if(value(view,"open")!=1||Arrays.equals(closed,opened))throw new AssertionError("24mm front opening");
+                view.toggleMultiDisc(1);barrier(view);settle(view);view.onDrawFrame(null);int[] disc1=capture();
+                var field=CaseSurface.class.getDeclaredField("multiRemoved");field.setAccessible(true);float[] removed=(float[])field.get(view);
+                if(removed[0]!=1||removed[1]!=0||removed[2]!=0||removed[3]!=0||Arrays.equals(opened,disc1))throw new AssertionError("24mm Disc1 only");
+                view.toggleMultiDisc(1);barrier(view);settle(view);
+                view.toggleMultiTurn();barrier(view);settle(view);view.onDrawFrame(null);int[] turned=capture();save(test,turned,"multi-case-turned.png");
+                if(value(view,"multiTurn")!=1||Arrays.equals(opened,turned))throw new AssertionError("24mm center turn");
+                view.toggleMultiDisc(4);barrier(view);settle(view);view.onDrawFrame(null);int[] disc4=capture();
+                if(removed[0]!=0||removed[1]!=0||removed[2]!=0||removed[3]!=1||Arrays.equals(turned,disc4))throw new AssertionError("24mm Disc4 only");
+                view.reset();barrier(view);settle(view);view.onDrawFrame(null);capture();
+                if(value(view,"open")!=0||value(view,"multiTurn")!=0||Arrays.stream(new int[]{0,1,2,3}).anyMatch(i->removed[i]!=0))throw new AssertionError("24mm reset");
+                return new int[][]{closed,opened,turned};
+            }
             java.lang.reflect.Field open=CaseSurface.class.getDeclaredField("open"),target=CaseSurface.class.getDeclaredField("targetOpen");open.setAccessible(true);target.setAccessible(true);
             view.toggleOpen();barrier(view);settle(view);view.onDrawFrame(null);int[] opened=capture();save(test,opened,"case3d-open.png");
             if(open.getFloat(view)!=1||value(view,"wrapRemoved")!=1||value(view,"obiRemoved")!=1)throw new AssertionError("Opening clearance");

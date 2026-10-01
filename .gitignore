@@ -33,6 +33,7 @@ tests/AiDevHarness/ai-*.wav
 *.bak
 *.backup
 TestResults/
+android-player/.android-user/
 
 # Generated release packages
 artifacts/

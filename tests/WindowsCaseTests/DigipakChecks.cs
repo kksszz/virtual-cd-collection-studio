@@ -25,11 +25,16 @@ internal static class DigipakChecks
         typeof(MainWindow).GetMethod("SaveTrayColor",stat)!.Invoke(null,[albumKey,"White"]);
         Check(File.ReadAllText(settingsPath).Contains("Digipak2")&&File.ReadAllText(settingsPath).Contains("White"),"tray setting preserves case format");
         var window=new MainWindow();var tray=(ComboBox)window.FindName("TrayColorCombo");var type=(ComboBox)window.FindName("CaseTypeCombo");
-        Check(ReferenceEquals(tray.Parent,type.Parent)&&type.Items.Count==2,"case type selector beside tray color");
+        var extraction=(ComboBox)window.FindName("BookletExtractionCombo");
+        var bookletPanel=(StackPanel)window.FindName("BookletExtractionPanel");
+        Check(ReferenceEquals(tray.Parent,type.Parent)&&ReferenceEquals(type.Parent,bookletPanel.Parent)
+            &&ReferenceEquals(extraction.Parent,bookletPanel)&&bookletPanel.Visibility==Visibility.Collapsed
+            &&type.Items.Count==4,"booklet direction group is hidden without a selected digipak");
         var navigation=(WrapPanel)window.FindName("ImageNavigationPanel");
         foreach(int width in new[]{742,500}){
             navigation.Measure(new Size(width,double.PositiveInfinity));navigation.Arrange(new Rect(0,0,width,navigation.DesiredSize.Height));
             Check(navigation.Children.Cast<FrameworkElement>().All(e=>e is StackPanel),"navigation wraps labelled control groups at "+width);
+            Check(window.FindName("MultiCasePrototypeButton") is null,"prototype button removed at "+width);
             var visual=new DrawingVisual();using(var drawing=visual.RenderOpen())drawing.DrawRectangle(new VisualBrush(navigation),null,new Rect(0,0,width,navigation.ActualHeight));
             var bitmap=new RenderTargetBitmap(width,(int)Math.Ceiling(navigation.ActualHeight),96,96,PixelFormats.Pbgra32);bitmap.Render(visual);var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(bitmap));using var output=File.Create(Path.Combine(root,"toolbar-"+width+".png"));encoder.Save(output);
         }
@@ -90,6 +95,21 @@ internal static class DigipakChecks
         scene.SetBookletRemoved(false,false);Check(((TranslateTransform3D)Field("_bookletTranslation")).OffsetY==0,"booklet returns to slit");
         scene.SetItem(item,0,0);Check(((AxisAngleRotation3D)Field("_digipakRightAngle")).Angle==0,"artwork refresh retains open pose");
         scene.SetDiscRemoved(true,false);scene.SetDiscRemoved(false,false);
+        var three=item with { Digipak=new DigipakArtwork(item.Digipak!.InnerLeft,item.Digipak.OuterRight,item.Digipak.Trays){
+            DiscCount=3,BookletExtraction="Left",ThirdDisc=item.DiscImage,Tray3=item.Digipak.Tray2,
+            LeftFold=item.Digipak.LeftFold,RightFold=item.Digipak.RightFold} };
+        scene.SetCaseOpen(false,false);scene.SetItem(three,0,0);
+        Check(((DxGroup)Field("_thirdDiscRoot")).Children.Count>0,"third disc has real geometry");
+        var threeClosed=PaperPoints();
+        Console.WriteLine($"Three-disc closed depth: {(threeClosed.Max(p=>p.Z)-threeClosed.Min(p=>p.Z))/DigipakDimensions.Unit:F1} mm");
+        Render("three-closed.png");
+        scene.SetCaseOpen(true,false);
+        var threeOpen=PaperPoints();
+        Check(Math.Abs((threeOpen.Max(p=>p.X)-threeOpen.Min(p=>p.X))/DigipakDimensions.Unit-597.5)<.05,"four-panel full-open width matches three-disc folds");
+        Check(Math.Abs(((AxisAngleRotation3D)Field("_digipakFarRightAngle")).Angle)<.001,"third panel unfolds");
+        Render("three-open.png");
+        scene.SetBookletRemoved(true,false);
+        Check(((TranslateTransform3D)Field("_bookletTranslation")).OffsetX<0&&Math.Abs(((TranslateTransform3D)Field("_bookletTranslation")).OffsetY)<.001,"side booklet slides outward to the left");
         try{MobileCaseExporter.Export(item,Path.Combine(root,"unsupported.vcd3d"));throw new Exception("Incorrect single-disc mobile export accepted");}catch(NotSupportedException){Console.WriteLine("PASS unsupported mobile export explicitly rejected");}
         scene.SetCaseOpen(false,false);scene.SetItem(item with{Digipak=null},0,0);Check(!scene.IsDigipak,"standard case still builds after format switch");
         Check(scene.Viewport.IsShadowMappingEnabled&&scene.Viewport.EnableSSAO,"standard case lighting remains enabled");

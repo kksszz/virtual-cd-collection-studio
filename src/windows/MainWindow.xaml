@@ -612,11 +612,23 @@
                 <ComboBoxItem Content="左Spine" Tag="LeftSpine"/>
                 <ComboBoxItem Content="右Spine" Tag="RightSpine"/>
                 <ComboBoxItem Content="Inlay" Tag="Inlay"/>
-                <ComboBoxItem Content="Disc" Tag="Disc"/>
-                <ComboBoxItem Content="Disc（2 Disc）" Tag="Disc2"/>
+                <ComboBoxItem Content="Disc1" Tag="Disc1"/>
+                <ComboBoxItem Content="Disc2" Tag="Disc2"/>
+                <ComboBoxItem Content="Disc3" Tag="Disc3"/>
+                <ComboBoxItem Content="Disc4" Tag="Disc4"/>
+                <ComboBoxItem Content="24mm Front（左右Spine付き）" Tag="MultiFrontWithSpines"
+                              ToolTip="左Spine＋Front＋右Spineを含む1枚の画像。6：138：6の比率で分割して前側ケースに配置します。"/>
+                <ComboBoxItem Content="24mm・表ジャケット（面のみ）" Tag="MultiFrontPanel"/>
+                <ComboBoxItem Content="24mm・前側 左Spine" Tag="MultiFrontLeft"/>
+                <ComboBoxItem Content="24mm・前側 右Spine" Tag="MultiFrontRight"/>
                 <ComboBoxItem Content="デジパック・左内面" Tag="DigipakInnerLeft"/>
                 <ComboBoxItem Content="デジパック・右外面" Tag="DigipakOuterRight"/>
+                <ComboBoxItem Content="デジパック・最右外面" Tag="DigipakOuterFarRight"/>
                 <ComboBoxItem Content="デジパック・トレー見開き" Tag="DigipakTrays"/>
+                <ComboBoxItem Content="デジパック・トレー1" Tag="DigipakTray1"/>
+                <ComboBoxItem Content="デジパック・トレー2" Tag="DigipakTray2"/>
+                <ComboBoxItem Content="デジパック・トレー3" Tag="DigipakTray3"/>
+                <ComboBoxItem Content="デジパック・3番目の折り目" Tag="DigipakFarFold"/>
                 <ComboBoxItem Content="ライナーノーツ" Tag="LinerNotes"/>
                 <ComboBoxItem Content="PAGE（冊子ページ）" Tag="Page"/>
                 <ComboBoxItem Content="Flyer" Tag="Flyer"/>
@@ -644,7 +656,17 @@
                         SelectionChanged="CaseType_Changed" ToolTip="アルバムごとの3Dケース形式">
                 <ComboBoxItem Content="標準CDケース" Tag="Standard"/>
                 <ComboBoxItem Content="デジパック2枚組（3面）" Tag="Digipak2"/>
+                <ComboBoxItem Content="デジパック3枚組（4面）" Tag="Digipak3"/>
+                <ComboBoxItem Content="24mmマルチケース" Tag="Multi24"/>
               </ComboBox>
+              <StackPanel x:Name="BookletExtractionPanel" Orientation="Horizontal" Visibility="Collapsed">
+              <TextBlock Text="冊子の取り出し" Margin="9,0,3,0" VerticalAlignment="Center" Foreground="#A6AFBB"/>
+              <ComboBox x:Name="BookletExtractionCombo" Width="116" Height="27" SelectedIndex="0"
+                        SelectionChanged="BookletExtraction_Changed" ToolTip="デジパックの枚数と独立して選択できます">
+                <ComboBoxItem Content="上へ" Tag="Top"/>
+                <ComboBoxItem Content="左へ" Tag="Left"/>
+              </ComboBox>
+              </StackPanel>
               </StackPanel>
             </WrapPanel>
             <TextBlock x:Name="AlbumImageNameText" Grid.Row="3" Foreground="#A6AFBB" FontSize="11"

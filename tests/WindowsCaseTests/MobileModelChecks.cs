@@ -90,6 +90,24 @@ internal static class MobileModelChecks
             if(MobileGlbExporter.DigipakPose(5,1,0,1).Shift.Y<1.24f)throw new Exception("Booklet upward slide");
         }
         Console.WriteLine("PASS mobile digipak: four trays, eight moving parts, both disc textures, three GLB animations and flat bind pose");
+        var triple=item with {SpineCard=null,SpineCardReverse=null,SecondDiscImage=Picture(180,180),
+            Digipak=new DigipakArtwork(image,image,null){DiscCount=3,BookletExtraction="Left",ThirdDisc=Picture(180,180),
+                Tray1=Picture(136,124),Tray2=Picture(136,124),Tray3=Picture(136,124),
+                LeftFold=Picture(18,124),RightFold=Picture(17,124),FarRightFold=Picture(11,124),OuterFarRight=image}};
+        var triplePath=Path.Combine(path,"digipak-three.glb");MobileCaseExporter.Export(triple,triplePath);
+        using(var input=new BinaryReader(File.OpenRead(triplePath))){input.ReadBytes(12);int size=input.ReadInt32();input.ReadInt32();using var doc=JsonDocument.Parse(input.ReadBytes(size));var root=doc.RootElement;
+            if(root.GetProperty("extras").GetProperty("virtualCd").GetProperty("profile").GetString()!="digipak-three-disc-glb-1")throw new Exception("Three-disc profile");
+            if(root.GetProperty("extras").GetProperty("virtualCd").GetProperty("bookletExtraction").GetString()!="Left")throw new Exception("Side booklet metadata");
+            if(root.GetProperty("nodes")[0].GetProperty("children").GetArrayLength()!=11)throw new Exception("Three-disc moving parts");
+            if(!root.GetProperty("images").EnumerateArray().Any(i=>i.GetProperty("name").GetString()=="disc3"))throw new Exception("Third disc texture");}
+        var tripleCapture=DxJewelCaseScene.CaptureMobile(triple);
+        if(!new[]{8,9,10}.All(part=>tripleCapture.Meshes.Any(mesh=>mesh.part==part)))throw new Exception("Third panel, disc and fold geometry");
+        var bookletPose=MobileGlbExporter.DigipakPose(5,1,0,1,true,true);
+        if(bookletPose.Shift.X>-.5f||Math.Abs(bookletPose.Shift.Y)>.01f)throw new Exception("Booklet slides left");
+        if(MobileGlbExporter.DigipakPose(5,1,0,1,false,true).Shift.X>-.5f
+            ||MobileGlbExporter.DigipakPose(5,1,0,1,true,false).Shift.Y<1.24f)
+            throw new Exception("Booklet direction must be independent of disc count");
+        Console.WriteLine("PASS mobile three-disc digipak: eleven moving parts, third disc and left booklet extraction");
         Console.WriteLine(path);
     }
 }

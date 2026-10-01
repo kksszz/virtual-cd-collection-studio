@@ -138,9 +138,17 @@ internal sealed partial class CdImportWindow
 
     private async void PreviewWindowClosing(object? sender, CancelEventArgs e)
     {
-        if (busy) { e.Cancel = true;cancellation?.Cancel();status.Text = "処理の終了を待っています。";return; }
+        if (busy) { e.Cancel = true;previewCloseRequested = true;cancellation?.Cancel();status.Text = "処理の終了と試聴の停止を待っています。";return; }
         if (previewAllowClose) return;
         if (previewTransition) { e.Cancel = true;previewCloseRequested = true;previewStatus.Text = "試聴の停止を待っています…";return; }
         if (previewPlayer is not null) { e.Cancel = true;previewCloseRequested = true;await StopPreview(); }
+        else previewTimer.Stop();
+    }
+
+    private async Task CloseAfterOperationIfRequested()
+    {
+        if (!previewCloseRequested) return;
+        try { await StopPreviewCore(); }
+        finally { previewAllowClose = true;Close(); }
     }
 }

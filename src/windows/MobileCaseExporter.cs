@@ -14,25 +14,27 @@ public static class MobileCaseExporter
     public static void Export(JewelCaseCoverFlowItem item, string destination)
     {
         if (string.Equals(Path.GetExtension(destination), ".glb", StringComparison.OrdinalIgnoreCase)) { MobileGlbExporter.Export(item,destination); return; }
-        if(item.Digipak is not null)throw new NotSupportedException("デジパック2枚組はGLB形式で出力してください。");
+        if(item.Digipak is not null)throw new NotSupportedException("デジパックはGLB形式で出力してください。");
+        if(item.MultiCase is not null)throw new NotSupportedException("24mmマルチケースはGLB形式で出力してください。");
         if (!string.Equals(Path.GetExtension(destination), ".vcd3d", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("保存先の拡張子は .vcd3d にしてください。");
         ExportSnapshot(item,destination);
     }
     internal static void ExportSnapshot(JewelCaseCoverFlowItem item,string destination)
     {
+        var multi=item.MultiCase is not null;
         var textures = new Dictionary<string, object>();
         var inlay = item.SplitInlay();
         var obi = item.SpineCard is { } card ? SpineCardArtwork.Split(card) : default;
         var obiInside = item.SpineCardReverse is { } reverseCard ? SpineCardArtwork.Split(reverseCard) : default;
         var images = new Dictionary<string, BitmapSource?>
         {
-            ["front"] = item.FrontCover, ["insideFront"] = item.InsideFrontCover,
-            ["back"] = item.BackCover, ["spine"] = item.SpineCover,
+            ["front"] = item.MultiCase?.Front ?? item.FrontCover, ["insideFront"] = item.InsideFrontCover,
+            ["back"] = item.MultiCase?.Back ?? item.BackCover, ["spine"] = item.SpineCover,
             ["rightSpine"] = item.RightSpineCover, ["inlay"] = inlay.Panel,
             ["inlayLeft"] = inlay.Left, ["inlayRight"] = inlay.Right,
             ["obiFrontInside"] = obiInside.Back, ["obiSpineInside"] = obiInside.Spine, ["obiBackInside"] = obiInside.Front,
-            ["disc"] = item.DiscImage,
+            ["disc"] = item.MultiCase?.Disc1 ?? item.DiscImage,
             ["obiBack"] = obi.Back, ["obiSpine"] = obi.Spine, ["obiFront"] = obi.Front
         };
         var fullPath = Path.GetFullPath(destination);
@@ -63,7 +65,8 @@ public static class MobileCaseExporter
                 }
                 var manifest = new
                 {
-                    format = "virtual-cd-case", version = item.Digipak is null?3:4, model = item.Digipak is null?"jewel-case-v3":"digipak-two-disc-v1",
+                    format = "virtual-cd-case", version = multi?6:item.Digipak is null?3:item.Digipak.DiscCount==3?5:4,
+                    model = multi?"multi-case-24mm-v1":item.Digipak is null?"jewel-case-v3":item.Digipak.DiscCount==3?"digipak-three-disc-v1":"digipak-two-disc-v1",
                     title = item.Title, artist = item.Artist,
                     // Do not expose Windows paths. Mobile binding is explicitly selected on import.
                     albumId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(item.Key))).ToLowerInvariant(),
@@ -74,7 +77,8 @@ public static class MobileCaseExporter
                         frontWidthMm = Math.Clamp(120d * obi.Front.PixelWidth / obi.Front.PixelHeight, 1, 140),
                         backWidthMm = Math.Clamp(120d * obi.Back.PixelWidth / obi.Back.PixelHeight, 1, 140)
                     },
-                    wrapped = item.SpineCard is not null,
+                    wrapped = !multi && item.SpineCard is not null,
+                    bookletExtraction=item.Digipak?.BookletExtraction,
                     unsupported = new { secondDisc = item.SecondDiscImage is not null }
                 };
                 using var manifestStream = zip.CreateEntry("manifest.json").Open();
