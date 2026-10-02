@@ -7,8 +7,8 @@ android {
         applicationId 'jp.virtualcd.player'
         minSdk 29
         targetSdk 35
-        versionCode 40
-        versionName '0.12.1'
+        versionCode 41
+        versionName '0.12.2'
         testInstrumentationRunner 'jp.virtualcd.player.DeviceSmokeTest'
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }

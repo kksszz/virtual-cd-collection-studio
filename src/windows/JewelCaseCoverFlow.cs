@@ -50,7 +50,8 @@ public sealed class JewelCaseCoverFlowSelectionChangedEventArgs(JewelCaseCoverFl
     public bool PlaybackAccepted { get; set; } = true;
 }
 
-public sealed record JewelCasePlaybackState(string TrackDisplay, bool IsPlaying, bool HasTrack, double Volume);
+public sealed record JewelCasePlaybackState(string TrackDisplay, bool IsPlaying, bool HasTrack, double Volume,
+    BitmapSource? AlbumThumbnail = null, int? DiscNumber = null);
 public sealed class JewelCaseVolumeChangedEventArgs(double volume) : EventArgs
 {
     public double Volume { get; } = volume;
@@ -114,6 +115,8 @@ public sealed partial class JewelCaseCoverFlow : Grid
     private readonly DispatcherTimer _playbackVisualTimer = new(DispatcherPriority.Render)
         { Interval = TimeSpan.FromMilliseconds(100) };
     private readonly Border _playbackBar = new();
+    private readonly Border _playbackThumbnailFrame = new();
+    private readonly Image _playbackThumbnail = new();
     private readonly TextBlock _playbackTitleText = new();
     private readonly TextBlock _playbackStatusText = new();
     private readonly Button _previousTrackButton = new();
@@ -293,8 +296,9 @@ public sealed partial class JewelCaseCoverFlow : Grid
         overlay.Children.Add(_discButton);
         overlay.Children.Add(_multiDiscButton);
         _multiDiscButton.Click+=(_,_)=>{
-            if(_dxScene?.IsMultiCase!=true||!_isCaseOpen)return;
-            _dxScene.SetSelectedMultiDiscRemoved(!_dxScene.SelectedMultiDiscRemoved);
+            if(_dxScene is null||!_isCaseOpen)return;
+            if(_dxScene.IsMultiCase)_dxScene.SetSelectedMultiDiscRemoved(!_dxScene.SelectedMultiDiscRemoved);
+            else if(_dxScene.IsDigipak)_dxScene.SetSelectedDigipakDiscRemoved(!_dxScene.SelectedDigipakDiscRemoved);
             UpdateMultiDiscButton();
         };
 
@@ -532,15 +536,31 @@ public sealed partial class JewelCaseCoverFlow : Grid
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var nowPlaying = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        var nowPlaying = new StackPanel
+            { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        _playbackThumbnail.Width = 38;
+        _playbackThumbnail.Height = 38;
+        _playbackThumbnail.Stretch = Stretch.UniformToFill;
+        _playbackThumbnailFrame.Width = 40;
+        _playbackThumbnailFrame.Height = 40;
+        _playbackThumbnailFrame.Margin = new Thickness(0, 0, 10, 0);
+        _playbackThumbnailFrame.Background = new SolidColorBrush(Color.FromRgb(30, 38, 48));
+        _playbackThumbnailFrame.BorderBrush = new SolidColorBrush(Color.FromRgb(82, 99, 116));
+        _playbackThumbnailFrame.BorderThickness = new Thickness(1);
+        _playbackThumbnailFrame.CornerRadius = new CornerRadius(3);
+        _playbackThumbnailFrame.Child = _playbackThumbnail;
+        _playbackThumbnailFrame.Visibility = Visibility.Collapsed;
+        nowPlaying.Children.Add(_playbackThumbnailFrame);
+        var playbackText = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         _playbackStatusText.Foreground = new SolidColorBrush(Color.FromRgb(73, 220, 151));
         _playbackStatusText.FontSize = 11;
         _playbackTitleText.Foreground = Brushes.White;
         _playbackTitleText.FontWeight = FontWeights.SemiBold;
         _playbackTitleText.FontSize = 13;
         _playbackTitleText.TextTrimming = TextTrimming.CharacterEllipsis;
-        nowPlaying.Children.Add(_playbackStatusText);
-        nowPlaying.Children.Add(_playbackTitleText);
+        playbackText.Children.Add(_playbackStatusText);
+        playbackText.Children.Add(_playbackTitleText);
+        nowPlaying.Children.Add(playbackText);
         grid.Children.Add(nowPlaying);
 
         void ConfigureButton(Button button, int column, string content)
@@ -782,7 +802,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
                 e.Handled = true;
                 break;
             case Key.D when _selectedIndex >= 0 && _isCaseOpen:
-                SetDiscRemoved(!_isDiscRemoved, true);
+                SetDiscRemoved(_dxScene?.IsDigipak==true?!_dxScene.SelectedDigipakDiscRemoved:!_isDiscRemoved, true);
                 e.Handled = true;
                 break;
             case Key.W when _selectedIndex >= 0 && HasSelectedSpineCard():
@@ -1030,13 +1050,35 @@ public sealed partial class JewelCaseCoverFlow : Grid
     private readonly record struct CollectionMotion(CollectionPose From, CollectionPose To,
         long StartedTimestamp, double DurationSeconds, bool EaseOut, Action? Completed);
 
+    private static double RackCaseDepth(JewelCaseCoverFlowItem item) => item.MultiCase is not null
+        ? 24 * DigipakDimensions.Unit
+        : item.Digipak is not null ? 11 * DigipakDimensions.Unit : DxJewelCaseScene.StandardCaseDepth;
+
+    private double RackSlotX(int relative)
+    {
+        if (relative == 0) return 0;
+        const double rackScale = 0.30;
+        const double caseGap = 0.015;
+        var direction = Math.Sign(relative);
+        var previousIndex = _selectedIndex;
+        double x = 0;
+        for (var step = 1; step <= Math.Abs(relative); step++)
+        {
+            var index = (_selectedIndex + direction * step % _items.Count + _items.Count) % _items.Count;
+            x += direction * ((RackCaseDepth(_items[previousIndex]) + RackCaseDepth(_items[index]))
+                * rackScale / 2 + caseGap);
+            previousIndex = index;
+        }
+        return x;
+    }
+
     private CollectionPose GetCollectionPose(int relative)
     {
         var selected = relative == 0;
         if (_rackPresentation)
         {
             return new CollectionPose(
-                selected ? -0.72 : relative * 0.068,
+                selected ? -0.72 : RackSlotX(relative),
                 selected ? 0.40 : -0.10,
                 selected ? 0.65 : 0.02,
                 selected ? 0.25 : 0.30,
@@ -1144,10 +1186,13 @@ public sealed partial class JewelCaseCoverFlow : Grid
             return;
         }
         var visibleItems = VisibleCircularItems(18);
-        var minimumRelative = visibleItems.Min(entry => entry.Relative);
-        var maximumRelative = visibleItems.Max(entry => entry.Relative);
-        var rackCenterX = (minimumRelative + maximumRelative) * 0.068 / 2;
-        var rackWidth = Math.Max(0.72, (maximumRelative - minimumRelative) * 0.068 + 0.20);
+        const double rackScale = 0.30;
+        var rackLeft = visibleItems.Min(entry => RackSlotX(entry.Relative)
+            - RackCaseDepth(_items[entry.Index]) * rackScale / 2);
+        var rackRight = visibleItems.Max(entry => RackSlotX(entry.Relative)
+            + RackCaseDepth(_items[entry.Index]) * rackScale / 2);
+        var rackCenterX = (rackLeft + rackRight) / 2;
+        var rackWidth = Math.Max(0.72, rackRight - rackLeft + 0.14);
         if (_rackFrame is not null && Math.Abs(_rackFrameWidth - rackWidth) < .001
             && Math.Abs(_rackFrameCenterX - rackCenterX) < .001) return;
         if (_rackFrame is not null) _viewport.Children.Remove(_rackFrame);
@@ -1898,7 +1943,9 @@ public sealed partial class JewelCaseCoverFlow : Grid
     private bool TryBeginDiscDrag(Point position)
     {
         if(_dxScene?.IsMultiCase==true){_dxScene.SelectMultiDiscAt(position);UpdateMultiDiscButton();}
-        if ((!_isDiscRemoved&&_dxScene?.IsMultiCase!=true) || _dxScene is null || _isPanning || !_dxScene.BeginDiscDrag(position)) return false;
+        if(_dxScene?.IsDigipak==true){_dxScene.SelectDigipakDiscAt(position);UpdateMultiDiscButton();}
+        if ((!_isDiscRemoved&&_dxScene?.IsMultiCase!=true&&_dxScene?.IsDigipak!=true)
+            || _dxScene is null || _isPanning || !_dxScene.BeginDiscDrag(position)) return false;
         Focus();
         _isRotating = false;
         _isDraggingDisc = CaptureMouse();
@@ -1915,6 +1962,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
     {
         if (!_isCaseOpen || _dxScene is null || !_dxScene.IsDiscHit(position)) return false;
         if(_dxScene.IsMultiCase){_dxScene.ActivateSelectedMultiDisc();UpdateMultiDiscButton();}
+        if(_dxScene.IsDigipak){_dxScene.ActivateSelectedDigipakDisc();UpdateMultiDiscButton();}
         RaiseDiscActivated();
         return true;
     }
@@ -2344,6 +2392,10 @@ public sealed partial class JewelCaseCoverFlow : Grid
             if(_isCaseOpen)_dxScene.TurnMultiCase(!_dxScene.MultiCaseTurned,animate);
             _isDiscRemoved=false;UpdateDiscButton();return;
         }
+        if(_dxScene?.IsDigipak==true){
+            if(_isCaseOpen)_dxScene.SetSelectedDigipakDiscRemoved(removed);
+            _isDiscRemoved=false;UpdateDiscButton();return;
+        }
         if (!_isCaseOpen && removed) return;
         EndPointerDrag();
         _isDiscRemoved = removed;
@@ -2369,6 +2421,8 @@ public sealed partial class JewelCaseCoverFlow : Grid
     private void UpdateDiscButton()
     {
         UpdateMultiDiscButton();
+        _discButton.Visibility=_collectionPresentation||_dxScene is null||_dxScene.IsDigipak
+            ?Visibility.Collapsed:Visibility.Visible;
         if(_selectedIndex>=0&&_selectedIndex<_items.Count&&_items[_selectedIndex].MultiCase is not null) {
             _discButton.IsEnabled=_dxScene is not null&&_isCaseOpen&&!_isCaseTransitioning;
             _discButton.Opacity=_discButton.IsEnabled?1:.48;
@@ -2381,7 +2435,6 @@ public sealed partial class JewelCaseCoverFlow : Grid
         _discButton.Content = _isDiscRemoved
             ? LocalizationService.Select("◉ CDを戻す", "◉ Insert CD")
             : LocalizationService.Select("◎ CDを取り出す", "◎ Remove CD");
-        if(_selectedIndex>=0&&_selectedIndex<_items.Count&&_items[_selectedIndex].Digipak is not null)_discButton.Content=_isDiscRemoved?"◉ CD1・2を戻す":"◎ CD1・2を取り出す";
         _discButton.ToolTip = LocalizationService.Select(
             _isCaseOpen ? "CDを取り出す／戻す (D)。取り出したCDは左ドラッグで移動できます" : "先にケースを開いてください",
             _isCaseOpen ? "Remove/insert the CD (D). Left-drag an extracted CD to move it" : "Open the case first");
@@ -2704,9 +2757,10 @@ public sealed partial class JewelCaseCoverFlow : Grid
     {
         if (_selectedIndex >= 0 && _selectedIndex < _items.Count) {
             var args=new JewelCaseCoverFlowSelectionChangedEventArgs(_items[_selectedIndex]) {
-                DiscNumber=_dxScene?.IsMultiCase==true?_dxScene.SelectedMultiDisc:null };
+                DiscNumber=_dxScene?.IsMultiCase==true?_dxScene.SelectedMultiDisc:
+                    _dxScene?.IsDigipak==true?_dxScene.SelectedDigipakDisc:null };
             DiscActivated?.Invoke(this,args);
-            if(!args.PlaybackAccepted)_dxScene?.CancelMultiDiscPlayback();
+            if(!args.PlaybackAccepted){_dxScene?.CancelMultiDiscPlayback();_dxScene?.CancelDigipakDiscPlayback();}
         }
     }
 
@@ -2726,6 +2780,7 @@ public sealed partial class JewelCaseCoverFlow : Grid
         // opened case spin while a different album continues playing. Prefer
         // the key-aware provider for the physical disc animation.
         var playing = PlaybackActiveProvider?.Invoke(item.Key) ?? state?.IsPlaying ?? item.IsPlaying;
+        if(_dxScene.IsDigipak)_dxScene.SetDigipakPlayingDisc(playing?state?.DiscNumber:null);
         _dxScene.SetDiscPlaying(playing);
         UpdateMultiDiscButton();
         UpdatePlaybackBar(state);
@@ -2736,9 +2791,14 @@ public sealed partial class JewelCaseCoverFlow : Grid
         if (!_isFullScreen || state is not { HasTrack: true })
         {
             _playbackBar.Visibility = Visibility.Collapsed;
+            _playbackThumbnail.Source = null;
             return;
         }
         _playbackBar.Visibility = Visibility.Visible;
+        if (!ReferenceEquals(_playbackThumbnail.Source, state.AlbumThumbnail))
+            _playbackThumbnail.Source = state.AlbumThumbnail;
+        _playbackThumbnailFrame.Visibility = state.AlbumThumbnail is null
+            ? Visibility.Collapsed : Visibility.Visible;
         _playbackStatusText.Text = state.IsPlaying
             ? LocalizationService.Select("再生中", "Playing")
             : LocalizationService.Select("一時停止", "Paused");

@@ -18,6 +18,7 @@ public sealed record AlbumLibraryBrowserItem(JewelCaseCoverFlowItem CaseItem, Bi
 {
     public BrowserTileArtwork TileArtwork { get; init; } = new(TileCover);
     public Func<CancellationToken, Task<BitmapSource?>>? LoadTileCover { get; init; }
+    public int CaseArtworkDecodeWidth { get; init; }
     public string Key => CaseItem.Key;
     public string Title => CaseItem.Title;
     public string Artist => CaseItem.Artist;
@@ -701,7 +702,8 @@ public partial class AlbumLibraryBrowserWindow : Window
                     Math.Min(visible.Count - 1, selectedIndex + 12) - Math.Max(0, selectedIndex - 12) + 1)
                 .OrderBy(index => Math.Abs(index - selectedIndex))
                 .Select(index => (Item: visible[index], Width: index == selectedIndex ? 1600 : 960))
-                .Where(request => request.Item.LoadCaseItem is not null)
+                .Where(request => request.Item.LoadCaseItem is not null
+                    && request.Item.CaseArtworkDecodeWidth < request.Width)
                 .ToList();
             var loadedSinceRefresh = 0;
             foreach (var request in requests)
@@ -714,7 +716,8 @@ public partial class AlbumLibraryBrowserWindow : Window
                 var current = _items[currentIndex];
                 _items[currentIndex] = current with
                 {
-                    CaseItem = caseItem with { IsPlaying = current.IsPlaying }
+                    CaseItem = caseItem with { IsPlaying = current.IsPlaying },
+                    CaseArtworkDecodeWidth = Math.Max(current.CaseArtworkDecodeWidth, request.Width)
                 };
                 loadedSinceRefresh++;
                 // Show the selected high-resolution image immediately, then

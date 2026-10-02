@@ -26,8 +26,9 @@ internal sealed partial class DxJewelCaseScene
         Register("front", item.FrontCover); Register("insideFront", item.InsideFrontCover);
         Register("back", item.BackCover); Register("spine", item.SpineCover);
         Register("rightSpine", item.RightSpineCover); Register("disc", item.DiscImage);
-        if(digipak) { Register("disc2",item.SecondDiscImage);Register("innerLeft",item.Digipak!.InnerLeft);Register("outerRight",item.Digipak.OuterRight);Register("trays",item.Digipak.Trays);Register("leftFold",item.Digipak.LeftFold);Register("rightFold",item.Digipak.RightFold);
-            if(item.Digipak.DiscCount==3){Register("disc3",item.Digipak.ThirdDisc);Register("outerFarRight",item.Digipak.OuterFarRight);Register("farFold",item.Digipak.FarRightFold);Register("tray1",item.Digipak.Tray1);Register("tray2",item.Digipak.Tray2);Register("tray3",item.Digipak.Tray3);}}
+        if(digipak) { Register("disc2",item.SecondDiscImage);Register("outerFront",item.Digipak!.OuterFront);Register("innerLeft",item.Digipak.InnerLeft);Register("outerRight",item.Digipak.OuterRight);Register("trays",item.Digipak.Trays);Register("leftFold",item.Digipak.LeftFold);Register("rightFold",item.Digipak.RightFold);
+            Register("innerLeftFold",item.Digipak.InnerLeftFold);Register("innerRightFold",item.Digipak.InnerRightFold);
+            if(item.Digipak.DiscCount==3){Register("disc3",item.Digipak.ThirdDisc);Register("outerFarRight",item.Digipak.OuterFarRight);Register("farFold",item.Digipak.FarRightFold);Register("innerFarFold",item.Digipak.InnerFarRightFold);Register("tray1",item.Digipak.Tray1);Register("tray2",item.Digipak.Tray2);Register("tray3",item.Digipak.Tray3);}}
         if(multi) {
             var art=item.MultiCase!;
             Register("multiFront",art.Front);Register("multiBack",art.Back);

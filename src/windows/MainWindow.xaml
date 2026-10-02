@@ -554,7 +554,7 @@
             <ColumnDefinition x:Name="LyricsColumn" Width="1*" MinWidth="180"/>
           </Grid.ColumnDefinitions>
           <Grid Grid.Column="0">
-            <Grid.RowDefinitions><RowDefinition x:Name="ArtworkToolbarRow" Height="Auto" SharedSizeGroup="ImageLyricsToolbar"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <Grid.RowDefinitions><RowDefinition x:Name="ArtworkToolbarRow" Height="Auto" SharedSizeGroup="ImageLyricsToolbar"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
             <StackPanel Margin="2,0,0,8" VerticalAlignment="Center">
               <WrapPanel>
               <TextBlock Text="アルバム画像" FontWeight="SemiBold" FontSize="15" Margin="0,0,8,0"/>
@@ -568,14 +568,39 @@
                       ToolTip="ブックレットを直接開きます"/>
               </WrapPanel>
               <WrapPanel Margin="0,4,0,0" Visibility="{Binding IsChecked, ElementName=ImageLyricsActionsToggle, Converter={StaticResource ToolbarVisibilityConverter}}">
-              <Button Content="Google画像" Margin="1" Padding="9,4"
-                      Click="GoogleImageSearch_Click" ToolTip="選択アルバムをGoogle画像検索で開く"/>
-              <Button Content="画像を追加" Margin="1" Padding="9,4"
-                      Click="ImportAlbumArtwork_Click" ToolTip="保存したJPGまたはPNG画像をこのアルバムへ追加"/>
+              <Button Content="画像名を一括編集" Margin="1" Padding="9,4"
+                      Click="RenameAlbumImages_Click" ToolTip="保存済み画像のファイル名を一覧で編集してまとめて保存。拡張子は変更できません"/>
               <Button Content="スキャン" Margin="1" Padding="9,4"
                       Click="ScanAlbumArtwork_Click" ToolTip="複数枚をスキャンし、切り抜き・角度・歪み補正後に選択アルバム内へ保存"/>
               <Button x:Name="ArtworkSearchButton" Content="画像を検索" Margin="1" Padding="10,4"
                       Click="DownloadAlbumArtwork_Click" ToolTip="MusicBrainzからアルバム画像を検索"/>
+              <StackPanel Orientation="Horizontal" Margin="8,1,0,1" VerticalAlignment="Center">
+                <TextBlock Text="トレイ" Margin="0,0,4,0" VerticalAlignment="Center" Foreground="#A6AFBB"/>
+                <ComboBox x:Name="TrayColorCombo" Width="78" Height="27" SelectedIndex="0"
+                          SelectionChanged="TrayColor_Changed" ToolTip="3D CDケースのインナートレイ色">
+                  <ComboBoxItem Content="自動" Tag="Auto"/>
+                  <ComboBoxItem Content="白" Tag="White"/>
+                  <ComboBoxItem Content="黒" Tag="Black"/>
+                  <ComboBoxItem Content="グレー" Tag="Gray"/>
+                  <ComboBoxItem Content="透明" Tag="Clear"/>
+                </ComboBox>
+                <TextBlock Text="ケース" Margin="9,0,3,0" VerticalAlignment="Center" Foreground="#A6AFBB"/>
+                <ComboBox x:Name="CaseTypeCombo" Width="175" Height="27" SelectedIndex="0"
+                          SelectionChanged="CaseType_Changed" ToolTip="アルバムごとの3Dケース形式">
+                  <ComboBoxItem Content="標準CDケース" Tag="Standard"/>
+                  <ComboBoxItem Content="デジパック2枚組（3面）" Tag="Digipak2"/>
+                  <ComboBoxItem Content="デジパック3枚組（4面）" Tag="Digipak3"/>
+                  <ComboBoxItem Content="24mmマルチケース" Tag="Multi24"/>
+                </ComboBox>
+                <StackPanel x:Name="BookletExtractionPanel" Orientation="Horizontal" Visibility="Collapsed">
+                  <TextBlock Text="冊子の取り出し" Margin="9,0,3,0" VerticalAlignment="Center" Foreground="#A6AFBB"/>
+                  <ComboBox x:Name="BookletExtractionCombo" Width="116" Height="27" SelectedIndex="0"
+                            SelectionChanged="BookletExtraction_Changed" ToolTip="デジパックの枚数と独立して選択できます">
+                    <ComboBoxItem Content="上へ" Tag="Top"/>
+                    <ComboBoxItem Content="左へ" Tag="Left"/>
+                  </ComboBox>
+                </StackPanel>
+              </StackPanel>
               </WrapPanel>
             </StackPanel>
             <Border x:Name="AlbumImageViewport" Grid.Row="1" Background="#15171B" BorderBrush="#414957"
@@ -584,6 +609,10 @@
                 <UniformGrid x:Name="AlbumImageGallery" Rows="1" Columns="1"/>
                 <TextBlock x:Name="AlbumImageEmptyText" Text="画像はありません" Foreground="#7F8996"
                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <TextBlock x:Name="AlbumImageNameText" Panel.ZIndex="2" VerticalAlignment="Bottom"
+                           Margin="6" Padding="6,3" Background="#D91E2127" Foreground="#E8EDF4"
+                           FontSize="11" TextAlignment="Center" TextTrimming="CharacterEllipsis"
+                           Visibility="Collapsed"/>
               </Grid>
             </Border>
             <WrapPanel x:Name="ImageNavigationPanel" Grid.Row="2" Margin="0,8,0,3" Orientation="Horizontal" HorizontalAlignment="Stretch">
@@ -601,11 +630,11 @@
               <ComboBox x:Name="ArtworkRoleCombo" Width="196" Height="27" SelectedIndex="0"
                         SelectionChanged="ArtworkRole_Changed" ToolTip="3D CDケースでの画像の割り当て">
                 <ComboBoxItem Content="自動" Tag="Auto"/>
-                <ComboBoxItem Content="Front" Tag="Front"/>
-                <ComboBoxItem Content="Front見開き（左＝裏／右＝表）" Tag="FrontSpread"/>
-                <ComboBoxItem Content="Front見開き（左＝表／右＝裏）" Tag="FrontSpreadReversed"/>
-                <ComboBoxItem Content="Front縦見開き（上＝表／下＝逆さの裏）" Tag="FrontSpreadVertical"/>
-                <ComboBoxItem Content="Front裏面" Tag="FrontInside"/>
+                <ComboBoxItem Content="ブックレット・Front（表紙）" Tag="Front"/>
+                <ComboBoxItem Content="ブックレット・Front見開き（左＝裏／右＝表）" Tag="FrontSpread"/>
+                <ComboBoxItem Content="ブックレット・Front見開き（左＝表／右＝裏）" Tag="FrontSpreadReversed"/>
+                <ComboBoxItem Content="ブックレット・Front縦見開き（上＝表／下＝逆さの裏）" Tag="FrontSpreadVertical"/>
+                <ComboBoxItem Content="ブックレット・Front裏面" Tag="FrontInside"/>
                 <ComboBoxItem Content="Spine付きBack" Tag="BackWithSpines"/>
                 <ComboBoxItem Content="Back" Tag="Back"/>
                 <ComboBoxItem Content="Spine" Tag="Spine"/>
@@ -621,7 +650,11 @@
                 <ComboBoxItem Content="24mm・表ジャケット（面のみ）" Tag="MultiFrontPanel"/>
                 <ComboBoxItem Content="24mm・前側 左Spine" Tag="MultiFrontLeft"/>
                 <ComboBoxItem Content="24mm・前側 右Spine" Tag="MultiFrontRight"/>
-                <ComboBoxItem Content="デジパック・左内面" Tag="DigipakInnerLeft"/>
+                <ComboBoxItem Content="デジパック・Front表面（外側）" Tag="DigipakFront"/>
+                <ComboBoxItem Content="デジパック・FrontBack（左内面）" Tag="DigipakFrontBack"/>
+                <ComboBoxItem Content="デジパック・左内面（旧定義）" Tag="DigipakInnerLeft"/>
+                <ComboBoxItem Content="デジパック・左内面＋右の内側折り目（1枚画像）" Tag="DigipakInnerLeftWithFold"
+                              ToolTip="左の面と、その右に続く内側折り目を1枚の画像から分割します。"/>
                 <ComboBoxItem Content="デジパック・右外面" Tag="DigipakOuterRight"/>
                 <ComboBoxItem Content="デジパック・最右外面" Tag="DigipakOuterFarRight"/>
                 <ComboBoxItem Content="デジパック・トレー見開き" Tag="DigipakTrays"/>
@@ -629,8 +662,11 @@
                 <ComboBoxItem Content="デジパック・トレー2" Tag="DigipakTray2"/>
                 <ComboBoxItem Content="デジパック・トレー3" Tag="DigipakTray3"/>
                 <ComboBoxItem Content="デジパック・3番目の折り目" Tag="DigipakFarFold"/>
+                <ComboBoxItem Content="デジパック・内側 左折り目" Tag="DigipakInnerLeftFold"/>
+                <ComboBoxItem Content="デジパック・内側 中央折り目" Tag="DigipakInnerRightFold"/>
+                <ComboBoxItem Content="デジパック・内側 右折り目（3枚組）" Tag="DigipakInnerFarFold"/>
                 <ComboBoxItem Content="ライナーノーツ" Tag="LinerNotes"/>
-                <ComboBoxItem Content="PAGE（冊子ページ）" Tag="Page"/>
+                <ComboBoxItem Content="ブックレット・ページ" Tag="Page"/>
                 <ComboBoxItem Content="Flyer" Tag="Flyer"/>
                 <ComboBoxItem Content="Poster" Tag="Poster"/>
                 <ComboBoxItem Content="Spine Card（帯）" Tag="SpineCard"/>
@@ -641,36 +677,7 @@
                       Click="AdjustSpineCardFolds_Click" IsEnabled="False" Visibility="Collapsed"
                       ToolTip="Back・Spine・Frontの境界をガイドで非破壊指定"/>
               </StackPanel>
-              <StackPanel Orientation="Horizontal" Margin="0,0,0,5" VerticalAlignment="Center">
-              <TextBlock Text="トレイ" Margin="0,0,4,0" VerticalAlignment="Center" Foreground="#A6AFBB"/>
-              <ComboBox x:Name="TrayColorCombo" Width="78" Height="27" SelectedIndex="0"
-                        SelectionChanged="TrayColor_Changed" ToolTip="3D CDケースのインナートレイ色">
-                <ComboBoxItem Content="自動" Tag="Auto"/>
-                <ComboBoxItem Content="白" Tag="White"/>
-                <ComboBoxItem Content="黒" Tag="Black"/>
-                <ComboBoxItem Content="グレー" Tag="Gray"/>
-                <ComboBoxItem Content="透明" Tag="Clear"/>
-              </ComboBox>
-              <TextBlock Text="ケース" Margin="9,0,3,0" VerticalAlignment="Center" Foreground="#A6AFBB"/>
-              <ComboBox x:Name="CaseTypeCombo" Width="175" Height="27" SelectedIndex="0"
-                        SelectionChanged="CaseType_Changed" ToolTip="アルバムごとの3Dケース形式">
-                <ComboBoxItem Content="標準CDケース" Tag="Standard"/>
-                <ComboBoxItem Content="デジパック2枚組（3面）" Tag="Digipak2"/>
-                <ComboBoxItem Content="デジパック3枚組（4面）" Tag="Digipak3"/>
-                <ComboBoxItem Content="24mmマルチケース" Tag="Multi24"/>
-              </ComboBox>
-              <StackPanel x:Name="BookletExtractionPanel" Orientation="Horizontal" Visibility="Collapsed">
-              <TextBlock Text="冊子の取り出し" Margin="9,0,3,0" VerticalAlignment="Center" Foreground="#A6AFBB"/>
-              <ComboBox x:Name="BookletExtractionCombo" Width="116" Height="27" SelectedIndex="0"
-                        SelectionChanged="BookletExtraction_Changed" ToolTip="デジパックの枚数と独立して選択できます">
-                <ComboBoxItem Content="上へ" Tag="Top"/>
-                <ComboBoxItem Content="左へ" Tag="Left"/>
-              </ComboBox>
-              </StackPanel>
-              </StackPanel>
             </WrapPanel>
-            <TextBlock x:Name="AlbumImageNameText" Grid.Row="3" Foreground="#A6AFBB" FontSize="11"
-                       TextAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding RelativeSource={RelativeSource Self}, Path=Text}"/>
           </Grid>
           <GridSplitter x:Name="ImageLyricsSplitter" Grid.Column="1" Width="8" HorizontalAlignment="Stretch" Background="#252A31"
                         ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" ShowsPreview="True" Cursor="SizeWE"
@@ -720,11 +727,12 @@
             </StackPanel>
             <Grid Grid.Row="1">
               <TextBox x:Name="LyricsTextBox" AcceptsReturn="True" AcceptsTab="True" TextWrapping="Wrap"
+                       AllowDrop="True" PreviewDragOver="LyricsTextBox_PreviewDragOver" PreviewDrop="LyricsTextBox_PreviewDrop"
                        VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                        Background="#15171B" Foreground="#F1F3F5" BorderBrush="#414957" BorderThickness="1"
                        Padding="12" FontSize="14" TextChanged="LyricsTextBox_TextChanged"
                        ScrollViewer.ScrollChanged="LyricsTextBox_ScrollChanged"/>
-              <TextBlock x:Name="LyricsEmptyText" Text="同名の .txt / .lrc 歌詞はありません。&#x0a;ここへ歌詞を貼り付けて保存できます。"
+              <TextBlock x:Name="LyricsEmptyText" Text="同名の .txt / .lrc 歌詞はありません。&#x0a;ここへ歌詞を貼り付けるか、.lrc をドロップして保存できます。"
                          Foreground="#7F8996" TextAlignment="Center" TextWrapping="Wrap"
                          HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" Margin="8"/>
               <Canvas x:Name="LyricsHighlightCanvas" IsHitTestVisible="False" ClipToBounds="True">

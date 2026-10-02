@@ -19,17 +19,39 @@ internal static class DigipakChecks
         void Check(bool value,string label){if(!value)throw new Exception(label);Console.WriteLine("PASS "+label);}
         const BindingFlags flags=BindingFlags.Instance|BindingFlags.NonPublic;
         const BindingFlags stat=BindingFlags.Static|BindingFlags.NonPublic;
+        var combinedPixels=new byte[156*4];
+        for(int x=0;x<156;x++){combinedPixels[x*4]=(byte)(x<138?0:255);combinedPixels[x*4+2]=(byte)(x<138?255:0);combinedPixels[x*4+3]=255;}
+        var combinedImage=BitmapSource.Create(156,1,96,96,PixelFormats.Bgra32,null,combinedPixels,156*4);
+        var splitMethod=typeof(MainWindow).GetMethod("SplitDigipakInnerLeftWithFold",stat)!;
+        var (panel,fold)=((BitmapSource Panel,BitmapSource Fold))splitMethod.Invoke(null,[combinedImage,true])!;
+        var foldPixels=new byte[fold.PixelWidth*4];fold.CopyPixels(foldPixels,foldPixels.Length,0);
+        Check(panel.PixelWidth==138&&fold.PixelWidth==18&&foldPixels[0]==255,
+            "three-disc combined inside image splits at the left fold boundary");
         var albumKey=Path.Combine(root,"fixture-album");
         string settingsPath=(string)typeof(MainWindow).GetMethod("GetCaseAppearancePath",stat)!.Invoke(null,[albumKey])!;Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)!);
         File.WriteAllText(settingsPath,"{\"TrayColor\":\"Clear\",\"CaseType\":\"Digipak2\"}");
         typeof(MainWindow).GetMethod("SaveTrayColor",stat)!.Invoke(null,[albumKey,"White"]);
         Check(File.ReadAllText(settingsPath).Contains("Digipak2")&&File.ReadAllText(settingsPath).Contains("White"),"tray setting preserves case format");
         var window=new MainWindow();var tray=(ComboBox)window.FindName("TrayColorCombo");var type=(ComboBox)window.FindName("CaseTypeCombo");
+        var artworkRoles=(ComboBox)window.FindName("ArtworkRoleCombo");
+        var digipakFoldRoles=artworkRoles.Items.OfType<ComboBoxItem>()
+            .Select(role=>role.Tag?.ToString()).ToHashSet(StringComparer.Ordinal);
+        Check(new[]{"DigipakFront","DigipakFrontBack","DigipakInnerLeftWithFold","DigipakInnerLeftFold","DigipakInnerRightFold","DigipakInnerFarFold"}
+            .All(digipakFoldRoles.Contains),"separate digipak cover faces and inner fold roles appear in artwork choices");
+        var roleAvailable=typeof(MainWindow).GetMethod("IsArtworkRoleAvailable",stat)!;
+        bool Available(string caseType,string role)=>(bool)roleAvailable.Invoke(null,[caseType,role])!;
+        Check(Available("Digipak2","DigipakFrontBack")&&!Available("Multi24","DigipakFrontBack")
+            &&!Available("Standard","DigipakFront")&&Available("Multi24","MultiFrontWithSpines")
+            &&!Available("Digipak2","MultiFrontWithSpines")&&!Available("Digipak2","DigipakTray3")
+            &&Available("Digipak3","DigipakTray3")&&Available("Multi24","Disc4")
+            &&!Available("Digipak3","Disc4"),"artwork roles are scoped to the selected case type");
         var extraction=(ComboBox)window.FindName("BookletExtractionCombo");
         var bookletPanel=(StackPanel)window.FindName("BookletExtractionPanel");
+        var actionControls=(StackPanel)tray.Parent;
         Check(ReferenceEquals(tray.Parent,type.Parent)&&ReferenceEquals(type.Parent,bookletPanel.Parent)
             &&ReferenceEquals(extraction.Parent,bookletPanel)&&bookletPanel.Visibility==Visibility.Collapsed
-            &&type.Items.Count==4,"booklet direction group is hidden without a selected digipak");
+            &&actionControls.Parent is WrapPanel&&type.Items.Count==4,
+            "case settings live under artwork actions and booklet direction is hidden without a digipak");
         var navigation=(WrapPanel)window.FindName("ImageNavigationPanel");
         foreach(int width in new[]{742,500}){
             navigation.Measure(new Size(width,double.PositiveInfinity));navigation.Arrange(new Rect(0,0,width,navigation.DesiredSize.Height));
@@ -72,7 +94,18 @@ internal static class DigipakChecks
         List<Point3D> PaperPoints()=>Meshes().Where(m=>m.Model.Material?.Name=="Digipak paper edges"&&m.Model.Geometry.Positions?.Count is >=16 and <=24).SelectMany(m=>m.Model.Geometry.Positions!.Select(v=>m.Matrix.Transform(new Point3D(v.X,v.Y,v.Z)))).ToList();
         var closed=PaperPoints();Check(closed.Count>0,"three paper panels constructed");
         double depth=(closed.Max(p=>p.Z)-closed.Min(p=>p.Z))/DigipakDimensions.Unit;
-        Check(Math.Abs(depth-11)<.02,"closed paper/tray stack is 11 mm");
+        Check(Math.Abs(depth-(DigipakDimensions.ClosedDepth+DigipakDimensions.FrontHalfThickness-.5f))<.02,
+            "closed stack includes the thicker front cover");
+        var frontCard=((DxGroup)Field("_digipakLeft")).Children.OfType<DxMesh>()
+            .First(m=>m.Material?.Name=="Digipak paper edges");
+        var frontCardZ=frontCard.Geometry.Positions!.Select(p=>p.Z).ToArray();
+        Check(Math.Abs((frontCardZ.Max()-frontCardZ.Min())/DigipakDimensions.Unit
+            -2*DigipakDimensions.FrontHalfThickness)<.02,"front cover has a visible cardboard edge");
+        var bookletEdge=((DxGroup)Field("_bookletRoot")).Children.OfType<DxMesh>()
+            .Single(m=>m.Material?.Name=="Digipak booklet page edges");
+        var bookletEdgeZ=bookletEdge.Geometry.Positions!.Select(p=>p.Z).ToArray();
+        Check(Math.Abs((bookletEdgeZ.Max()-bookletEdgeZ.Min())/DigipakDimensions.Unit
+            -DigipakDimensions.BookletDepth)<.02,"removable booklet has a 1.5 mm page block");
         Check(((DxGroup)Field("_discRoot")).Children.Count>0&&((DxGroup)Field("_secondDiscRoot")).Children.Count>0,"both discs have real geometry");
         Render("closed.png");
         if(images is not null){
@@ -95,16 +128,49 @@ internal static class DigipakChecks
         scene.SetBookletRemoved(false,false);Check(((TranslateTransform3D)Field("_bookletTranslation")).OffsetY==0,"booklet returns to slit");
         scene.SetItem(item,0,0);Check(((AxisAngleRotation3D)Field("_digipakRightAngle")).Angle==0,"artwork refresh retains open pose");
         scene.SetDiscRemoved(true,false);scene.SetDiscRemoved(false,false);
-        var three=item with { Digipak=new DigipakArtwork(item.Digipak!.InnerLeft,item.Digipak.OuterRight,item.Digipak.Trays){
+        var foldPixel=BitmapSource.Create(2,2,96,96,PixelFormats.Bgra32,null,
+            new byte[]{255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255},8);
+        foldPixel.Freeze();
+        var three=item with { FrontCover=foldPixel,InsideFrontCover=foldPixel,Digipak=new DigipakArtwork(item.Digipak!.InnerLeft,item.Digipak.OuterRight,item.Digipak.Trays){
             DiscCount=3,BookletExtraction="Left",ThirdDisc=item.DiscImage,Tray3=item.Digipak.Tray2,
-            LeftFold=item.Digipak.LeftFold,RightFold=item.Digipak.RightFold} };
+            LeftFold=item.Digipak.LeftFold,RightFold=item.Digipak.RightFold,
+            InnerLeftFold=foldPixel,InnerRightFold=foldPixel,InnerFarRightFold=foldPixel} };
         scene.SetCaseOpen(false,false);scene.SetItem(three,0,0);
         Check(((DxGroup)Field("_thirdDiscRoot")).Children.Count>0,"third disc has real geometry");
         var threeClosed=PaperPoints();
         Console.WriteLine($"Three-disc closed depth: {(threeClosed.Max(p=>p.Z)-threeClosed.Min(p=>p.Z))/DigipakDimensions.Unit:F1} mm");
         Render("three-closed.png");
+        typeof(DxJewelCaseScene).GetMethod("SetDigipakProgress",flags)!.Invoke(scene,[5.0/6]);
+        Check(Math.Abs(((AxisAngleRotation3D)Field("_digipakFarRightAngle")).Angle+90)<.001,
+            "third panel swings toward the front during opening");
         scene.SetCaseOpen(true,false);
         var threeOpen=PaperPoints();
+        Check(ReferenceEquals(Field("_bookletOuterImage"),three.InsideFrontCover),
+            "digipak booklet reverse uses Front reverse, not Disc1 reverse");
+        var bookletBounds=((float Left,float Right,float Bottom,float Top,float Z))Field("_bookletOpeningBounds");
+        Check(Math.Abs(bookletBounds.Z/DigipakDimensions.Unit+DigipakDimensions.BookletDepth/2)<.02,
+            "side-extracted booklet is seated between the two cover faces");
+        Check(scene.SelectDigipakDisc(2),"Disc2 can be selected separately");
+        scene.SetSelectedDigipakDiscRemoved(true);
+        Check(scene.SelectedDigipakDiscRemoved,"Disc2 can be removed separately");
+        Check(scene.SelectDigipakDisc(1)&&!scene.SelectedDigipakDiscRemoved,
+            "removing Disc2 does not move Disc1");
+        Check(scene.SelectDigipakDisc(3)&&!scene.SelectedDigipakDiscRemoved,
+            "removing Disc2 does not move Disc3");
+        scene.SetDigipakPlayingDisc(2);scene.SetDiscPlaying(true);
+        System.Threading.Thread.Sleep(35);
+        typeof(DxJewelCaseScene).GetMethod("AdvanceDiscSpin",flags)!.Invoke(scene,null);
+        scene.SetDiscPlaying(false);
+        Check(Math.Abs(((AxisAngleRotation3D)Field("_discSpinRotation")).Angle)<.001
+            &&Math.Abs(((AxisAngleRotation3D)Field("_secondDiscSpinRotation")).Angle)>.1
+            &&Math.Abs(((AxisAngleRotation3D)Field("_thirdDiscSpinRotation")).Angle)<.001,
+            "only the music-mapped Digipak Disc2 spins");
+        scene.SetItem(three,0,0);
+        Check(scene.SelectDigipakDisc(2)&&scene.SelectedDigipakDiscRemoved,
+            "artwork refresh retains only the removed Digipak disc");
+        Check(Meshes().Count(m=>m.Model.Material?.Name is "Digipak inner left fold artwork"
+            or "Digipak inner right fold artwork" or "Digipak inner far fold artwork")==3,
+            "all three inner folds accept independent artwork");
         Check(Math.Abs((threeOpen.Max(p=>p.X)-threeOpen.Min(p=>p.X))/DigipakDimensions.Unit-597.5)<.05,"four-panel full-open width matches three-disc folds");
         Check(Math.Abs(((AxisAngleRotation3D)Field("_digipakFarRightAngle")).Angle)<.001,"third panel unfolds");
         Render("three-open.png");

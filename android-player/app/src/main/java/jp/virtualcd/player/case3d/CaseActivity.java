@@ -21,6 +21,7 @@ public final class CaseActivity extends Activity {
     private FrameLayout content;
     private TextView caption;
     private Button openButton,resetButton,discButton,obiButton,wrapButton,bookletButton,turnButton;
+    private final Button[] digipakDiscButtons=new Button[3];
     private final Button[] multiDiscButtons=new Button[4];
     private CaseSurface surface;
     private CasePackage current;
@@ -58,6 +59,7 @@ public final class CaseActivity extends Activity {
         turnButton=caseTool(bar,"refresh",jp.virtualcd.player.LanguageStrings.text("中央トレーをめくる／戻す","Turn / return center tray"),()->{if(surface!=null)surface.toggleMultiTurn();});
         resetButton=caseTool(bar,"refresh",jp.virtualcd.player.LanguageStrings.text("初期表示に戻す","Reset view"),()->{if(surface!=null)surface.reset();});
         discButton=caseTool(bar,"disc-out",jp.virtualcd.player.LanguageStrings.text("CDを取り出す／戻す","Take out / insert CD"),()->{if(surface!=null)surface.toggleDisc();});
+        for(int i=0;i<3;i++){final int number=i+1;digipakDiscButtons[i]=caseTool(bar,"disc-out","Disc"+number+" ⇄",()->{if(surface!=null)surface.toggleDigipakDisc(number);});}
         for(int i=0;i<4;i++){final int number=i+1;multiDiscButtons[i]=caseTool(bar,"disc-out","Disc"+number+" ⇄",()->{if(surface!=null)surface.toggleMultiDisc(number);});}
         bookletButton=caseTool(bar,"booklet",jp.virtualcd.player.LanguageStrings.text("ブックレットを取り出す／戻す","Take out / insert booklet"),()->{if(surface!=null)surface.toggleBooklet();});
         obiButton=caseTool(bar,"obi",jp.virtualcd.player.LanguageStrings.text("帯を外す／付ける","Remove / attach obi"),()->{if(surface!=null)surface.toggleObi();});
@@ -140,7 +142,9 @@ public final class CaseActivity extends Activity {
     private Button button(LinearLayout row,String title,Runnable action){Button b=new Button(this);b.setText(title);jp.virtualcd.player.library.PlayerStyle.button(b);var params=new LinearLayout.LayoutParams(0,dp(44),1);params.setMargins(dp(3),dp(4),dp(3),dp(4));row.addView(b,params);b.setOnClickListener(v->action.run());return b;}
     private void empty(){caption.setText(albumTitle+" · 3D");TextView text=new TextView(this);text.setText(jp.virtualcd.player.LanguageStrings.text("3DデータはPCからの同期で受け取ります。\n\nWindowsの「モバイル同期」でこのアルバムを選択し、\nAndroidの「設定 → PCから同期」から\n接続QRコードを読み取ってください。\n\n同期後、この3D画面を開き直すと表示されます。","Receive 3D data by syncing from your PC.\n\nSelect this album in Mobile Sync on Windows,\nthen open Settings → Sync from PC on Android\nand scan the connection QR code.\n\nReopen this 3D view after syncing."));text.setTextColor(0xffc1d0df);text.setGravity(Gravity.CENTER);content.addView(text,new FrameLayout.LayoutParams(-1,-1));buttons(false);}
     private void buttons(boolean loading){boolean ready=!loading&&surface!=null,multi=current!=null&&current.multiCase;
-        openButton.setEnabled(ready);resetButton.setEnabled(ready);discButton.setEnabled(ready&&!multi);discButton.setVisibility(multi?android.view.View.GONE:android.view.View.VISIBLE);
+        boolean digipak=current!=null&&current.digipak;
+        openButton.setEnabled(ready);resetButton.setEnabled(ready);discButton.setEnabled(ready&&!multi&&!digipak);discButton.setVisibility(multi||digipak?android.view.View.GONE:android.view.View.VISIBLE);
+        for(int i=0;i<3;i++){final int part=i==0?2:i==1?4:9;boolean present=digipak&&current.geometry!=null&&current.geometry.stream().anyMatch(m->m.part==part);digipakDiscButtons[i].setEnabled(ready&&present);digipakDiscButtons[i].setVisibility(present?android.view.View.VISIBLE:android.view.View.GONE);}
         turnButton.setEnabled(ready&&multi);turnButton.setVisibility(multi?android.view.View.VISIBLE:android.view.View.GONE);
         for(int i=0;i<4;i++){final int part=i+3;boolean present=multi&&current.geometry!=null&&current.geometry.stream().anyMatch(m->m.part==part);multiDiscButtons[i].setEnabled(ready&&present);multiDiscButtons[i].setVisibility(present?android.view.View.VISIBLE:android.view.View.GONE);}
         bookletButton.setEnabled(ready&&current!=null&&current.digipak);bookletButton.setVisibility(current!=null&&current.digipak?android.view.View.VISIBLE:android.view.View.GONE);

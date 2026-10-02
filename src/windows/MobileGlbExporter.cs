@@ -80,7 +80,8 @@ public static class MobileGlbExporter
         // The clips are useful in ordinary glTF viewers too. Application buttons retain
         // their interruption-safe sequencing; extras identify roles, not replacement geometry.
         foreach(string clip in multi?new[]{"Open","Turn","Disc1Out","Disc2Out","Disc3Out","Disc4Out","ObiOff"}:
-            digipak?new[]{"Open","DiscOut","BookletOut"}:new[]{"Open","DiscOut","ObiOff","WrapOff"}){
+            digipak?(three?new[]{"Open","DiscOut","Disc1Out","Disc2Out","Disc3Out","BookletOut"}:
+                new[]{"Open","DiscOut","Disc1Out","Disc2Out","BookletOut"}):new[]{"Open","DiscOut","ObiOff","WrapOff"}){
             var samplers=new List<object>();var channels=new List<object>();
             const int count=41;float[] times=Enumerable.Range(0,count).Select(i=>i*.04f).ToArray();int time=writer.Accessor(times,1,true);
             for(int part=1;part<names.Length;part++){
@@ -101,7 +102,10 @@ public static class MobileGlbExporter
                         shift=pose.Shift;rotation=pose.Rotation;
                     } else if(digipak) {
                         float progress=Math.Clamp(t/1.2f,0,1),take=Math.Clamp((t-1.2f)/.4f,0,1);
-                        var pose=DigipakPose(part,progress,clip=="DiscOut"?take:0,clip=="BookletOut"?take:0,three,sideBooklet);shift=pose.Shift;rotation=pose.Rotation;
+                        int discNumber=clip=="DiscOut"?1:clip.StartsWith("Disc",StringComparison.Ordinal)&&clip.Length==8?clip[4]-'0':0;
+                        int partDisc=part switch {2=>1,4=>2,9=>3,_=>0};
+                        var pose=DigipakPose(part,progress,partDisc==discNumber?take:0,
+                            clip=="BookletOut"?take:0,three,sideBooklet);shift=pose.Shift;rotation=pose.Rotation;
                     } else {
                     if(part==1){rotation=Quaternion.CreateFromAxisAngle(Vector3.UnitY,-155*lid*MathF.PI/180);var pivot=desktop is null?new Vector3(-.69f,0,.045f):new Vector3(DxJewelCaseScene.MobileHingeX,0,0);shift=pivot-Vector3.Transform(pivot,rotation);}
                     if(part==2){rotation=Quaternion.CreateFromAxisAngle(Vector3.UnitX,-25*disc*MathF.PI/180);var pivot=desktop is null?new Vector3(.06f,0,0):new Vector3(.044f,.004f,0)*DxJewelCaseScene.MobileScale;shift=new Vector3(.30f*disc,.08f*disc,.65f*disc)+pivot-Vector3.Transform(pivot,rotation);}
@@ -150,9 +154,10 @@ public static class MobileGlbExporter
     {
         var angles=DigipakDimensions.Angles(open);var threeAngles=DigipakDimensions.ThreeAngles(open);
         float x=0,z=0,angle=0;
-        if(part is 1 or 5 or 6){x=three?-.78f:-.75f;z=three?.09f:.05f;angle=three?(float)threeAngles.Left:(float)angles.Left;}
-        if(part is 3 or 4 or 7){x=three ? .7725f : .74f;z=three?.09f:.045f;angle=three?(float)threeAngles.Right:(float)angles.Right;}
-        if(part is 8 or 9 or 10){x=2.29f;z=.045f;angle=(float)threeAngles.FarRight;}
+        float hingeUnit=DigipakDimensions.Unit*DxJewelCaseScene.MobileScale;
+        if(part is 1 or 5 or 6){x=three?-.78f:-.75f;z=three?DigipakDimensions.ThreeLeftHingeZ*hingeUnit:.05f;angle=three?(float)threeAngles.Left:(float)angles.Left;}
+        if(part is 3 or 4 or 7){x=three ? .7725f : .74f;z=three?DigipakDimensions.ThreeRightHingeZ*hingeUnit:.045f;angle=three?(float)threeAngles.Right:(float)angles.Right;}
+        if(part is 8 or 9 or 10){x=2.29f;z=DigipakDimensions.ThreeFarHingeZ*hingeUnit;angle=(float)threeAngles.FarRight;}
         if(part is 6 or 7 or 10){angle*=.5f;x=part==6?-.69f:part==7 ? .69f : 2.235f;z=0;} // GLB folds pivot at their fixed edge.
         var rotation=Quaternion.CreateFromAxisAngle(Vector3.UnitY,angle*MathF.PI/180);var pivot=new Vector3(x,0,z);
         var shift=pivot-Vector3.Transform(pivot,rotation);

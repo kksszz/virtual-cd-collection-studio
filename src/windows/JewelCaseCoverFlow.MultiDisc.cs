@@ -15,11 +15,15 @@ public sealed partial class JewelCaseCoverFlow
     private void UpdateMultiDiscButton()
     {
         bool multi=_dxScene?.IsMultiCase==true&&!_collectionPresentation;
-        _multiDiscButton.Visibility=multi?Visibility.Visible:Visibility.Collapsed;
-        _multiDiscButton.IsEnabled=multi&&_isCaseOpen&&_dxScene!.CanOperateSelectedMultiDisc&&!_isCaseTransitioning;
-        var number=_dxScene?.SelectedMultiDisc;
+        bool digipak=_dxScene?.IsDigipak==true&&!_collectionPresentation;
+        _multiDiscButton.Visibility=multi||digipak?Visibility.Visible:Visibility.Collapsed;
+        _multiDiscButton.Margin=digipak?new Thickness(134,0,0,0):new Thickness(0);
+        _multiDiscButton.IsEnabled=(multi&&_dxScene!.CanOperateSelectedMultiDisc
+            ||digipak&&_dxScene!.CanOperateSelectedDigipakDisc)&&_isCaseOpen&&!_isCaseTransitioning;
+        var number=multi?_dxScene?.SelectedMultiDisc:_dxScene?.SelectedDigipakDisc;
+        bool removed=multi?_dxScene?.SelectedMultiDiscRemoved==true:_dxScene?.SelectedDigipakDiscRemoved==true;
         _multiDiscButton.Content=number is null?"CDをクリックして選択":
-            $"Disc{number}を"+(_dxScene!.SelectedMultiDiscRemoved?"戻す":"取り出す");
+            $"Disc{number}を"+(removed?"戻す":"取り出す");
         _multiDiscButton.ToolTip="CDをクリックして選択。取り出したCDはドラッグで移動、ダブルクリックで再生／停止。";
     }
 }

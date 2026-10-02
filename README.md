@@ -14,11 +14,11 @@ Windows v0.90.0では、選択したアルバムを **DLNA／UPnP AVで家庭内
 
 構成図をタップ・クリックすると拡大画像を開けます。Androidへの保存・持ち出しと、DLNAによる家庭内ストリーミングは別の機能です。
 
-Wi-Fi転送は同じ信頼できる家庭内LANで使用します。スキャナーには対応ドライバーが必要です。Windows v0.90.0とAndroid 0.12.1は24mmマルチケースとデジパックの3D生成・転送・表示に対応します。更新後にWindowsで転送データを再準備し、GLBを再転送してください。
+Wi-Fi転送は同じ信頼できる家庭内LANで使用します。スキャナーには対応ドライバーが必要です。Windows v0.91.0とAndroid 0.12.2は、標準ケースに加え、デジパックと24mmマルチケースへのCDジャケット画像の配置・3D生成・転送・表示に対応します。更新後にWindowsで転送データを再準備し、GLBを再転送してください。
 
-取り込みから持ち出しまでの流れ・対応範囲は [連携概要](docs/INTEGRATION_OVERVIEW.md) を参照してください。公開版は **[Windows v0.90.0](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/v0.90.0)**／**[Android 0.12.1](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/android-v0.12.1)** です。旧リリースでは搭載機能が異なります。
+取り込みから持ち出しまでの流れ・対応範囲は [連携概要](docs/INTEGRATION_OVERVIEW.md) を参照してください。公開版は **[Windows v0.91.0](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/v0.91.0)**／**[Android 0.12.2](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/android-v0.12.2)** です。旧リリースでは搭載機能が異なります。
 
-Windows v0.90.0の追加機能：24mmマルチケースと3枚組デジパックの3D・Android転送、Enhanced CDの音声トラック読み取り、完全バックアップ。従来のDLNA配信・AccurateRip照合・ブックレット印刷も利用できます。更新時は旧版を終了し、配布ZIPを新しいフォルダーへ展開してください。.NET同梱のWindows x64版で、設定・ライブラリは従来の保存場所から引き継ぎます。
+Windows v0.91.0では、デジパックの外側Front・内側折り目とブックレットの厚みを改善し、画像用途・ファイル名の一括編集・アルバムブラウザーのキャッシュを整えました。従来のDLNA配信・AccurateRip照合・ブックレット印刷・完全バックアップも利用できます。更新時は旧版を終了し、配布ZIPを新しいフォルダーへ展開してください。.NET同梱のWindows x64版で、設定・ライブラリは従来の保存場所から引き継ぎます。
 
 ZIP.MP3アルバムと一般的な音声ファイルの管理・再生にも対応しています。Windowsでコレクションを管理・編集し、Androidでは再生・鑑賞する使い方を想定しています。
 
@@ -28,7 +28,7 @@ Third-party assets and their licenses are listed in [THIRD_PARTY_NOTICES.md](lic
 
 Windows v0.85.0／Android 0.10.0では、アルバムを複数選んで音楽・画像・GLBを一括転送する **[モバイル同期](docs/MOBILE_SYNC.md)** に対応しています。Wi-Fi同期は接続QRコードを使い、USBデバッグ不要です。
 
-Android 10以上向けの音楽プレーヤーです。現在は **0.12.1** で、Xperia 1 IIで上書き更新・起動を確認しています。端末内に保存済みの音楽はSIMカードやネット接続なしで再生できます。Windows版の全機能を移植したものではありません。
+Android 10以上向けの音楽プレーヤーです。現在は **0.12.2** です。0.12.1まではXperia 1 IIで上書き更新・起動を確認しましたが、今回の3D変更は実機未確認です。端末内に保存済みの音楽はSIMカードやネット接続なしで再生できます。Windows版の全機能を移植したものではありません。
 
 設定 →「言語 / Language」で日本語／Englishを切り替えできます（初期値は日本語）。曲名や歌詞本文は翻訳しません。アルバムは最近追加した順にも並べられます。
 
@@ -59,7 +59,7 @@ Android 10以上向けの音楽プレーヤーです。現在は **0.12.1** で�
 
 圧縮された音声エントリー、暗号化ZIP、ZIP64、分割ZIP、BIN/ISOはAndroid版では未対応です。通常フォルダーの単一FLAC＋CUEに対応しました（実音声の曲頭一致はAndroidでは未検証）。タグ編集や画像の加工・用途設定はWindows版で行います。タグキャッシュは永続化していますが、初回取得には時間がかかります。
 
-Android版は [0.12.1リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/android-v0.12.1)、Windows版は [v0.90.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/v0.90.0) から入手できます。Androidは従来と同じ署名を維持しています。更新時にアンインストールする必要はありません。
+Android版は [0.12.2リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/android-v0.12.2)、Windows版は [v0.91.0リリース](https://github.com/kksszz/virtual-cd-collection-studio/releases/tag/v0.91.0) から入手できます。Androidは従来と同じ署名を維持しています。更新時にアンインストールする必要はありません。
 
 - [Android版の説明・ビルド手順](android-player/README.md)
 - [Windowsからの3Dデータ出力](docs/MOBILE_3D.md)

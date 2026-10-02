@@ -17,7 +17,7 @@ internal sealed partial class DxJewelCaseScene
     private readonly GroupModel3D _thirdDiscRoot=new();
     private readonly AxisAngleRotation3D _digipakLeftAngle=new(new Vector3D(0,1,0),180);
     private readonly AxisAngleRotation3D _digipakRightAngle=new(new Vector3D(0,1,0),-180);
-    private readonly AxisAngleRotation3D _digipakFarRightAngle=new(new Vector3D(0,1,0),180);
+    private readonly AxisAngleRotation3D _digipakFarRightAngle=new(new Vector3D(0,1,0),-180);
     private readonly DispatcherTimer _digipakTimer=new(DispatcherPriority.Render){Interval=TimeSpan.FromMilliseconds(16)};
     private EventHandler? _digipakTick;
     private double _digipakProgress;
@@ -25,6 +25,7 @@ internal sealed partial class DxJewelCaseScene
     private readonly List<BitmapSource> _digipakDerivedImages=[];
     private PBRMaterial? _digipakPaper;
     private PhongMaterial? _digipakLeftFoldMaterial, _digipakRightFoldMaterial, _digipakFarFoldMaterial;
+    private PhongMaterial? _digipakInnerLeftFoldMaterial, _digipakInnerRightFoldMaterial, _digipakInnerFarFoldMaterial;
     internal bool IsDigipak=>_isDigipak;
     private static float D(float mm)=>mm*DigipakDimensions.Unit;
     private void CancelDigipakAnimation(){_digipakTimer.Stop();if(_digipakTick is not null)_digipakTimer.Tick-=_digipakTick;_digipakTick=null;}
@@ -37,6 +38,7 @@ internal sealed partial class DxJewelCaseScene
         _digipakRight?.Children.Remove(_secondDiscRoot);
         _digipakFarRight?.Children.Remove(_thirdDiscRoot);
         _thirdDiscRoot.Children.Clear();
+        _digipakDiscStates.Clear();_digipakSelectedDisc=_digipakPlayingDisc=null;
         _isDigipak=false;_digipakThreeDiscs=_digipakSideBooklet=false;_digipakLeft=_digipakRight=_digipakFarRight=_digipakFolds=null;
         Viewport.IsShadowMappingEnabled=!_interactiveMotion;
         Viewport.EnableSSAO=!_interactiveMotion;
@@ -61,10 +63,10 @@ internal sealed partial class DxJewelCaseScene
         float rightFoldWidth=_digipakThreeDiscs?DigipakDimensions.ThreeRightFold:DigipakDimensions.RightFold;
         float leftPanel=_digipakThreeDiscs?DigipakDimensions.ThreeLeft:DigipakDimensions.Left;
         float rightPanel=_digipakThreeDiscs?DigipakDimensions.ThreeRight:DigipakDimensions.Right;
-        _digipakLeft=new GroupModel3D{Transform=new RotateTransform3D(_digipakLeftAngle,D(-69-leftFoldWidth/2),0,D(_digipakThreeDiscs?9:5))};
-        _digipakRight=new GroupModel3D{Transform=new RotateTransform3D(_digipakRightAngle,D(69+rightFoldWidth/2),0,D(_digipakThreeDiscs?9:4.5f))};
+        _digipakLeft=new GroupModel3D{Transform=new RotateTransform3D(_digipakLeftAngle,D(-69-leftFoldWidth/2),0,D(_digipakThreeDiscs?DigipakDimensions.ThreeLeftHingeZ:5))};
+        _digipakRight=new GroupModel3D{Transform=new RotateTransform3D(_digipakRightAngle,D(69+rightFoldWidth/2),0,D(_digipakThreeDiscs?DigipakDimensions.ThreeRightHingeZ:4.5f))};
         if(_digipakThreeDiscs){
-            _digipakFarRight=new GroupModel3D{Transform=new RotateTransform3D(_digipakFarRightAngle,D(rightPanel+138+DigipakDimensions.ThreeFarFold/2),0,D(4.5f))};
+            _digipakFarRight=new GroupModel3D{Transform=new RotateTransform3D(_digipakFarRightAngle,D(rightPanel+138+DigipakDimensions.ThreeFarFold/2),0,D(DigipakDimensions.ThreeFarHingeZ))};
             _digipakRight.Children.Add(_digipakFarRight);
         }
         _digipakFolds=new GroupModel3D();
@@ -74,34 +76,38 @@ internal sealed partial class DxJewelCaseScene
         _digipakLeftFoldMaterial=item.Digipak!.LeftFold is {} leftFold?FoldMaterial(leftFold,"Digipak left fold artwork"):null;
         _digipakRightFoldMaterial=item.Digipak.RightFold is {} rightFold?FoldMaterial(rightFold,"Digipak right fold artwork"):null;
         _digipakFarFoldMaterial=item.Digipak.FarRightFold is {} farFold?FoldMaterial(farFold,"Digipak far fold artwork"):null;
+        _digipakInnerLeftFoldMaterial=item.Digipak.InnerLeftFold is {} innerLeftFold?FoldMaterial(innerLeftFold,"Digipak inner left fold artwork"):null;
+        _digipakInnerRightFoldMaterial=item.Digipak.InnerRightFold is {} innerRightFold?FoldMaterial(innerRightFold,"Digipak inner right fold artwork"):null;
+        _digipakInnerFarFoldMaterial=item.Digipak.InnerFarRightFold is {} innerFarFold?FoldMaterial(innerFarFold,"Digipak inner far fold artwork"):null;
         var white=new PBRMaterial{Name="Digipak unprinted paper",AlbedoColor=new Color4(.82f,.8f,.75f,1),RoughnessFactor=.9};
-        void Paper(float left,GroupModel3D target,BitmapSource? inner,BitmapSource? outer,string name){
+        void Paper(float left,GroupModel3D target,BitmapSource? inner,BitmapSource? outer,string name,float halfThickness=.5f){
             // Printed faces ARE the paper surface. Do not place them a few
             // microns over another full face: the depth buffer cannot reliably
             // separate those layers when zoomed or tilted (z-fighting).
             var edge=new MeshBuilder(true,false,false);
             Vector3 P(float x,float y,float z)=>new(D(x),D(y),D(z));
             float right=left+138;
-            edge.AddQuad(P(left,62,-.5f),P(left,62,.5f),P(left,-62,.5f),P(left,-62,-.5f));
-            edge.AddQuad(P(right,62,.5f),P(right,62,-.5f),P(right,-62,-.5f),P(right,-62,.5f));
-            edge.AddQuad(P(left,62,-.5f),P(right,62,-.5f),P(right,62,.5f),P(left,62,.5f));
-            edge.AddQuad(P(left,-62,.5f),P(right,-62,.5f),P(right,-62,-.5f),P(left,-62,-.5f));
-            if(inner is null)edge.AddQuad(P(left,62,.5f),P(left,-62,.5f),P(right,-62,.5f),P(right,62,.5f));
-            if(outer is null)edge.AddQuad(P(left,62,-.5f),P(right,62,-.5f),P(right,-62,-.5f),P(left,-62,-.5f));
+            edge.AddQuad(P(left,62,-halfThickness),P(left,62,halfThickness),P(left,-62,halfThickness),P(left,-62,-halfThickness));
+            edge.AddQuad(P(right,62,halfThickness),P(right,62,-halfThickness),P(right,-62,-halfThickness),P(right,-62,halfThickness));
+            edge.AddQuad(P(left,62,-halfThickness),P(right,62,-halfThickness),P(right,62,halfThickness),P(left,62,halfThickness));
+            edge.AddQuad(P(left,-62,halfThickness),P(right,-62,halfThickness),P(right,-62,-halfThickness),P(left,-62,-halfThickness));
+            if(inner is null)edge.AddQuad(P(left,62,halfThickness),P(left,-62,halfThickness),P(right,-62,halfThickness),P(right,62,halfThickness));
+            if(outer is null)edge.AddQuad(P(left,62,-halfThickness),P(right,62,-halfThickness),P(right,-62,-halfThickness),P(left,-62,-halfThickness));
             AddMesh(edge.ToMeshGeometry3D(),_digipakPaper,false,false,target);
-            if(inner is not null)AddArtwork(inner,D(left),D(right),D(-62),D(62),D(.5f),false,target,name+" inner",twoSided:false);
-            if(outer is not null)AddArtwork(outer,D(left),D(right),D(-62),D(62),D(-.5f),true,target,name+" outer",twoSided:false);
+            if(inner is not null)AddArtwork(inner,D(left),D(right),D(-62),D(62),D(halfThickness),false,target,name+" inner",twoSided:false);
+            if(outer is not null)AddArtwork(outer,D(left),D(right),D(-62),D(62),D(-halfThickness),true,target,name+" outer",twoSided:false);
         }
         Paper(-69,_baseRoot,null,item.BackCover,"Digipak center");
-        Paper(leftPanel,_digipakLeft,item.Digipak!.InnerLeft,item.FrontCover,"Digipak left");
+        Paper(leftPanel,_digipakLeft,item.Digipak!.InnerLeft,item.Digipak.OuterFront??item.FrontCover,"Digipak left",DigipakDimensions.FrontHalfThickness);
         Paper(rightPanel,_digipakRight,null,item.Digipak.OuterRight,"Digipak right");
         if(_digipakThreeDiscs)Paper(DigipakDimensions.ThreeFarRight,_digipakFarRight!,null,item.Digipak.OuterFarRight,"Digipak far right");
         // Only the bottom of the booklet is inserted behind the slit lip.
         float slitY=D(-62+DigipakDimensions.PocketFromBottom), slitLeft=D(leftPanel+6.5f);
         if(!_digipakSideBooklet){
-            AddBox(new Vector3(slitLeft+D(62.5f),slitY,D(.57f)),D(125),D(.15f),D(.08f),_digipakPaper,false,_digipakLeft);
+            float slotZ=DigipakDimensions.FrontHalfThickness+DigipakDimensions.BookletDepth+.13f;
+            AddBox(new Vector3(slitLeft+D(62.5f),slitY,D(slotZ)),D(125),D(.15f),D(.08f),_digipakPaper,false,_digipakLeft);
             var slotEnds=new MeshBuilder(true,false,false);
-            foreach(float x in new[]{slitLeft,slitLeft+D(125)})slotEnds.AddCylinder(new Vector3(x,slitY,D(.5f)),new Vector3(x,slitY,D(.65f)),D(.5f),16);
+            foreach(float x in new[]{slitLeft,slitLeft+D(125)})slotEnds.AddCylinder(new Vector3(x,slitY,D(slotZ-.07f)),new Vector3(x,slitY,D(slotZ+.08f)),D(.5f),16);
             AddMesh(slotEnds.ToMeshGeometry3D(),_digipakPaper,false,false,_digipakLeft);
         }
         BitmapSource? TraySlice(int index){if(item.Digipak.Trays is not {} scan)return null;
@@ -116,27 +122,31 @@ internal sealed partial class DxJewelCaseScene
         float cx=D(-69+1+67),cy=D(62-61.5f);
         _baseRoot.Children.Add(_discRoot);_digipakRight.Children.Add(_secondDiscRoot);
         if(_digipakThreeDiscs)_digipakFarRight!.Children.Add(_thirdDiscRoot);
-        void DiscTransform(GroupModel3D root,AxisAngleRotation3D spin,float x){var transform=new Transform3DGroup();transform.Children.Add(new RotateTransform3D(spin,new Point3D(x,cy,0)));transform.Children.Add(new RotateTransform3D(_discTiltRotation,new Point3D(x,cy,0)));transform.Children.Add(_discTranslation);root.Transform=transform;}
-        DiscTransform(_discRoot,_discSpinRotation,cx);
-        float secondX=D(rightPanel+1+67);DiscTransform(_secondDiscRoot,_secondDiscSpinRotation,secondX);
+        RegisterDigipakDisc(1,_discRoot,_discSpinRotation,cx,cy);
+        float secondX=D(rightPanel+1+67);RegisterDigipakDisc(2,_secondDiscRoot,_secondDiscSpinRotation,secondX,cy);
         float thirdX=D(DigipakDimensions.ThreeFarRight+1+67);
-        if(_digipakThreeDiscs)DiscTransform(_thirdDiscRoot,new AxisAngleRotation3D(new Vector3D(0,0,1),0),thirdX);
+        if(_digipakThreeDiscs)RegisterDigipakDisc(3,_thirdDiscRoot,_thirdDiscSpinRotation,thirdX,cy);
         AddDisc(item.DiscImage,new Vector3(cx,cy,D(2.8f)),D(60),D(7.5f),D(1.2f),_discRoot,"Digipak disc 1");
         AddDisc(item.SecondDiscImage,new Vector3(secondX,cy,D(2.8f)),D(60),D(7.5f),D(1.2f),_secondDiscRoot,"Digipak disc 2");
         if(_digipakThreeDiscs)AddDisc(item.Digipak.ThirdDisc,new Vector3(thirdX,cy,D(2.8f)),D(60),D(7.5f),D(1.2f),_thirdDiscRoot,"Digipak disc 3");
-        // Keep the booklet independent of the rigid cover. It slides out of the
-        // slit before the existing reader-opening transition.
+        // The removable booklet sits inside the left cover, between its printed
+        // exterior Front and interior panel. It emerges through the left edge.
         _digipakLeft.Children.Add(_bookletRoot);
-        float bookletLeft=D(leftPanel+9),bookletRight=bookletLeft+D(120),bookletBottom=D(-60),bookletTop=D(60),bookletZ=D(.64f);
+        float bookletLeft=D(leftPanel+9),bookletRight=bookletLeft+D(120),bookletBottom=D(-60),bookletTop=D(60);
+        float bookletFrontMm=_digipakSideBooklet?DigipakDimensions.BookletDepth/2:DigipakDimensions.FrontHalfThickness+DigipakDimensions.BookletDepth+.08f;
+        float bookletZ=D(bookletFrontMm),bookletRearZ=D(bookletFrontMm-DigipakDimensions.BookletDepth);
+        var bookletEdges=new PBRMaterial{Name="Digipak booklet page edges",AlbedoColor=new Color4(.77f,.75f,.7f,1),RoughnessFactor=.96f,MetallicFactor=0};
+        AddOpenBookletPageBlock(bookletLeft,bookletRight,bookletBottom,bookletTop,bookletRearZ,bookletZ,bookletEdges,leaveFoldOpen:false);
         AddArtwork(item.FrontCover,bookletLeft,bookletRight,bookletBottom,bookletTop,bookletZ,false,_bookletRoot,"Digipak booklet front",twoSided:false);
-        AddArtwork(item.BackCover,bookletLeft,bookletRight,bookletBottom,bookletTop,bookletZ-D(.05f),true,_bookletRoot,"Digipak booklet reverse",twoSided:false);
-        _bookletOuterImage=item.BackCover;_bookletRearArtwork=_bookletRoot.Children.LastOrDefault();
-        _bookletOpeningBounds=(bookletLeft,bookletRight,bookletBottom,bookletTop,bookletZ-D(.05f));
+        var bookletReverse=item.InsideFrontCover??item.FrontCover;
+        AddArtwork(bookletReverse,bookletLeft,bookletRight,bookletBottom,bookletTop,bookletRearZ,true,_bookletRoot,"Digipak booklet reverse",twoSided:false);
+        _bookletOuterImage=bookletReverse;_bookletRearArtwork=_bookletRoot.Children.LastOrDefault();
+        _bookletOpeningBounds=(bookletLeft,bookletRight,bookletBottom,bookletTop,bookletRearZ);
         if(item.Digipak.InnerLeft is {} pocketImage){
             if(_digipakSideBooklet){int pixels=Math.Max(1,(int)Math.Round(pocketImage.PixelWidth*6.5/138d));var lip=new CroppedBitmap(pocketImage,new Int32Rect(0,0,pixels,pocketImage.PixelHeight));lip.Freeze();_digipakDerivedImages.Add(lip);
-                AddArtwork(lip,D(leftPanel),D(leftPanel+6.5f),D(-62),D(62),D(.81f),false,_digipakLeft,"Digipak side pocket lip",twoSided:false);}
+                AddArtwork(lip,D(leftPanel),D(leftPanel+6.5f),D(-62),D(62),D(DigipakDimensions.FrontHalfThickness+.06f),false,_digipakLeft,"Digipak side pocket lip",twoSided:false);}
             else{int pixels=Math.Max(1,(int)Math.Round(pocketImage.PixelHeight*DigipakDimensions.PocketFromBottom/124d));var lip=new CroppedBitmap(pocketImage,new Int32Rect(0,pocketImage.PixelHeight-pixels,pocketImage.PixelWidth,pixels));lip.Freeze();_digipakDerivedImages.Add(lip);
-                AddArtwork(lip,D(leftPanel),D(leftPanel+138),D(-62),slitY,D(.81f),false,_digipakLeft,"Digipak pocket lip",twoSided:false);}}
+                AddArtwork(lip,D(leftPanel),D(leftPanel+138),D(-62),slitY,D(bookletFrontMm+.13f),false,_digipakLeft,"Digipak pocket lip",twoSided:false);}}
         SetDigipakProgress(_caseIsOpen?1:0);
     }
     private void BuildDigipakTray(float panelLeft,GroupModel3D parent,BitmapSource? artwork,PBRMaterial backing,string colorMode)
@@ -189,12 +199,13 @@ internal sealed partial class DxJewelCaseScene
         if(_digipakFolds is not null&&_digipakPaper is not null){_digipakFolds.Children.Clear();
             float leftPanel=_digipakThreeDiscs?DigipakDimensions.ThreeLeft:DigipakDimensions.Left;
             float rightPanel=_digipakThreeDiscs?DigipakDimensions.ThreeRight:DigipakDimensions.Right;
-            Fold(-69,leftPanel+138,_digipakLeft!.Transform,-1,_digipakLeftFoldMaterial);
-            Fold(69,rightPanel,_digipakRight!.Transform,1,_digipakRightFoldMaterial);
-            if(_digipakThreeDiscs)Fold(rightPanel+138,DigipakDimensions.ThreeFarRight,_digipakFarRight!.Transform,1,_digipakFarFoldMaterial,_digipakRight.Transform);
+            Fold(-69,leftPanel+138,_digipakLeft!.Transform,-1,_digipakLeftFoldMaterial,_digipakInnerLeftFoldMaterial);
+            Fold(69,rightPanel,_digipakRight!.Transform,1,_digipakRightFoldMaterial,_digipakInnerRightFoldMaterial);
+            if(_digipakThreeDiscs)Fold(rightPanel+138,DigipakDimensions.ThreeFarRight,_digipakFarRight!.Transform,1,_digipakFarFoldMaterial,_digipakInnerFarFoldMaterial,_digipakRight.Transform);
         }
         RequestRender();
-        void Fold(float fixedX,float movingX,Transform3D transform,int direction,PhongMaterial? artwork,Transform3D? parent=null){
+        void Fold(float fixedX,float movingX,Transform3D transform,int direction,
+            PhongMaterial? outer,PhongMaterial? inner,Transform3D? parent=null){
             var start=new Point3D(D(fixedX),0,0);var end=transform.Transform(new Point3D(D(movingX),0,0));
             if(parent is not null){start=parent.Transform(start);end=parent.Transform(end);}
             var control=new Point3D((start.X+end.X)/2+direction*D(1.5f)*Math.Abs(end.Z)/D(10),(start.Y+end.Y)/2,(start.Z+end.Z)/2);
@@ -204,18 +215,30 @@ internal sealed partial class DxJewelCaseScene
                 var normal=Vector3.Normalize(new Vector3(direction*tangent.Z,0,-direction*tangent.X));
                 return new Vector3((float)(u*u*start.X+2*u*t*control.X+t*t*end.X),D(y),(float)(u*u*start.Z+2*u*t*control.Z+t*t*end.Z))+normal*D(offset);
             }
-            for(int i=0;i<16;i++){float a=i/16f,b=(i+1)/16f;
-                if(direction<0){if(artwork is null)mesh.AddQuad(P(a,62,.5f),P(a,-62,.5f),P(b,-62,.5f),P(b,62,.5f));mesh.AddQuad(P(b,62,-.5f),P(b,-62,-.5f),P(a,-62,-.5f),P(a,62,-.5f));}
-                else{if(artwork is null)mesh.AddQuad(P(b,62,.5f),P(b,-62,.5f),P(a,-62,.5f),P(a,62,.5f));mesh.AddQuad(P(a,62,-.5f),P(a,-62,-.5f),P(b,-62,-.5f),P(b,62,-.5f));}
-            }
-            AddMesh(mesh.ToMeshGeometry3D(),_digipakPaper!,false,true,_digipakFolds);
-            if(artwork is not null){var printed=new MeshBuilder(true,true,true);
+            if(outer is null||inner is null){
                 for(int i=0;i<16;i++){float a=i/16f,b=(i+1)/16f;
-                    if(direction<0)printed.AddQuad(P(a,62,.51f),P(a,-62,.51f),P(b,-62,.51f),P(b,62,.51f),new Vector2(a,0),new Vector2(a,1),new Vector2(b,1),new Vector2(b,0));
-                    else printed.AddQuad(P(b,62,.51f),P(b,-62,.51f),P(a,-62,.51f),P(a,62,.51f),new Vector2(1-b,0),new Vector2(1-b,1),new Vector2(1-a,1),new Vector2(1-a,0));
+                    if(direction<0){
+                        if(outer is null)mesh.AddQuad(P(a,62,.5f),P(a,-62,.5f),P(b,-62,.5f),P(b,62,.5f));
+                        if(inner is null)mesh.AddQuad(P(b,62,-.5f),P(b,-62,-.5f),P(a,-62,-.5f),P(a,62,-.5f));
+                    }else{
+                        if(outer is null)mesh.AddQuad(P(b,62,.5f),P(b,-62,.5f),P(a,-62,.5f),P(a,62,.5f));
+                        if(inner is null)mesh.AddQuad(P(a,62,-.5f),P(a,-62,-.5f),P(b,-62,-.5f),P(b,62,-.5f));
+                    }
+                }
+                AddMesh(mesh.ToMeshGeometry3D(),_digipakPaper!,false,true,_digipakFolds);
+            }
+            void Print(PhongMaterial? artwork,bool inside){
+                if(artwork is null)return;
+                var printed=new MeshBuilder(true,true,true);
+                for(int i=0;i<16;i++){float a=i/16f,b=(i+1)/16f;
+                    if(!inside&&direction<0)printed.AddQuad(P(a,62,.51f),P(a,-62,.51f),P(b,-62,.51f),P(b,62,.51f),new Vector2(a,0),new Vector2(a,1),new Vector2(b,1),new Vector2(b,0));
+                    else if(!inside)printed.AddQuad(P(b,62,.51f),P(b,-62,.51f),P(a,-62,.51f),P(a,62,.51f),new Vector2(1-b,0),new Vector2(1-b,1),new Vector2(1-a,1),new Vector2(1-a,0));
+                    else if(direction<0)printed.AddQuad(P(b,62,-.51f),P(b,-62,-.51f),P(a,-62,-.51f),P(a,62,-.51f),new Vector2(1-b,0),new Vector2(1-b,1),new Vector2(1-a,1),new Vector2(1-a,0));
+                    else printed.AddQuad(P(a,62,-.51f),P(a,-62,-.51f),P(b,-62,-.51f),P(b,62,-.51f),new Vector2(a,0),new Vector2(a,1),new Vector2(b,1),new Vector2(b,0));
                 }
                 AddMesh(printed.ToMeshGeometry3D(),artwork,false,true,_digipakFolds);
             }
+            Print(outer,false);Print(inner,true);
         }
     }
     private void SetDigipakOpen(bool open,bool animate)

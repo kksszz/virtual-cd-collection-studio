@@ -8,7 +8,7 @@ public final class DigipakMotion {
     public static float rightAngle(float open){return -180*(1-clamp(open*2-1));}
     public static float leftAngle3(float open){return 180*(1-clamp(open*3));}
     public static float rightAngle3(float open){return -180*(1-clamp(open*3-1));}
-    public static float farAngle3(float open){return 180*(1-clamp(open*3-2));}
+    public static float farAngle3(float open){return -180*(1-clamp(open*3-2));}
     private static float clamp(float n){return Math.max(0,Math.min(1,n));}
     /** x/z rotation around the panel hinge (positive Y axis). */
     public static float[] panelPoint(boolean right,float open,float x,float z){
@@ -31,7 +31,7 @@ public final class DigipakMotion {
         float moving=part==FOLD_LEFT?-.87f:part==FOLD_RIGHT ? .855f : 2.345f;
         float angle=part==FOLD_LEFT?leftAngle3(open):part==FOLD_RIGHT?rightAngle3(open):farAngle3(open);
         float hx=part==FOLD_LEFT?-.78f:part==FOLD_RIGHT ? .7725f : 2.29f;
-        float hz=part==FOLD_LEFT ? .05f : .045f;
+        float hz=part==FOLD_LEFT ? .105f : part==FOLD_RIGHT ? .09f : .045f;
         double rad=Math.toRadians(angle),c=Math.cos(rad),s=Math.sin(rad);
         float endX=hx+(float)(c*(moving-hx)-s*hz),endZ=hz+(float)(-s*(moving-hx)-c*hz);
         float direction=part==FOLD_LEFT?-1:1;

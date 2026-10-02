@@ -27,7 +27,9 @@ final class GlbCaseReader {
     static CasePackage read(byte[] bytes)throws Exception {return new GlbCaseReader(bytes).decode();}
     static byte[] frontImage(byte[] bytes)throws Exception {
         var reader=new GlbCaseReader(bytes);var images=reader.root.optJSONArray("images");if(images==null)return null;
-        for(int i=0;i<images.length();i++){var image=images.getJSONObject(i);if(!"front".equals(image.optString("name")))continue;
+        String profile=reader.root.getJSONObject("extras").getJSONObject("virtualCd").optString("profile");
+        String[] candidates=profile.startsWith("digipak-")?new String[]{"outerFront","front"}:new String[]{"front"};
+        for(String candidate:candidates)for(int i=0;i<images.length();i++){var image=images.getJSONObject(i);if(!candidate.equals(image.optString("name")))continue;
             if(image.has("uri")||!"image/png".equals(image.optString("mimeType")))throw invalid(jp.virtualcd.player.LanguageStrings.text("表紙画像","cover image"));
             return reader.view(image.getInt("bufferView"),5*1024*1024);
         }return null;
@@ -41,7 +43,7 @@ final class GlbCaseReader {
             JSONArray images=root.optJSONArray("images");List<String> roles=new ArrayList<>();
             if(images!=null){if(images.length()>(data.desktopGeometry?32:CasePackage.ROLES.size()))throw invalid(jp.virtualcd.player.LanguageStrings.text("画像数","image count"));
                 for(int i=0;i<images.length();i++){JSONObject image=images.getJSONObject(i);String role=image.getString("name");
-                    boolean digipakRole=data.digipak&&Arrays.asList("disc2","disc3","innerLeft","outerRight","outerFarRight","trays","tray1","tray2","tray3","leftFold","rightFold","farFold").contains(role);
+                    boolean digipakRole=data.digipak&&Arrays.asList("disc2","disc3","outerFront","innerLeft","outerRight","outerFarRight","trays","tray1","tray2","tray3","leftFold","rightFold","farFold","innerLeftFold","innerRightFold","innerFarFold").contains(role);
                     boolean multiRole=data.multiCase&&role.matches("multi(Front|Back|FrontLeft|FrontRight|BackLeft|BackRight|Disc[1-4]|BookletFront|BookletBack)");
                     if((!CasePackage.ROLES.contains(role)&&!digipakRole&&!multiRole&&!(data.desktopGeometry&&role.matches("detail[0-9]{1,2}")))||data.images.containsKey(role)||image.has("uri")||!"image/png".equals(image.getString("mimeType")))throw invalid(jp.virtualcd.player.LanguageStrings.text("画像用途","image role"));
                     byte[] png=view(image.getInt("bufferView"),5*1024*1024);BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(png,0,png.length,options);

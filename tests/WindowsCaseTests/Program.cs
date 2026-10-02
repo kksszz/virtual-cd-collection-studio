@@ -12,6 +12,9 @@ internal static class Program
 {
     [STAThread] static void Main(string[] args)
     {
+        if(args.Length==1&&args[0]=="--artwork-batch-rename"){
+            try{ArtworkBatchRenameChecks.Run();}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
+        }
         if(args.Length>0&&args[0]=="--multi-case"){
             try{MultiCaseChecks.Run(args.Length>1?args[1]:null);}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
         }

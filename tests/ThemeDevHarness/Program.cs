@@ -54,6 +54,84 @@ internal static partial class Program
         { VerifyLibrarySize(); return; }
         if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_LYRICS_SPLITTER_TEST") == "1")
         { VerifyLyricsSplitter(); return; }
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_LRC_DROP_TEST") == "1")
+        {
+            var helper = typeof(MainWindow).GetMethod("GetDroppedLrcPath", BindingFlags.NonPublic | BindingFlags.Static)!;
+            string? DroppedPath(params string[] files) => (string?)helper.Invoke(null,
+                [new DataObject(DataFormats.FileDrop, files)]);
+            if (DroppedPath(@"C:\lyrics\song.LRC") != @"C:\lyrics\song.LRC"
+                || DroppedPath(@"C:\lyrics\song.txt") is not null
+                || DroppedPath(@"C:\lyrics\one.lrc", @"C:\lyrics\two.lrc") is not null)
+                throw new InvalidOperationException("LRC drop must accept exactly one .lrc file.");
+            var decode = typeof(MainWindow).GetMethod("DecodeLyricsText", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var raw = "[00:01.25]First line\n[00:02.50]Second line";
+            var decoded = (string)decode.Invoke(null, [System.Text.Encoding.UTF8.GetBytes(raw), false])!;
+            var document = LyricsDocument.Parse(decoded);
+            if (decoded != raw || document.TimedLines.Count != 2 || document.DisplayText.Contains("[00:"))
+                throw new InvalidOperationException("Dropped LRC timing was not retained for playback.");
+            Console.WriteLine("Single-file LRC drop validation and timed lyrics decoding passed.");
+            return;
+        }
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_DIGIPAK_DEPTH_TEST") == "1")
+        {
+            float face = DigipakDimensions.Unit * DxJewelCaseScene.MobileScale * -.5f;
+            float Depth(int part)
+            {
+                var pose = MobileGlbExporter.DigipakPose(part, 0, 0, 0, true, false);
+                return (pose.Shift + System.Numerics.Vector3.Transform(
+                    new System.Numerics.Vector3(0, 0, face), pose.Rotation)).Z;
+            }
+            var center = face;
+            var far = Depth(8);
+            var right = Depth(3);
+            var front = Depth(1);
+            if (!(center < far && far < right && right + .02f < front))
+                throw new InvalidOperationException(
+                    $"Closed three-disc panels overlap: center={center}, far={far}, right={right}, front={front}");
+            var midway = DigipakDimensions.ThreeAngles(5.0 / 6);
+            var farPose = MobileGlbExporter.DigipakPose(8, 5f / 6, 0, 0, true, false);
+            var farCenter = farPose.Shift + System.Numerics.Vector3.Transform(
+                new System.Numerics.Vector3(3.025f, 0, face), farPose.Rotation);
+            if (Math.Abs(midway.FarRight + 90) > .001 || farCenter.Z <= 0)
+                throw new InvalidOperationException($"Third panel opens behind the case: angle={midway.FarRight}, depth={farCenter.Z}");
+            Console.WriteLine("Closed three-disc panel depths are separated from back to front.");
+            Console.WriteLine("Third panel swings forward during opening on desktop and mobile.");
+            return;
+        }
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_DIGIPAK_ROLE_LABEL_TEST") == "1")
+        {
+            var label = typeof(MainWindow).GetMethod("DigipakArtworkRoleLabel",
+                BindingFlags.NonPublic | BindingFlags.Static)!;
+            string? Label(string type, string role) => (string?)label.Invoke(null, [type, role]);
+            if (!Label("Digipak3", "Back")!.Contains("Disc1")
+                || !Label("Digipak3", "DigipakOuterRight")!.Contains("Disc2")
+                || !Label("Digipak3", "DigipakOuterFarRight")!.Contains("Disc3")
+                || Label("Standard", "Back") != "Back"
+                || Label("Digipak2", "DigipakOuterFarRight")!.Contains("Disc3"))
+                throw new InvalidOperationException("Digipak reverse-side labels do not match disc positions.");
+            Console.WriteLine("Digipak reverse-side labels and standard Back label passed.");
+            return;
+        }
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_DIGIPAK_ROLE_PRIORITY_TEST") == "1")
+        {
+            var sourceType = typeof(MainWindow).GetNestedType("AlbumImageSource", BindingFlags.NonPublic)!;
+            var sources = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(sourceType))!;
+            string first = @"C:\test\auto-front.jpg", second = @"C:\test\booklet-copy.jpg";
+            foreach (var path in new[] { first, second })
+                sources.Add(Activator.CreateInstance(sourceType, [Path.GetFileName(path), path, null, 0])!);
+            var roles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [$"file:{Path.GetFullPath(first)}"] = "DigipakOuterFarRight",
+                [$"file:{Path.GetFullPath(second)}"] = "DigipakOuterFarRight"
+            };
+            var selector = typeof(MainWindow).GetMethod("SelectDigipakPictureSource",
+                BindingFlags.NonPublic | BindingFlags.Static)!;
+            var chosen = selector.Invoke(null, [sources, roles, "DigipakOuterFarRight", ""]);
+            if ((string?)sourceType.GetProperty("RoleKey")!.GetValue(chosen) != $"file:{Path.GetFullPath(second)}")
+                throw new InvalidOperationException("The later Disc 3 reverse assignment must win over an older duplicate.");
+            Console.WriteLine("Latest explicit Disc 3 reverse artwork takes priority.");
+            return;
+        }
         if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_SHUTDOWN_TEST") == "1")
         { VerifyDataOperationGate(); return; }
         if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_FOLDER_ZIP_TEST") == "1")
@@ -111,6 +189,33 @@ internal static partial class Program
         if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_AUDIO_SETTINGS_TEST") == "1")
         {
             VerifyAudioSettingsRestart();
+            return;
+        }
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_RACK_SPACING_TEST") == "1")
+        {
+            var rackTestApp = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            rackTestApp.InitializeComponent();
+            var image = new WriteableBitmap(16, 16, 96, 96, PixelFormats.Bgra32, null);
+            image.Freeze();
+            try { VerifyContinuousCoverFlowKeyboard(image); }
+            finally { rackTestApp.Shutdown(); }
+            return;
+        }
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_BROWSER_CACHE_TEST") == "1")
+        {
+            var image = new WriteableBitmap(16, 16, 96, 96, PixelFormats.Bgra32, null);
+            image.Freeze();
+            BrowserTileArtworkCache.Store("album", image);
+            if (!BrowserTileArtworkCache.TryGet("album", out var cached) || !ReferenceEquals(cached, image))
+                throw new InvalidOperationException("A reopened browser did not reuse its decoded tile.");
+            BrowserTileArtworkCache.Invalidate("album");
+            if (BrowserTileArtworkCache.TryGet("album", out _))
+                throw new InvalidOperationException("Changed album artwork retained a stale browser tile.");
+            for (var index = 0; index < 65; index++) BrowserTileArtworkCache.Store($"album-{index}", image);
+            if (BrowserTileArtworkCache.TryGet("album-0", out _)
+                || !BrowserTileArtworkCache.TryGet("album-64", out _))
+                throw new InvalidOperationException("The browser tile cache did not enforce its memory limit.");
+            Console.WriteLine("Browser tile reuse, invalidation and bounded memory passed.");
             return;
         }
         var archiveCheckPath = Environment.GetEnvironmentVariable("ZIPMP3PLAYER_ARCHIVE_CHECK");
@@ -228,6 +333,26 @@ internal static partial class Program
             var dragApp = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
             try { VerifyDiscDragging(); }
             finally { dragApp.Shutdown(); }
+            return;
+        }
+        if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_PLAYBACK_THUMBNAIL_TEST") == "1")
+        {
+            var image = new WriteableBitmap(16, 16, 96, 96, PixelFormats.Bgra32, null);
+            image.Freeze();
+            var flow = (JewelCaseCoverFlow)Activator.CreateInstance(typeof(JewelCaseCoverFlow),
+                BindingFlags.Instance | BindingFlags.NonPublic, binder: null, args: [true], culture: null)!;
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var update = typeof(JewelCaseCoverFlow).GetMethod("UpdatePlaybackBar", flags)!;
+            var thumbnail = (Image)typeof(JewelCaseCoverFlow).GetField("_playbackThumbnail", flags)!.GetValue(flow)!;
+            var bar = (Border)typeof(JewelCaseCoverFlow).GetField("_playbackBar", flags)!.GetValue(flow)!;
+            var state = new JewelCasePlaybackState("Playing album track", true, true, .5, image);
+            update.Invoke(flow, [state]);
+            if (bar.Visibility != Visibility.Visible || !ReferenceEquals(thumbnail.Source, image))
+                throw new InvalidOperationException("The full-screen 3D bar must show the playing album thumbnail.");
+            update.Invoke(flow, [state with { HasTrack = false }]);
+            if (bar.Visibility != Visibility.Collapsed || thumbnail.Source is not null)
+                throw new InvalidOperationException("The full-screen 3D bar must release artwork after playback stops.");
+            Console.WriteLine("Full-screen playing-album thumbnail and stop state passed.");
             return;
         }
         if (Environment.GetEnvironmentVariable("ZIPMP3PLAYER_INLAY_TRAY_ONLY") == "1")
@@ -1984,6 +2109,20 @@ internal static partial class Program
             Pump(350);
             if (motions.Count != 0)
                 throw new InvalidOperationException("Held arrow navigation must settle and release its render motion after key-up.");
+
+            // Rack spacing must reserve the full side-on width of a 24 mm case
+            // while retaining the compact standard-case spacing around it.
+            var mixedItems = items.Select((item, index) => index == 1
+                ? item with { MultiCase = new MultiCaseArtwork() } : item).ToArray();
+            flow.SetItems(mixedItems, "key-0");
+            var rackSlotX = typeof(JewelCaseCoverFlow).GetMethod("RackSlotX", flags)!;
+            double Slot(int relative) => (double)rackSlotX.Invoke(flow, [relative])!;
+            var standardWidth = DxJewelCaseScene.StandardCaseDepth * .30;
+            var multiCaseWidth = 24 * DigipakDimensions.Unit * .30;
+            if (Slot(1) - Slot(0) < (standardWidth + multiCaseWidth) / 2 + .014
+                || Slot(2) - Slot(1) < (standardWidth + multiCaseWidth) / 2 + .014
+                || Math.Abs(Slot(-1) + standardWidth + .015) > .001)
+                throw new InvalidOperationException("Mixed 24 mm and standard cases overlap in the CD rack.");
         }
         finally { window.Close(); }
         Console.WriteLine("Continuous held-arrow CoverFlow motion and deferred selection synchronization passed.");
@@ -2627,7 +2766,10 @@ internal static partial class Program
         {
             var flow = (JewelCaseCoverFlow)Activator.CreateInstance(typeof(JewelCaseCoverFlow), BindingFlags.Instance | BindingFlags.NonPublic,
                 binder: null, args: [fullScreen], culture: null)!;
-            var playbackState = new JewelCasePlaybackState("Test Track  •  Test Artist", true, true, .42);
+            var playbackThumbnail = new WriteableBitmap(16, 16, 96, 96, PixelFormats.Bgra32, null);
+            playbackThumbnail.Freeze();
+            var playbackState = new JewelCasePlaybackState("Test Track  •  Test Artist", true, true, .42,
+                playbackThumbnail);
             var selectedAlbumIsPlaying = true;
             var previousRequests = 0;
             var pauseRequests = 0;
@@ -2672,16 +2814,19 @@ internal static partial class Program
                 if (fullScreen)
                 {
                     var title = (TextBlock)typeof(JewelCaseCoverFlow).GetField("_playbackTitleText", flags)!.GetValue(flow)!;
+                    var thumbnail = (Image)typeof(JewelCaseCoverFlow).GetField("_playbackThumbnail", flags)!.GetValue(flow)!;
                     var previousButton = (Button)typeof(JewelCaseCoverFlow).GetField("_previousTrackButton", flags)!.GetValue(flow)!;
                     var pauseButton = (Button)typeof(JewelCaseCoverFlow).GetField("_playPauseButton", flags)!.GetValue(flow)!;
                     var nextButton = (Button)typeof(JewelCaseCoverFlow).GetField("_nextTrackButton", flags)!.GetValue(flow)!;
                     var volume = (Slider)typeof(JewelCaseCoverFlow).GetField("_playbackVolumeSlider", flags)!.GetValue(flow)!;
                     if (playbackBar.Visibility != Visibility.Visible || title.Text != playbackState.TrackDisplay
+                        || !ReferenceEquals(thumbnail.Source, playbackThumbnail)
                         || Math.Abs(volume.Value - playbackState.Volume) > .001)
                         throw new InvalidOperationException("Full-screen 3D playback controls did not reflect the active track.");
                     selectedAlbumIsPlaying = false;
                     FlowCall("UpdateDiscPlayback");
-                    if ((bool)type.GetField("_discPlaying", flags)!.GetValue(scene)!)
+                    if ((bool)type.GetField("_discPlaying", flags)!.GetValue(scene)!
+                        || !ReferenceEquals(thumbnail.Source, playbackThumbnail))
                         throw new InvalidOperationException("A global playing track must not rotate the selected case's disc when the active album key differs.");
                     selectedAlbumIsPlaying = true;
                     FlowCall("UpdateDiscPlayback");
@@ -2697,7 +2842,7 @@ internal static partial class Program
                         throw new InvalidOperationException("Paused 3D playback must expose a resume button.");
                     playbackState = playbackState with { HasTrack = false };
                     Pump();
-                    if (playbackBar.Visibility != Visibility.Collapsed)
+                    if (playbackBar.Visibility != Visibility.Collapsed || thumbnail.Source is not null)
                         throw new InvalidOperationException("3D playback controls must hide after playback stops.");
                     playbackState = playbackState with { HasTrack = true, IsPlaying = true };
                     Pump();

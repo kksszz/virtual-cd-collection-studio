@@ -74,22 +74,27 @@ internal static class MobileModelChecks
         }
         Console.WriteLine("PASS mobile: four tray modes, Back/Spine and Inlay folds, front stop, both obi sides, v3 snapshot and GLB");
         foreach(string tray in new[]{"Clear","Black","White","Gray"}) {
-            var digipak=item with {SpineCard=null,SpineCardReverse=null,TrayColorMode=tray,SecondDiscImage=Picture(180,180),Digipak=new(image,image,Picture(282,124)){LeftFold=Picture(12,124),RightFold=Picture(10,124)}};
+            var digipak=item with {SpineCard=null,SpineCardReverse=null,TrayColorMode=tray,SecondDiscImage=Picture(180,180),Digipak=new(image,image,Picture(282,124)){
+                OuterFront=Picture(150,119),LeftFold=Picture(12,124),RightFold=Picture(10,124),InnerLeftFold=Picture(8,124),InnerRightFold=Picture(8,124)}};
             var output=Path.Combine(path,"digipak-"+tray+".glb");MobileCaseExporter.Export(digipak,output);
             using var input=new BinaryReader(File.OpenRead(output));input.ReadBytes(12);int size=input.ReadInt32();input.ReadInt32();using var doc=JsonDocument.Parse(input.ReadBytes(size));var model=doc.RootElement;
             if(model.GetProperty("extras").GetProperty("virtualCd").GetProperty("profile").GetString()!="digipak-two-disc-glb-1")throw new Exception("Digipak profile");
             var nodes=model.GetProperty("nodes");if(nodes[0].GetProperty("children").GetArrayLength()!=8)throw new Exception("Digipak moving parts");
             foreach(int part in new[]{0,1,2,3,4,5,6,7})if(nodes[part+1].GetProperty("children").GetArrayLength()==0)throw new Exception("Missing digipak part "+part);
-            if(!model.GetProperty("images").EnumerateArray().Any(i=>i.GetProperty("name").GetString()=="disc2"))throw new Exception("Missing second disc image");
-            foreach(string clip in new[]{"Open","DiscOut","BookletOut"})if(!model.GetProperty("animations").EnumerateArray().Any(a=>a.GetProperty("name").GetString()==clip))throw new Exception("Missing digipak animation "+clip);
+            foreach(var role in new[]{"disc2","outerFront","innerLeftFold","innerRightFold"})
+                if(!model.GetProperty("images").EnumerateArray().Any(i=>i.GetProperty("name").GetString()==role))throw new Exception("Missing digipak image "+role);
+            foreach(string clip in new[]{"Open","DiscOut","Disc1Out","Disc2Out","BookletOut"})if(!model.GetProperty("animations").EnumerateArray().Any(a=>a.GetProperty("name").GetString()==clip))throw new Exception("Missing digipak animation "+clip);
             var capture=DxJewelCaseScene.CaptureMobile(digipak);
             float[] X(int part)=>capture.Meshes.Where(m=>m.part==part).SelectMany(m=>m.vertices.Where((v,i)=>i%8==0)).ToArray();
+            float[] Z(int part)=>capture.Meshes.Where(m=>m.part==part).SelectMany(m=>m.vertices.Where((v,i)=>i%8==2)).ToArray();
             if(Math.Abs(X(1).Min()+2.19f)>.001||Math.Abs(X(3).Max()-2.17f)>.001)throw new Exception("Digipak bind pose scale");
+            if(Z(1).Max()-Z(1).Min()<.024f||Math.Abs(Z(5).Max()-Z(5).Min()-.015f)>.001f)
+                throw new Exception("Digipak front and booklet thickness missing from mobile geometry");
             var left=MobileGlbExporter.DigipakPose(1,.5f,0,0);var right=MobileGlbExporter.DigipakPose(3,.5f,0,0);
             if(Math.Abs(left.Rotation.W-1)>.001||Math.Abs(right.Rotation.W)>.001)throw new Exception("Digipak opening order");
             if(MobileGlbExporter.DigipakPose(5,1,0,1).Shift.Y<1.24f)throw new Exception("Booklet upward slide");
         }
-        Console.WriteLine("PASS mobile digipak: four trays, eight moving parts, both disc textures, three GLB animations and flat bind pose");
+        Console.WriteLine("PASS mobile digipak: four trays, eight moving parts, independent disc GLB animations and flat bind pose");
         var triple=item with {SpineCard=null,SpineCardReverse=null,SecondDiscImage=Picture(180,180),
             Digipak=new DigipakArtwork(image,image,null){DiscCount=3,BookletExtraction="Left",ThirdDisc=Picture(180,180),
                 Tray1=Picture(136,124),Tray2=Picture(136,124),Tray3=Picture(136,124),
@@ -98,10 +103,15 @@ internal static class MobileModelChecks
         using(var input=new BinaryReader(File.OpenRead(triplePath))){input.ReadBytes(12);int size=input.ReadInt32();input.ReadInt32();using var doc=JsonDocument.Parse(input.ReadBytes(size));var root=doc.RootElement;
             if(root.GetProperty("extras").GetProperty("virtualCd").GetProperty("profile").GetString()!="digipak-three-disc-glb-1")throw new Exception("Three-disc profile");
             if(root.GetProperty("extras").GetProperty("virtualCd").GetProperty("bookletExtraction").GetString()!="Left")throw new Exception("Side booklet metadata");
+            if(!root.GetProperty("animations").EnumerateArray().Any(a=>a.GetProperty("name").GetString()=="Disc3Out"))throw new Exception("Missing third disc animation");
             if(root.GetProperty("nodes")[0].GetProperty("children").GetArrayLength()!=11)throw new Exception("Three-disc moving parts");
             if(!root.GetProperty("images").EnumerateArray().Any(i=>i.GetProperty("name").GetString()=="disc3"))throw new Exception("Third disc texture");}
         var tripleCapture=DxJewelCaseScene.CaptureMobile(triple);
         if(!new[]{8,9,10}.All(part=>tripleCapture.Meshes.Any(mesh=>mesh.part==part)))throw new Exception("Third panel, disc and fold geometry");
+        var sideBookletZ=tripleCapture.Meshes.Where(mesh=>mesh.part==5)
+            .SelectMany(mesh=>mesh.vertices.Where((value,index)=>index%8==2)).ToArray();
+        if(Math.Abs(sideBookletZ.Max()-sideBookletZ.Min()-.015f)>.001f)
+            throw new Exception("Side-extracted booklet thickness missing from mobile geometry");
         var bookletPose=MobileGlbExporter.DigipakPose(5,1,0,1,true,true);
         if(bookletPose.Shift.X>-.5f||Math.Abs(bookletPose.Shift.Y)>.01f)throw new Exception("Booklet slides left");
         if(MobileGlbExporter.DigipakPose(5,1,0,1,false,true).Shift.X>-.5f

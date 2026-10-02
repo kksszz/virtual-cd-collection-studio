@@ -1826,6 +1826,9 @@ public partial class MainWindow : Window
 
     private static AlbumLibraryBrowserItem CreateAlbumBrowserItem(AlbumListItem album)
     {
+        var tileArtwork = new BrowserTileArtwork(album.CoverThumbnail);
+        if (BrowserTileArtworkCache.TryGet(album.Album.Path, out var cachedTile) && cachedTile is not null)
+            tileArtwork.SetImage(cachedTile);
         JewelCaseCoverFlowItem CreateCaseItem() => new(album.Album.Path, album.Title,
             album.Artist == "アーティスト不明" ? LocalizationService.Select("アーティスト不明", "Unknown Artist") : album.Artist,
             album.SourceBadge, album.TrayColorMode, album.CaseFrontThumbnail ?? album.CoverThumbnail,
@@ -1839,6 +1842,8 @@ public partial class MainWindow : Window
             return CreateCaseItem();
         }, album.IsFavorite, album.Album.Tracks.Count)
         {
+            CaseArtworkDecodeWidth = album.CaseArtworkDecodeWidth,
+            TileArtwork = tileArtwork,
             LoadTileCover = token => Task.Run(() =>
             {
                 token.ThrowIfCancellationRequested();
@@ -3047,11 +3052,15 @@ public partial class MainWindow : Window
             : string.IsNullOrWhiteSpace(track.Artist)
                 ? track.Title
                 : $"{track.Title}  •  {track.Artist}";
+        var playingItem = _playingAlbum is null ? null : _albums.FirstOrDefault(item =>
+            string.Equals(item.Album.Path, _playingAlbum.Path, StringComparison.OrdinalIgnoreCase));
         return new JewelCasePlaybackState(
             title,
             _output?.PlaybackState == PlaybackState.Playing,
             track is not null && _output is not null,
-            VolumeSlider.Value);
+            VolumeSlider.Value,
+            playingItem?.CoverThumbnail ?? playingItem?.CaseFrontThumbnail,
+            track is null ? null : Math.Max(1,track.DiscNumber));
     }
 
     private void Shuffle_Click(object sender, RoutedEventArgs e)
@@ -4029,6 +4038,52 @@ public partial class MainWindow : Window
         return Path.Combine(DataDirectory, "lyrics", key + ".txt");
     }
 
+    private static string? GetDroppedLrcPath(IDataObject data)
+    {
+        if (!data.GetDataPresent(DataFormats.FileDrop)
+            || data.GetData(DataFormats.FileDrop) is not string[] { Length: 1 } files)
+            return null;
+        return string.Equals(Path.GetExtension(files[0]), ".lrc", StringComparison.OrdinalIgnoreCase)
+            ? files[0] : null;
+    }
+
+    private void LyricsTextBox_PreviewDragOver(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+        e.Effects = !_artworkRotationSaving && _lyricsTrack is not null
+            && GetDroppedLrcPath(e.Data) is not null ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void LyricsTextBox_PreviewDrop(object sender, DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+        e.Handled = true; // Do not let the window treat a lyrics file as an album.
+        if (_artworkRotationSaving) return;
+        var path = GetDroppedLrcPath(e.Data);
+        if (path is null) return;
+        if (_lyricsTrack is null)
+        {
+            LyricsStatusText.Text = "LRCを取り込む曲を先に選択してください";
+            return;
+        }
+        try
+        {
+            if (new FileInfo(path).Length > 1024 * 1024)
+                throw new IOException("1MBを超えるLRCファイルは読み込めません。");
+            var lyrics = DecodeLyricsText(File.ReadAllBytes(path), stripLrcTiming: false);
+            if (string.IsNullOrWhiteSpace(lyrics))
+                throw new InvalidDataException("LRCファイルに歌詞がありません。");
+            SetLyricsContent(lyrics);
+            LyricsStatusText.Text = $"未保存の変更: {_lyricsTrack.Title}（{Path.GetFileName(path)}）";
+            StatusText.Text = "LRCを取り込みました。確認後に「保存」を押してください。";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            MessageBox.Show(this, ex.Message, "LRCを読み込めません", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private void SaveLyrics_Click(object sender, RoutedEventArgs e)
     {
         if (_lyricsAlbum is null || _lyricsTrack is null)
@@ -4824,6 +4879,11 @@ public partial class MainWindow : Window
             var selectedRole = _selectedAlbumImageIndex >= 0 && _selectedAlbumImageIndex < _albumImages.Count
                 && _currentArtworkRoles.TryGetValue(_albumImages[_selectedAlbumImageIndex].RoleKey, out var stored)
                 ? (stored=="Auto"?"Auto":GetEffectiveArtworkRole(_albumImages[_selectedAlbumImageIndex],_currentArtworkRoles)) : "Auto";
+            var caseType = _album is null ? "Standard" : LoadCaseAppearance(_album.Path).CaseType;
+            foreach (var item in ArtworkRoleCombo.Items.OfType<System.Windows.Controls.ComboBoxItem>())
+                item.Visibility = IsArtworkRoleAvailable(caseType, item.Tag?.ToString())
+                    || string.Equals(item.Tag?.ToString(), selectedRole, StringComparison.OrdinalIgnoreCase)
+                    ? Visibility.Visible : Visibility.Collapsed;
             ArtworkRoleCombo.SelectedItem = ArtworkRoleCombo.Items.OfType<System.Windows.Controls.ComboBoxItem>()
                 .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), selectedRole, StringComparison.OrdinalIgnoreCase))
                 ?? ArtworkRoleCombo.Items[0];
@@ -4853,7 +4913,20 @@ public partial class MainWindow : Window
         var source = _albumImages[_selectedAlbumImageIndex];
         var role = selected.Tag?.ToString() ?? "Auto";
         if (role == "Auto") _currentArtworkRoles.Remove(source.RoleKey);
-        else _currentArtworkRoles[source.RoleKey] = role;
+        else
+        {
+            if (role is ("Back" or "DigipakOuterRight" or "DigipakOuterFarRight")
+                && LoadCaseAppearance(_album.Path).CaseType is ("Digipak2" or "Digipak3"))
+            {
+                foreach (var previous in _currentArtworkRoles.Where(pair =>
+                    string.Equals(pair.Value, role, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(pair.Key, source.RoleKey, StringComparison.OrdinalIgnoreCase)).ToArray())
+                    _currentArtworkRoles.Remove(previous.Key);
+            }
+            // Reinsert so this image is the latest assignment in older profiles too.
+            _currentArtworkRoles.Remove(source.RoleKey);
+            _currentArtworkRoles[source.RoleKey] = role;
+        }
         try
         {
             SaveArtworkRoles(_album.Path, _currentArtworkRoles);
@@ -5029,6 +5102,7 @@ public partial class MainWindow : Window
                 : $"{displayedIndices[0] + 1}–{displayedIndices[^1] + 1} / {_albumImages.Count}";
             AlbumImageNameText.Text = string.Join("  /  ", displayedIndices.Select(index => _albumImages[index].DisplayName));
             AlbumImageNameText.ToolTip = string.Join("\n\n", displayedIndices.Select(index => _albumImages[index].Description));
+            AlbumImageNameText.Visibility = Visibility.Visible;
             PreviousImageButton.IsEnabled = _albumImages.Count > _albumImagePageSize;
             NextImageButton.IsEnabled = _albumImages.Count > _albumImagePageSize;
             UpdateArtworkRoleCombo();
@@ -5658,7 +5732,7 @@ public partial class MainWindow : Window
             AlbumBookletButton.IsEnabled = canOpen && !_openingAlbumBooklet;
             AlbumBookletButton.ToolTip = canOpen
                 ? LocalizationService.Select("3Dビューを経由せず、ブックレットを開きます", "Open the booklet directly without the 3D view")
-                : LocalizationService.Select("画像の用途に「Front見開き」、または「Front」と「Front背面」を指定してください",
+                : LocalizationService.Select("画像の用途に「ブックレット・Front見開き」、または「ブックレット・Front（表紙）」と「ブックレット・Front裏面」を指定してください",
                     "Assign a Front Spread, or both Front and Inside Front artwork");
         }
     }
@@ -5961,6 +6035,7 @@ public partial class MainWindow : Window
         AlbumImageCountText.Text = "0 / 0";
         AlbumImageNameText.Text = "";
         AlbumImageNameText.ToolTip = null;
+        AlbumImageNameText.Visibility = Visibility.Collapsed;
         PreviousImageButton.IsEnabled = false;
         NextImageButton.IsEnabled = false;
         RotateAlbumImageLeftButton.IsEnabled = false;
@@ -6284,7 +6359,10 @@ public partial class MainWindow : Window
 
         public BookletContent LoadBooklet()
         {
-            if(LoadCaseAppearance(Album.Path).CaseType=="Digipak2" && (Title.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase)||Album.Path.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase)))
+            if(LoadCaseAppearance(Album.Path).CaseType=="Digipak2"
+                && (Title.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase)||Album.Path.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase))
+                && !LoadArtworkRoles(Album.Path).Values.Any(role => role is "Front" or "FrontInside"
+                    or "FrontSpread" or "FrontSpreadReversed" or "FrontSpreadVertical"))
                 return LoadDigipakBooklet();
             var roles = LoadArtworkRoles(Album.Path);
             var sources = GetCaseArtworkSources(Album, GetDownloadedArtworkDirectory(Album.Path));
@@ -6297,13 +6375,13 @@ public partial class MainWindow : Window
             var frontInside = sources.FirstOrDefault(source => GetEffectiveArtworkRole(source, roles) == "FrontInside");
             if (spread is null && (front is null || frontInside is null))
                 throw new InvalidOperationException(LocalizationService.Select(
-                    "Front見開き、またはFrontとFront背面の画像が必要です。",
+                    "ブックレット・Front見開き、またはブックレットの表紙と裏面の画像が必要です。",
                     "A Front Spread, or both Front and Inside Front artwork, is required."));
             var pages = new List<BookletPage>
             {
                 front is not null
                     ? new BookletPage(front.DisplayName, "Front", () => LoadBitmap(front, 3000))
-                    : new BookletPage(LocalizationService.Select("Front（表紙）", "Front cover"), "Front",
+                    : new BookletPage(LocalizationService.Select("ブックレット・Front（表紙）", "Booklet front cover"), "Front",
                         () => CropArtwork(LoadBitmap(spread!, verticalSpread ? 3000 : 6000),
                             verticalSpread ? "TopHalf" : reversedSpread ? "LeftHalf" : "RightHalf"))
             };
@@ -6320,7 +6398,7 @@ public partial class MainWindow : Window
                 .ToList());
             pages.Add(frontInside is not null
                 ? new BookletPage(frontInside.DisplayName, "FrontInside", () => LoadBitmap(frontInside, 3000))
-                : new BookletPage(LocalizationService.Select("Front背面", "Inside front cover"), "FrontInside",
+                : new BookletPage(LocalizationService.Select("ブックレット・Front裏面", "Booklet inside front cover"), "FrontInside",
                     () => CropArtwork(LoadBitmap(spread!, verticalSpread ? 3000 : 6000),
                         verticalSpread ? "BottomHalfRotated" : reversedSpread ? "RightHalf" : "LeftHalf")));
             // When both individual sides exist, the spread scan is redundant
@@ -6421,7 +6499,11 @@ public partial class MainWindow : Window
             var hasFrontSpread = roleSet.Contains("FrontSpread") || roleSet.Contains("FrontSpreadReversed")
                 || roleSet.Contains("FrontSpreadVertical")
                 || (roleSet.Contains("Front") && roleSet.Contains("FrontInside"));
-            if(LoadCaseAppearance(Album.Path).CaseType=="Digipak2" && (Title.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase)||Album.Path.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase)))hasFrontSpread=sources.Any(s=>Path.GetFileName(s.DisplayName).Equals("Booklet003.jpg",StringComparison.OrdinalIgnoreCase));
+            if(LoadCaseAppearance(Album.Path).CaseType=="Digipak2"
+                && (Title.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase)||Album.Path.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase))
+                && !roles.Values.Any(role => role is "Front" or "FrontInside"
+                    or "FrontSpread" or "FrontSpreadReversed" or "FrontSpreadVertical"))
+                hasFrontSpread=sources.Any(s=>Path.GetFileName(s.DisplayName).Equals("Booklet003.jpg",StringComparison.OrdinalIgnoreCase));
             var trayColorMode = HasInlayArtwork(sources, roles)
                 ? "Clear" : LoadTrayColor(Album.Path);
             var downloadedImageCount = Directory.Exists(directory)
@@ -6433,6 +6515,7 @@ public partial class MainWindow : Window
 
         private void ApplyArtworkSummary(ArtworkSummary summary)
         {
+            BrowserTileArtworkCache.Invalidate(Album.Path);
             _downloadedImageCount = summary.DownloadedImageCount;
             _coverThumbnail = summary.CoverThumbnail;
             _coverDescription = summary.CoverDescription;
@@ -6633,7 +6716,19 @@ public partial class MainWindow : Window
                 var packRoles = LoadArtworkRoles(Album.Path);
                 bool prototype = LoadCaseAppearance(Album.Path).CaseType=="Digipak2"&&(Title.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase)||Album.Path.Contains("ActRaiser",StringComparison.OrdinalIgnoreCase));
                 BitmapSource? Picture(string role, string fallback) => LoadDigipakPicture(sources, packRoles, role, prototype?fallback:"", targetWidth);
-                return (Picture("Front","Booklet001.jpg"), Picture("FrontInside","Booklet010.jpg"), Picture("Back","Booklet002.jpg"), null, null, null,
+                var bookletFront=Picture("Front","");
+                var bookletBack=Picture("FrontInside","");
+                foreach (var role in new[] { "FrontSpread", "FrontSpreadReversed", "FrontSpreadVertical" })
+                {
+                    if (bookletFront is not null && bookletBack is not null) break;
+                    if (Picture(role, "") is not { } spread) continue;
+                    spread=RearInsertArtwork.CropWhiteBorder(spread);
+                    bookletFront??=CropArtwork(spread,role=="FrontSpreadVertical"?"TopHalf":role=="FrontSpreadReversed"?"LeftHalf":"RightHalf");
+                    bookletBack??=CropArtwork(spread,role=="FrontSpreadVertical"?"BottomHalfRotated":role=="FrontSpreadReversed"?"RightHalf":"LeftHalf");
+                }
+                bookletFront??=Picture("Front","Booklet001.jpg");
+                bookletBack??=Picture("FrontInside","Booklet010.jpg");
+                return (bookletFront, bookletBack, Picture("Back","Booklet002.jpg"), null, null, null,
                     Picture("Disc1","Booklet008.jpg"), Picture("Disc2","Booklet009.jpg"), null, null,
                     LoadCaseAppearance(Album.Path).CaseType=="Digipak3"?"デジパック3枚組":"デジパック2枚組");
             }
